@@ -1,0 +1,57 @@
+{
+  "appId": "jp.suppy.aiwerewolfmanager",
+  "productName": "AI人狼マネージャー",
+  "asar": true,
+  "electronVersion": "43.2.0",
+  "directories": {
+    "output": "../output/dist"
+  },
+  "files": [
+    "package.json",
+    "main/**/*",
+    "shared/**/*",
+    "renderer/index.html",
+    "renderer/css/**/*",
+    "renderer/data/characters/**/*",
+    "renderer/generated/bundle.js",
+    "renderer/js/ai/**/*",
+    "renderer/js/automation/**/*"
+  ],
+  "win": {
+    "executableName": "AI人狼マネージャー",
+    "target": [
+      {
+        "target": "zip",
+        "arch": [
+          "x64"
+        ]
+      },
+      {
+        "target": "nsis",
+        "arch": [
+          "x64"
+        ]
+      }
+    ],
+    "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+  },
+  "nsis": {
+    "artifactName": "${productName}-${version}-Setup-${arch}.${ext}",
+    "oneClick": true,
+    "perMachine": false,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "AI人狼マネージャー",
+    "deleteAppDataOnUninstall": false
+  },
+  "extraFiles": [
+    {
+      "from": "README.txt",
+      "to": "README.txt"
+    },
+    {
+      "from": "../LICENSE.txt",
+      "to": "LICENSE.txt"
+    }
+  ]
+}

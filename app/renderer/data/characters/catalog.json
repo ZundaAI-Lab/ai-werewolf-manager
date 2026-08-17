@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "zunsun-project",
+  "name": "ずんずんプロジェクト",
+  "characters": [
+    "zundamon.json",
+    "tohoku_zunko.json",
+    "tohoku_itako.json",
+    "tohoku_kiritan.json",
+    "shikoku_metan.json",
+    "kyushu_sora.json",
+    "chugoku_usagi.json",
+    "ooedo_chanko.json",
+    "chubu_tsurugi.json",
+    "kansai_shinobi.json",
+    "hokkaido_melon.json",
+    "okinawa_awamo.json",
+    "ankomon.json"
+  ],
+  "source": {
+    "officialUrl": "https://zunko.jp/",
+    "termsUrl": "https://zunko.jp/guideline.html",
+    "classificationVerifiedAt": "2026-08-10",
+    "sourceClass": "rights-holder-primary"
+  },
+  "credits": {
+    "holder": "SSS合同会社",
+    "creditText": "（ず・ω・きょ）"
+  }
+}

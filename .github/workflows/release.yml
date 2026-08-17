@@ -1,0 +1,60 @@
+# 責務: Windows配布版をクラウド上で検査・生成し、成果物保存とタグRelease登録まで自動化する。
+# 変更ルール: tools配下のnpm run releaseを唯一の製造手順として再利用し、依存導入・テスト・成果物整理をWorkflow側へ重複実装しない。
+
+name: Windows Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: npm
+          cache-dependency-path: tools/package-lock.json
+
+      - name: Verify and build Windows distributions
+        working-directory: tools
+        run: npm run release
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AI-werewolf-manager-windows-x64-${{ github.run_number }}
+          path: output/dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create or update GitHub Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --title "AI人狼マネージャー $tag" --generate-notes
+          }
+          Get-ChildItem -LiteralPath output/dist -File | ForEach-Object {
+            gh release upload $tag $_.FullName --clobber
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }

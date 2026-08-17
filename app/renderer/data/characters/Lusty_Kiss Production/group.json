@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "lustykiss-production",
+  "name": "Lusty*Kiss Production",
+  "characters": [
+    "dia.json",
+    "arma.json",
+    "lilin.json",
+    "croix.json",
+    "andzie.json",
+    "ameno.json"
+  ],
+  "source": {
+    "officialUrl": "https://production.lusty-kiss.com/",
+    "termsUrl": "https://production.lusty-kiss.com/tos",
+    "classificationVerifiedAt": "2026-08-10",
+    "sourceClass": "rights-holder-primary"
+  },
+  "credits": {
+    "holder": "Lusty*Kiss Production"
+  }
+}

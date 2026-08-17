@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "virvox-project",
+  "name": "VirVox Project",
+  "characters": [
+    "kurono_takehiro.json",
+    "shirakami_kotarou.json",
+    "aoyama_ryusei.json",
+    "wakamatsu_akashi.json",
+    "kigashima_sourin.json",
+    "kurosawa_kohaku.json"
+  ],
+  "source": {
+    "officialUrl": "https://www.virvoxproject.com/",
+    "termsUrl": "https://www.virvoxproject.com/%E4%BA%8C%E6%AC%A1%E5%89%B5%E4%BD%9C%E3%82%AC%E3%82%A4%E3%83%89%E3%83%A9%E3%82%A4%E3%83%B3",
+    "classificationVerifiedAt": "2026-08-10",
+    "sourceClass": "rights-holder-primary"
+  },
+  "credits": {
+    "holder": "VirVox Project"
+  }
+}

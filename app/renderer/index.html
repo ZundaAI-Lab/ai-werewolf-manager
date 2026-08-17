@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <!--
+    責務: AI人狼管理ツールの画面骨格、AppUIが一元管理する正式タブ（人狼進行と独立チャットルームを含む）のナビゲーション、全画面共通の自動実行状態表示、外観設定dialog、ライセンス画面、ゲーム準備から開く新規ゲーム確認dialog、キャラクター編集から開くAI生成条件dialog、ゲームデータ・キャラクター・AIプロファイル読込用ファイル入力、配布用バンドルを提供する。
+    変更ルール: 業務ロジックを埋め込まず、破棄確認と外部LLMデータ送信確認はそれぞれ専用dialogを使用する。画面構造変更時は対応するUIモジュールとstyles.cssを同時確認する。CSPは外部・インラインスクリプト、インラインイベント属性、インラインスタイル属性を禁止し、表示スタイルはstyles.cssへ集約する。外部/ローカルAI通信分類はlocalLlmConfig.js読込後のdataTransmissionPolicy.jsを正本とする。
+  -->
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; script-src-attr 'none'; style-src 'self'; style-src-attr 'none'; img-src 'self' data:; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI人狼マネージャー</title>
+  <link rel="stylesheet" href="./css/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">◐</span>
+        <div>
+          <h1>AI人狼マネージャー</h1>
+          <p>複数LLM対応 人狼対戦管理ツール</p>
+        </div>
+      </div>
+      <div id="automation-global-status" class="automation-global-status" data-mode="idle" hidden>
+        <span class="automation-global-indicator" data-automation-global-indicator data-status="idle" aria-hidden="true"></span>
+        <div class="automation-global-copy">
+          <strong data-automation-global-label></strong>
+          <small data-automation-global-detail></small>
+        </div>
+        <div class="automation-global-actions">
+          <button class="button ghost small" data-automation-global-secondary type="button" hidden></button>
+          <button class="button primary small" data-automation-global-primary type="button" hidden></button>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button class="button ghost" id="undo-button" type="button">元に戻す</button>
+        <button class="button ghost" id="redo-button" type="button">やり直す</button>
+        <button class="button ghost" data-action="open-role-help" type="button">役職ヘルプ</button>
+        <button class="button ghost" id="confidential-toggle" type="button">機密情報を表示</button>
+        <input id="game-data-import-file" type="file" accept="application/json,.json" hidden>
+        <input id="character-library-import-file" type="file" accept="application/json,.json" hidden>
+        <input id="ai-profile-import-file" type="file" accept="application/json,.json" hidden>
+      </div>
+    </header>
+
+
+    <aside class="sidebar" aria-label="メインナビゲーション">
+      <nav id="main-nav">
+        <button class="nav-item active" data-tab="workbench" type="button"><span>▶</span>進行卓</button>
+        <button class="nav-item" data-tab="setup" type="button"><span>⚙</span>ゲーム準備</button>
+        <button class="nav-item" data-tab="character-library" type="button"><span>♙</span>キャラクター</button>
+        <button class="nav-item" data-tab="ai-management" type="button"><span>◇</span>AI管理</button>
+        <button class="nav-item" data-tab="records" type="button"><span>≡</span>記録・管理</button>
+        <button class="nav-item" data-tab="public" type="button"><span>▣</span>公開表示</button>
+      </nav>
+      <div class="sidebar-footer" aria-label="補助メニューとアプリバージョン">
+        <button class="nav-item sidebar-chat-room-button" data-tab="chat-room" type="button"><span>💬</span>チャットルーム</button>
+        <button class="nav-item sidebar-appearance-button" id="appearance-button" type="button"><span>🎨</span>外観設定</button>
+        <button class="nav-item sidebar-license-button" data-tab="license" type="button"><span>©</span>ライセンス</button>
+        <span id="runtime-version" class="runtime-version"></span>
+      </div>
+    </aside>
+
+    <main id="app-content" tabindex="-1"></main>
+  </div>
+
+  <dialog id="new-game-dialog" class="modal" aria-labelledby="new-game-dialog-title">
+    <form method="dialog">
+      <div class="modal-header">
+        <h3 id="new-game-dialog-title">最初から始める</h3>
+      </div>
+      <div class="modal-body">
+        <p>現在のゲーム進行を破棄します。必要なら先にゲームデータ出力してください。</p>
+        <p class="help">設定を引き継ぐ場合は、参加者の並び・名前・担当・キャラクター詳細・配役・相手別呼称・主要ルール・AIプロファイル割り当てを維持し、ゲーム進行と履歴だけを初期化します。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="button ghost" value="cancel" type="submit">キャンセル</button>
+        <button class="button primary" value="restart-current-setup" type="submit" autofocus>設定を引き継いで最初から</button>
+        <button class="button danger" value="confirm" type="submit">すべて初期化</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="appearance-dialog" class="modal appearance-modal" aria-label="外観設定"></dialog>
+  <dialog id="modal-dialog" class="modal"></dialog>
+  <dialog id="ai-data-privacy-dialog" class="modal ai-data-privacy-modal" aria-label="AI通信とプライバシー"></dialog>
+  <dialog id="character-ai-generation-dialog" class="modal character-ai-generation-modal" aria-label="AIでキャラクター生成"></dialog>
+  <dialog id="relationship-dialog" class="modal relationship-modal" aria-label="プレイヤー相関図"></dialog>
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true" aria-relevant="additions text"></div>
+  <script src="../shared/localLlmConfig.js" defer></script>
+  <script src="../shared/providerDefaults.js" defer></script>
+  <script src="../shared/endpointPolicy.js" defer></script>
+  <script src="../shared/dataTransmissionPolicy.js" defer></script>
+  <script src="../shared/dataCompatibility/schemaVersions.js" defer></script>
+  <script src="../shared/dataCompatibility/migrationRegistry.js" defer></script>
+  <script src="../shared/dataCompatibility/migrateData.js" defer></script>
+  <script src="../shared/settingsSchema.js" defer></script>
+  <script src="../shared/appearanceSchema.js" defer></script>
+  <script src="../shared/entityIdPolicy.js" defer></script>
+  <script src="../shared/characterTextPolicy.js" defer></script>
+  <script src="./generated/bundle.js?build=1ad6baf0f816ff2daa8d8416c3a955b500a491521c49eeecb0c86d77b41d048e" defer></script>
+  <script src="../shared/demoAi.js" defer></script>
+</body>
+</html>

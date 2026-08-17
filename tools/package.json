@@ -1,0 +1,19 @@
+{
+  "name": "ai-werewolf-manager-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI人狼マネージャーの開発・検査・配布製造ツール",
+  "scripts": {
+    "start": "node build/ensureCurrentBuild.js && electron ../app",
+    "test": "npm run test:game && npm run test:desktop",
+    "test:game": "node --test tests/game/all.test.js",
+    "test:desktop": "node --test tests/desktop/all.test.js",
+    "verify": "node build/buildBundle.js && node build/manufacturingGate.js && node --test tests/game/all.test.js && node --test tests/desktop/all.test.js",
+    "release": "node build/releasePipeline.js"
+  },
+  "devDependencies": {
+    "electron": "43.2.0",
+    "typescript": "5.8.3"
+  },
+  "license": "MIT"
+}
