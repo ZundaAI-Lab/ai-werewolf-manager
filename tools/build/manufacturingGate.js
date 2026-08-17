@@ -1,6 +1,6 @@
 /**
  * 責務: 正式bundle生成前の製造事前検査と、生成後の鮮度を含む完全製造検査を提供し、開発者・利用者README、本体MIT Licenseの適用範囲注記、配布同梱設定も保証する。製造監査が使用するTypeScript依存は監査モジュール読込前に自己修復する。
- * 変更ルール: 事前検査は生成物へ書き込まず、現行構成・全製品JSの責務ヘッダ・テスト入口・情報境界・Prompt Envelope・README/ライセンス配布契約を検査する。完全検査だけが生成物鮮度を追加検査し、一時パッチ・到達不能モジュール・製品内未使用export・不一致生成物を製造物へ混入させない。TypeScriptを必要とする監査はensureCurrentBuild.jsの共通依存保証後にだけ読み込む。
+ * 変更ルール: 事前検査は生成物へ書き込まず、現行構成・全製品JSの責務ヘッダ・テスト入口・情報境界・Prompt Envelope・README/ライセンス配布契約を検査する。Git管理メタデータの.gitignoreは正規のルートファイルとして許可する。完全検査だけが生成物鮮度を追加検査し、一時パッチ・到達不能モジュール・製品内未使用export・不一致生成物を製造物へ混入させない。TypeScriptを必要とする監査はensureCurrentBuild.jsの共通依存保証後にだけ読み込む。
  */
 
 'use strict';
@@ -22,6 +22,7 @@ const IGNORED_MONITORED_FILES = new Set([
   'app/renderer/generated/publicViewStyles.js',
 ]);
 const REQUIRED_ROOT_OPERATION_FILES = new Set(['AI人狼を起動.cmd', '配布版を作成.cmd']);
+const ALLOWED_ROOT_FILES = new Set(['.gitignore', 'README.md', 'LICENSE.txt']);
 const REQUIRED_DOCUMENTATION_FILES = Object.freeze(['README.md', 'app/README.txt', 'LICENSE.txt']);
 const REQUIRED_DIRECTORIES = Object.freeze(['app', 'tools', 'docs']);
 const PRODUCTION_JS_PREFIXES = Object.freeze(['app/main/', 'app/shared/', 'app/renderer/js/']);
@@ -113,7 +114,7 @@ function validateRootLayout(errors) {
   const allowedRootDirectories = new Set([...REQUIRED_DIRECTORIES, '.github', ...IGNORED_WORKSPACE_DIRECTORIES]);
   rootDirectories.filter((name) => !allowedRootDirectories.has(name))
     .forEach((name) => errors.push(`現行構成で許可していないディレクトリがプロジェクト直下にあります: ${name}`));
-  files.filter((name) => !['README.md', 'LICENSE.txt'].includes(name) && !name.endsWith('.cmd'))
+  files.filter((name) => !ALLOWED_ROOT_FILES.has(name) && !name.endsWith('.cmd'))
     .forEach((name) => errors.push(`現行構成で許可していないファイルがプロジェクト直下にあります: ${name}`));
 }
 
