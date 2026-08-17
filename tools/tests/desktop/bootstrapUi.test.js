@@ -1,6 +1,6 @@
 /**
  * 責務: アプリ起動口のグローバルUI操作と主要UI Controller境界が、現行の画面責務どおり接続されていることを検証する。
- * 変更ルール: bootstrap全体の実装詳細を固定せず、新規ゲーム確認dialog、人間操作のインライン登録境界、主要Controllerの依存方向だけを検査する。
+ * 変更ルール: bootstrap全体の実装詳細を固定せず、新規ゲーム確認dialog、人間操作のインライン登録境界、主要Controllerの依存方向だけを検査する。ソース文字列検査はWindows/Linuxの改行コード差へ依存させない。
  */
 
 'use strict';
@@ -35,7 +35,7 @@ const relationshipViewSource = readFileSync(join(projectRoot, 'app', 'renderer',
 const relationshipDialogControllerSource = readFileSync(join(projectRoot, 'app', 'renderer', 'js', 'ui', 'controllers', 'relationshipDialogController.js'), 'utf8');
 const roleHelpViewSource = readFileSync(join(projectRoot, 'app', 'renderer', 'js', 'ui', 'views', 'help', 'roleHelpView.js'), 'utf8');
 const licenseViewSource = readFileSync(join(projectRoot, 'app', 'renderer', 'js', 'ui', 'views', 'license', 'licenseView.js'), 'utf8');
-const constantsSource = readFileSync(join(projectRoot, 'app', 'renderer', 'js', 'config', 'constants.js'), 'utf8');
+const constantsSource = readFileSync(join(projectRoot, 'app', 'renderer', 'js', 'config', 'constants.js'), 'utf8').replace(/\r\n?/gu, '\n');
 
 
 test('製品画面の名称はAI人狼マネージャーへ統一する', () => {
