@@ -33,6 +33,7 @@ import { canSpeakDuringDay, canVoteDuringDay } from '../../../app/renderer/js/do
 import { buildPromptContext } from '../../../app/renderer/js/prompts/promptBuilder.js';
 import { createInitialState } from '../../../app/renderer/js/state/stateStore.js';
 import { validateImportedState } from '../../../app/renderer/js/state/stateValidator.js';
+import { validateNightState } from '../../../app/renderer/js/state/validators/nightStateValidator.js';
 
 function setRoles(state, roleIds) {
   applySetupRoles(state.players, roleIds);
@@ -135,6 +136,77 @@ test('凍結者は翌日の昼発言と投票を失い、処刑候補には残�
   const directVote = recordVote(state, { voterId: frozen.id, targetId: state.players[1].id });
   assert.equal(directVote.ok, false);
   assert.equal(directVote.message, '投票資格がありません。');
+});
+
+
+test('死亡済み座敷わらしの家主が後日死亡しても夜validatorは再後追いを要求しない', () => {
+  const state = createInitialState(4);
+  setRoles(state, ['zashikiWarashi', 'villager', 'wolf', 'villager']);
+  const [zashiki, owner, wolf, other] = state.players;
+  zashiki.roleState = createRoleState('zashikiWarashi', {
+    ownerId: owner.id,
+    ownerRoleId: owner.roleId,
+    resolvedTeam: 'village',
+  });
+  zashiki.alive = false;
+  zashiki.death = { cause: 'execution', day: 1 };
+  state.game.status = 'running';
+  state.game.phase = 'dawn';
+  state.game.day = 1;
+
+  const aliveAtStartIds = [owner.id, wolf.id, other.id];
+  const resolution = resolveNightActions(state, { attackedTargetId: owner.id, random: () => 0 });
+  assert.deepEqual(resolution.deaths.map((death) => death.playerId), [owner.id]);
+  state.night = {
+    day: 1,
+    status: 'resolved',
+    aliveAtStartIds,
+    plan: {
+      graveyardConversationRequired: false,
+      masonConversationRequired: false,
+      wolfConversationRequired: false,
+      wolfAttackRequired: true,
+      inspectActorIds: [],
+      guardActorIds: [],
+      mediumResultRecipientIds: [],
+    },
+    currentSlotIndex: 0,
+    graveyardConversationId: null,
+    masonConversationId: null,
+    wolfConversationId: null,
+    slots: [],
+    wolfAttack: {
+      conversationId: null,
+      voterWolfIds: [wolf.id],
+      voteByWolfId: { [wolf.id]: owner.id },
+      rationaleByWolfId: { [wolf.id]: '家主を襲撃する。' },
+      overrideByWolfId: { [wolf.id]: null },
+      tally: {
+        countsByTargetId: { [owner.id]: 1 },
+        topTargetIds: [owner.id],
+        resolutionMethod: 'plurality',
+      },
+      finalTargetId: owner.id,
+      status: 'confirmed',
+    },
+    resolution: {
+      ...resolution,
+      privateResults: [],
+      publicAnnouncement: '昨夜、家主が死亡しました。',
+      winnerPreview: null,
+    },
+  };
+
+  const errors = [];
+  validateNightState({
+    raw: state,
+    label: '死亡済み座敷わらし回帰',
+    errors,
+    checkId: () => {},
+    checkIds: () => {},
+  });
+
+  assert.equal(errors.some((message) => message.includes('夜解決の死亡予定者が占い・襲撃・猫又道連れ・後追いと一致しません。')), false);
 });
 
 

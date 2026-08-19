@@ -209,7 +209,7 @@ define("js/config/constants", ["require", "exports", "js/config/dataCompatibilit
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.TASK_LABELS = exports.AUDIENCE_LABELS = exports.EVENT_TYPE_LABELS = exports.DEFAULT_RULES = exports.DEFAULT_CHARACTER = exports.DEFAULT_REASONING_PROFILE = exports.REASONING_PROFILE_PROMPT_DESCRIPTIONS = exports.REASONING_PROFILE_OPTION_LABELS = exports.PRESET_NOTES = exports.PRESET_ROLES = exports.ROLE_IDS = exports.ROLE_DEFINITIONS = exports.TEAM_LABELS = exports.PHASE_LABELS = exports.PHASES = exports.VOTE_TIE_RESOLUTIONS = exports.SUPPORTED_PLAYER_COUNTS = exports.MAX_PLAYER_COUNT = exports.MIN_PLAYER_COUNT = exports.MAX_RESTORE_POINTS = exports.MAX_UNDO = exports.MAX_RESULT_IMPRESSION_LENGTH = exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = exports.PROMPT_SPEC_VERSION = exports.SCHEMA_VERSION = exports.APP_VERSION = void 0;
-    exports.APP_VERSION = '1.0.0';
+    exports.APP_VERSION = '1.0.1';
     // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
     // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。
     // 製品版1.0.0の基準schemaは1。項目追加・削除・意味変更・必須条件変更時だけ増やす。
@@ -606,8 +606,8 @@ define("generated/buildInfo", ["require", "exports"], function (require, exports
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BUNDLE_SHA256 = exports.BUILD_ID = void 0;
-    exports.BUILD_ID = '1ad6baf0f816ff2daa8d8416c3a955b500a491521c49eeecb0c86d77b41d048e';
-    exports.BUNDLE_SHA256 = '62eb385fbe2a93e65f2c6602349efce93964ccb26fd64af78fe9da938535cfb2';
+    exports.BUILD_ID = '5570016b73f5421ab0788165763f50d1445f7b5382719aa157baf7a0ab7140cb';
+    exports.BUNDLE_SHA256 = 'f872209d1ea8ec7785547b4409dc36b4756a301b214db988885d700514825f0e';
 });
 /**
  * 責務: 副作用の小さい汎用処理を提供する。
@@ -6770,7 +6770,7 @@ define("js/state/validators/conversationStateValidator", ["require", "exports", 
 });
 /**
  * 責務: 夜行動スロット、夜開始時生存者、能力実行、襲撃・護衛・凍結・死亡解決の保存値整合を検査する。
- * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。
+ * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。後追い期待値は夜開始時生存者だけを対象とする。
  */
 define("js/state/validators/nightStateValidator", ["require", "exports", "js/domain/roles/roleAttributes", "js/domain/game/playerStatus"], function (require, exports, roleAttributes_js_7, playerStatus_js_2) {
     "use strict";
@@ -7119,7 +7119,7 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                     ...(expectedAttackOutcome === 'killed' && expectedAttacked ? [expectedAttacked] : []),
                     ...(resolution.catCollateralWolfId ? [resolution.catCollateralWolfId] : []),
                 ]);
-                raw.players.filter((player) => player.roleId === 'zashikiWarashi' && player.roleState?.ownerId && expectedBaseDeathIds.has(player.roleState.ownerId)).forEach((player) => expectedBaseDeathIds.add(player.id));
+                raw.players.filter((player) => aliveAtStart.has(player.id) && player.roleId === 'zashikiWarashi' && player.roleState?.ownerId && expectedBaseDeathIds.has(player.roleState.ownerId)).forEach((player) => expectedBaseDeathIds.add(player.id));
                 if (deaths.some((death) => !expectedBaseDeathIds.has(death.playerId)) || expectedBaseDeathIds.size !== deathById.size)
                     errors.push(`${label}: 夜解決の死亡予定者が占い・襲撃・猫又道連れ・後追いと一致しません。`);
                 deaths.filter((death) => death.cause === 'owner-follow').forEach((death) => {
@@ -18831,7 +18831,7 @@ define("js/prompts/response/repair/speechInteractionRepair", ["require", "export
 });
 /**
  * 責務: 任意CO操作を現在の公開CO状態と役職構成に照らして補正する。
- * 変更ルール: 新しいCO意思決定を生成せず、表記・既存状態・公開配役構成から得た許可役職だけを検査する。役職欠け後の実配役を公開CO補正へ使用しない。
+ * 変更ルール: 新しいCO意思決定を生成せず、表記・既存状態・公開配役構成から得た許可役職だけを検査する。役職IDは許可役職集合からcanonical IDへ正規化し、役職欠け後の実配役を公開CO補正へ使用しない。
  */
 define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "js/domain/claims/claimRolePolicy", "js/domain/roles/roleComposition", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, claimRolePolicy_js_3, roleComposition_js_3, jsonObjectRecovery_js_2, repairUtilities_js_1) {
     "use strict";
@@ -18848,7 +18848,9 @@ define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "j
         const value = (0, repairUtilities_js_1.repairExactKeys)(payload.coOperation, 'coOperation', ['action', 'roleId'], operations);
         (0, repairUtilities_js_1.removeNullOptionalFields)(value, [], 'coOperation', operations);
         (0, repairUtilities_js_1.normalizeEnumField)(value, 'action', 'coOperation', operations);
-        (0, repairUtilities_js_1.normalizeEnumField)(value, 'roleId', 'coOperation', operations);
+        const allowedRoleIds = new Set((0, claimRolePolicy_js_3.buildClaimRolePolicy)((0, roleComposition_js_3.getPublicRoleComposition)(state)).coRoleIds.filter((roleId) => roleId !== 'none'));
+        const roleIdAliases = new Map([...allowedRoleIds].map((roleId) => [String(roleId).trim().toLowerCase(), roleId]));
+        (0, repairUtilities_js_1.normalizeEnumField)(value, 'roleId', 'coOperation', operations, roleIdAliases);
         const action = String(value.action ?? '');
         if (!['declare', 'change', 'withdraw'].includes(action)) {
             delete payload.coOperation;
@@ -18872,7 +18874,6 @@ define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "j
             (0, jsonObjectRecovery_js_2.operation)(operations, 'INCOMPLETE_OPTIONAL_SECTION_REMOVED', 'coOperation', '役職を確定できないCO操作を省略しました。');
             return;
         }
-        const allowedRoleIds = new Set((0, claimRolePolicy_js_3.buildClaimRolePolicy)((0, roleComposition_js_3.getPublicRoleComposition)(state)).coRoleIds.filter((roleId) => roleId !== 'none'));
         if (!allowedRoleIds.has(String(value.roleId))) {
             delete payload.coOperation;
             (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_CO_ROLE_REMOVED', 'coOperation', '現在許可されないCO役職の操作を省略しました。');

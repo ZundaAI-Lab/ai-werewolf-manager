@@ -5,7 +5,7 @@
 
 import { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } from './dataCompatibilityAdapter.js';
 
-export const APP_VERSION = '1.0.0';
+export const APP_VERSION = '1.0.1';
 
 // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
 // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。

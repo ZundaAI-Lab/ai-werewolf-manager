@@ -185,6 +185,37 @@ test('任意構造のnull除去・列挙正規化・重複除去を未定義参�
 });
 
 
+test('座敷わらしCOのcanonical roleIdを小文字化せず構造化COとして保持する', async () => {
+  const { repairAiResponseCandidate } = await import('../../../app/renderer/js/prompts/response/responseAutoRepair.js');
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  state.game.publicRoleComposition = {
+    zashikiWarashi: 1,
+    villager: 3,
+    wolf: 1,
+    seer: 1,
+  };
+  const raw = JSON.stringify({
+    publicSpeech: '座敷わらしCOです。',
+    coOperation: {
+      action: 'declare',
+      roleId: 'zashikiWarashi',
+    },
+  });
+
+  const repaired = repairAiResponseCandidate(state, {
+    mode: 'speech',
+    taskType: 'speech',
+    playerId: actor.id,
+    validTargetIds: [],
+  }, raw);
+  const candidate = JSON.parse(repaired.repairedRawResponse);
+
+  assert.deepEqual(candidate.coOperation, { action: 'declare', roleId: 'zashikiWarashi' });
+  assert.equal(repaired.operations.some((item) => item.code === 'INVALID_CO_ROLE_REMOVED'), false);
+});
+
+
 test('必須行動項目だけを代替し回収済み任意項目を保持する', async () => {
   const { buildRequiredFieldFallbackCandidate } = await import('../../../app/renderer/js/services/aiTaskFallbackService.js');
   const state = createInitialState(6);

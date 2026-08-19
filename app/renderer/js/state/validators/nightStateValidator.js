@@ -1,6 +1,6 @@
 /**
  * 責務: 夜行動スロット、夜開始時生存者、能力実行、襲撃・護衛・凍結・死亡解決の保存値整合を検査する。
- * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。
+ * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。後追い期待値は夜開始時生存者だけを対象とする。
  */
 
 import { countsAsWolf, isActualFox, isBadChild, isNightActionActor } from '../../domain/roles/roleAttributes.js';
@@ -286,7 +286,7 @@ export function validateNightState(context) {
         ...(expectedAttackOutcome === 'killed' && expectedAttacked ? [expectedAttacked] : []),
         ...(resolution.catCollateralWolfId ? [resolution.catCollateralWolfId] : []),
       ]);
-      raw.players.filter((player) => player.roleId === 'zashikiWarashi' && player.roleState?.ownerId && expectedBaseDeathIds.has(player.roleState.ownerId)).forEach((player) => expectedBaseDeathIds.add(player.id));
+      raw.players.filter((player) => aliveAtStart.has(player.id) && player.roleId === 'zashikiWarashi' && player.roleState?.ownerId && expectedBaseDeathIds.has(player.roleState.ownerId)).forEach((player) => expectedBaseDeathIds.add(player.id));
       if (deaths.some((death) => !expectedBaseDeathIds.has(death.playerId)) || expectedBaseDeathIds.size !== deathById.size) errors.push(`${label}: 夜解決の死亡予定者が占い・襲撃・猫又道連れ・後追いと一致しません。`);
       deaths.filter((death) => death.cause === 'owner-follow').forEach((death) => {
         const follower = raw.players.find((player) => player.id === death.playerId);
