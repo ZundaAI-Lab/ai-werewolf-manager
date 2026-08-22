@@ -441,7 +441,7 @@ ${spectatorOmniscientFactSignature(godView)}`
         questionTargetIds: result.questionTargetIds,
         answersMessageIds: result.answersMessageIds,
         sourcePublicRevision: source.publicRevision,
-        sourceEventSequence: source.eventSequence,
+        sourceRef: source.eventSequence,
       });
       setSpectatorObserverCursor(state, turn.speakerId, { publicRevision: source.publicRevision, eventSequence: source.eventSequence });
       await persist();

@@ -15,7 +15,7 @@
  * - 使用量集計は詳細ログ保存設定から独立させ、AIプロファイルIDを永続集計の正本として全用途のAPI要求を同じ累計へ加算し、API要求ごとのメモリ更新を短時間集約して最大待機時間または終了時flushで原子的保存する。
  * - ゲームIDやチャットセッションIDは詳細ログ用メタデータに留め、料金集計の階層キーにしない。
  * - プロファイル単位リセットは該当プロファイル累計だけを全体累計から差し引き、他プロファイル・詳細ログを変更しない。
- * - 詳細ログは保存直前に認証ヘッダー・APIキー形式をマスクする。
+ * - 詳細ログは保存直前に認証ヘッダー・APIキー形式をマスクし、POSIXでは現行ログとローテーション世代を0600へ制限する。
  * - ゲームID・AIプロファイルID・割り当てプレイヤーIDはMain境界で再検証し、AIプロファイルIDの重複はランダム修復せず拒否し、APIキーは配列位置ではなくIDで引き継ぐ。
  * - プロファイル別集計と参加者割り当ての動的キーはnull prototypeオブジェクトで保持する。
  */
@@ -23,6 +23,7 @@
 'use strict';
 
 const {
+  chmodSync,
   closeSync,
   existsSync,
   fsyncSync,
@@ -509,6 +510,25 @@ function loadUsageSummary(path) {
   }
 }
 
+
+function restrictRequestLogPermissions(path) {
+  if (process.platform === 'win32') return;
+  for (let generation = 0; generation <= REQUEST_LOG_GENERATIONS; generation += 1) {
+    const target = generation === 0 ? path : `${path}.${generation}`;
+    if (existsSync(target)) chmodSync(target, 0o600);
+  }
+}
+
+function appendPrivateRequestLog(path, line) {
+  let descriptor = null;
+  try {
+    descriptor = openSync(path, 'a', 0o600);
+    writeFileSync(descriptor, line, 'utf8');
+  } finally {
+    if (descriptor !== null) closeSync(descriptor);
+  }
+}
+
 function rotateRequestLog(path, incomingBytes) {
   const currentBytes = existsSync(path) ? statSync(path).size : 0;
   if (currentBytes + incomingBytes <= REQUEST_LOG_MAX_BYTES) return;
@@ -627,6 +647,7 @@ class SettingsStore {
     this.settingsPath = join(userDataPath, 'desktop-settings.json');
     this.requestLogPath = join(userDataPath, 'llm-request-log.jsonl');
     this.usageSummaryPath = join(userDataPath, 'llm-usage-summary.json');
+    restrictRequestLogPermissions(this.requestLogPath);
     this.settings = loadStoredSettings(this.settingsPath);
     this.usageSummary = loadUsageSummary(this.usageSummaryPath);
     this.usageSummaryDirty = false;
@@ -762,7 +783,7 @@ class SettingsStore {
     mkdirSync(dirname(this.requestLogPath), { recursive: true });
     const line = `${JSON.stringify(sanitizeRequestLogEntry({ ...entry, timestamp }))}\n`;
     rotateRequestLog(this.requestLogPath, Buffer.byteLength(line, 'utf8'));
-    writeFileSync(this.requestLogPath, line, { encoding: 'utf8', flag: 'a' });
+    appendPrivateRequestLog(this.requestLogPath, line);
   }
 
   getUsageSummary() {

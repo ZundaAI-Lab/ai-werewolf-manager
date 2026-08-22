@@ -1,6 +1,6 @@
 /**
  * 責務: 現在のゲーム状態だけから、全自動進行が次に実行する一つの操作を純粋導出する。
- * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。
+ * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、機密会話の通常次話者も各会話ポリシーのround-robin導出を使用する。AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。
  */
 
 import { TASK_GENERATION_CATEGORY } from '../../config/generationTaskCategories.js';
@@ -8,9 +8,9 @@ import { getCurrentGmTask } from './workflow.js';
 import { getAlivePlayers, getPlayer } from './standardRules.js';
 import { canSpeakDuringDay } from './playerStatus.js';
 import { getActiveGraveyardConversation, getActiveMasonConversation, getActiveWolfConversation } from '../../state/selectors.js';
-import { getGraveyardConversationEligibleSpeakerIds } from '../night/graveyardConversationPolicy.js';
-import { getMasonConversationEligibleSpeakerIds } from '../night/masonConversationPolicy.js';
-import { getWolfConversationEligibleSpeakerIds } from '../night/wolfConversationPolicy.js';
+import { getGraveyardConversationNextSpeakerId } from '../night/graveyardConversationPolicy.js';
+import { getMasonConversationNextSpeakerId } from '../night/masonConversationPolicy.js';
+import { getWolfConversationNextSpeakerId } from '../night/wolfConversationPolicy.js';
 
 const PUBLIC_AI_TASK_TYPES = new Set(['speech', 'speech-designated', 'speech-free', 'priority-answer', 'testament', 'result-impression']);
 const PRIVATE_AI_TASK_TYPES = new Set(Object.keys(TASK_GENERATION_CATEGORY).filter((taskType) => !PUBLIC_AI_TASK_TYPES.has(taskType)));
@@ -31,15 +31,15 @@ function firstDiscussionCandidate(state) {
 function taskPlayerId(state, task) {
   if (task.type === 'graveyard-conversation') {
     const session = getActiveGraveyardConversation(state);
-    return getGraveyardConversationEligibleSpeakerIds(session)[0] ?? null;
+    return getGraveyardConversationNextSpeakerId(session);
   }
   if (task.type === 'wolf-conversation') {
     const session = getActiveWolfConversation(state);
-    return getWolfConversationEligibleSpeakerIds(session)[0] ?? null;
+    return getWolfConversationNextSpeakerId(session);
   }
   if (task.type === 'mason-conversation') {
     const session = getActiveMasonConversation(state);
-    return getMasonConversationEligibleSpeakerIds(session)[0] ?? null;
+    return getMasonConversationNextSpeakerId(session);
   }
   return task.playerId ?? null;
 }

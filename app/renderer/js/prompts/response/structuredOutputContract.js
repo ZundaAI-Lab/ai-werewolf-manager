@@ -1,6 +1,6 @@
 /**
  * 責務: タスク・本人役職の機械応答契約と現在の有効対象から、Provider非依存の構造化出力Schemaを生成する。
- * 変更ルール: Provider固有のrequest bodyを生成せず、ゲーム状態を更新しない。許可キーと回答検証必須キーはresponseContract.js、役職適合判定はfactionStrategyState.jsを正本とし、Schema.requiredには欠落時にゲーム進行を止める回答検証必須項目だけを入れる。AI向けプロンプトで原則出力するactionRationale / decisionPatch等を、プロンプト掲載を理由にSchema.requiredへ追加してはならない。投票候補のenumは現在タスクの正式表示名だけから構成する。構造化出力非対応時はプロンプト契約へ委譲できるようnullを返す。
+ * 変更ルール: Provider固有のrequest bodyを生成せず、ゲーム状態を更新しない。許可キーと回答検証必須キーはresponseContract.js、役職適合判定はfactionStrategyState.jsを正本とし、Schema.requiredには欠落時にゲーム進行を止める回答検証必須項目だけを入れる。AI向けプロンプトで原則出力するrationale / decisionPatch等を、プロンプト掲載を理由にSchema.requiredへ追加してはならない。投票候補のenumは現在タスクの正式表示名だけから構成する。構造化出力非対応時はプロンプト契約へ委譲できるようnullを返す。
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
@@ -15,7 +15,7 @@ import {
 } from './responseContract.js';
 
 const VOTE_DECISION_PROPERTY_SCHEMAS = Object.freeze({
-  suspicionCandidates: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
+  suspects: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
   executionCandidates: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
   assessmentLevel: Object.freeze({ type: 'string', enum: Object.freeze([...DECISION_ASSESSMENT_LEVELS]) }),
   leaveAliveBenefit: Object.freeze({ type: 'string' }),
@@ -23,8 +23,8 @@ const VOTE_DECISION_PROPERTY_SCHEMAS = Object.freeze({
   selectionDifference: Object.freeze({ type: 'string' }),
   uncertainty: Object.freeze({ type: 'string' }),
   nextDiscriminatingInformation: Object.freeze({ type: 'string' }),
-  correctedSpeechSequences: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
-  evidenceEventSequences: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
+  correctedSpeechRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
+  evidenceRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
 });
 
 function voteDecisionPatchSchema() {
@@ -39,13 +39,13 @@ function voteDecisionPatchSchema() {
 
 const TOP_LEVEL_PROPERTY_SCHEMAS = Object.freeze({
   actionAnswer: Object.freeze({ type: 'string' }),
-  actionRationale: Object.freeze({ type: 'string' }),
+  rationale: Object.freeze({ type: 'string' }),
   decisionPatch: Object.freeze(voteDecisionPatchSchema()),
   memoAdd: Object.freeze({ type: 'string' }),
 });
 
 
-function factionStrategyUpdateSchema(roleId, partnerDispositionPolicy = null) {
+function factionStrategySchema(roleId, partnerDispositionPolicy = null) {
   const fields = getFactionStrategyResponseFields(roleId, partnerDispositionPolicy);
   if (!fields.length) return null;
   return {
@@ -91,8 +91,8 @@ export function buildStructuredOutputContract(state, {
   if (!targetNames.length) return null;
   const properties = {};
   for (const key of getRoleCompatibleResponseTopLevelKeys(mode, roleId)) {
-    const base = key === 'factionStrategyUpdate'
-      ? factionStrategyUpdateSchema(roleId, partnerDispositionPolicy)
+    const base = key === 'factionStrategy'
+      ? factionStrategySchema(roleId, partnerDispositionPolicy)
       : TOP_LEVEL_PROPERTY_SCHEMAS[key];
     if (!base) continue;
     properties[key] = key === 'actionAnswer'

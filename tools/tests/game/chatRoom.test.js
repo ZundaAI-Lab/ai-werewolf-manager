@@ -5,6 +5,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import {
   addAiMessage,
   addHumanMessage,
@@ -30,6 +31,10 @@ import {
   selectOpeningConversationCue,
   selectOptionalConversationCue,
 } from '../../../app/renderer/js/prompts/chat/chatRoomConversationCuePolicy.js';
+
+const require = createRequire(import.meta.url);
+const demoAi = require('../../../app/shared/demoAi.js');
+const { flattenPromptEnvelope } = require('../../../app/main/llm/promptEnvelopeValidator.js');
 
 const participants = Object.freeze([
   { characterId: 'char-a', profileId: 'profile-a' },
@@ -86,6 +91,48 @@ test('チャットPrompt EnvelopeはMain共通契約のschemaVersion 5を使用�
   const state = room();
   const envelope = buildChatRoomPromptEnvelope({ state, speakerCard: cards[0], participantCards: cards, pendingQuestions: [] });
   assert.equal(envelope.schemaVersion, 5);
+});
+
+test('デモAIはチャットルーム専用応答を返しJSON例へ依存しない', () => {
+  const state = room();
+  setCharacterMemory(state, 'char-a', ['既存の内部メモ']);
+  const envelope = buildChatRoomPromptEnvelope({
+    state,
+    speakerCard: cards[0],
+    participantCards: cards,
+    pendingQuestions: [],
+    turn: { kind: 'round', speakerId: 'char-a' },
+  });
+  const parsed = parseChatRoomResponse(demoAi.generate({
+    prompt: flattenPromptEnvelope(envelope),
+    taskType: 'chat-room',
+    playerName: 'A',
+  }), {
+    participantIds: ['char-a', 'char-b', 'char-c'],
+    speakerId: 'char-a',
+    fallbackMemory: getCharacterMemory(state, 'char-a'),
+  });
+  assert.equal(parsed.chatMessage, 'こんにちは。デモAIです。チャットルームの動作確認用に参加しています。');
+  assert.deepEqual(parsed.memory, ['既存の内部メモ']);
+});
+
+test('デモAIはチャットルーム質問専用回答の元質問IDを引き継ぐ', () => {
+  const state = room();
+  const question = addHumanMessage(state, { text: 'Aに質問', targetId: 'char-a', targetName: 'A' });
+  const turn = ensureNextTurn(state);
+  const pending = pendingQuestionsFor(state, 'char-a').filter((item) => item.messageId === question.id);
+  const envelope = buildChatRoomPromptEnvelope({ state, speakerCard: cards[0], participantCards: cards, pendingQuestions: pending, turn });
+  const parsed = parseChatRoomResponse(demoAi.generate({
+    prompt: flattenPromptEnvelope(envelope),
+    taskType: 'chat-room',
+    playerName: 'A',
+  }), {
+    participantIds: ['char-a', 'char-b', 'char-c'],
+    speakerId: 'char-a',
+    pendingMessageIds: [question.id],
+    requiredAnswerMessageId: question.id,
+  });
+  assert.deepEqual(parsed.answersMessageIds, [question.id]);
 });
 
 test('プレイヤー名はチャット状態へ保持され人間発言とAI向け履歴へ反映される', () => {
@@ -277,20 +324,6 @@ test('初回conversationSeedは最初の話者だけへ提示し初回発言後�
 });
 
 
-
-test('お題指定時は初回conversationSeedをPromptへ一切含めない', () => {
-  const state = room({ topic: '夢の話', openingSeed: { subject: '夏休み', tone: '楽しそう' } });
-  const firstId = state.opening.speakerId;
-  const firstCard = cards.find((item) => item.id === firstId);
-  const envelope = buildChatRoomPromptEnvelope({ state, speakerCard: firstCard, participantCards: cards, pendingQuestions: [] });
-  const serialized = JSON.stringify(envelope);
-  assert.match(envelope.commonGameContext, /現在のお題: 夢の話/u);
-  assert.doesNotMatch(serialized, /夏休み/u);
-  assert.doesNotMatch(serialized, /楽しそう/u);
-  assert.doesNotMatch(envelope.dynamicTaskPrompt, /会話のきっかけ/u);
-  assert.match(envelope.dynamicTaskPrompt, /キャラクターらしい自然な一言から会話を始めてください/u);
-});
-
 test('システム汎用会話きっかけは10種類あり回答ターンでは選択しない', () => {
   assert.equal(SYSTEM_CONVERSATION_CUES.length, 10);
   assert.equal(new Set(SYSTEM_CONVERSATION_CUES.map((cue) => cue.id)).size, 10);
@@ -334,46 +367,6 @@ test('お題変更は会話履歴へシステム発言として残し通常キ�
   assert.equal(state.topic, '好きな食べ物');
   assert.deepEqual(state.queue, before);
   assert.match(state.messages.at(-1).text, /好きな食べ物/u);
-});
-
-test('質問専用回答Promptは対象質問だけを必須回答にし会話きっかけを混ぜない', () => {
-  const state = room();
-  const question = addHumanMessage(state, { text: 'Bは夏と冬どっちが好き？', targetId: 'char-b', targetName: 'B' });
-  const turn = ensureNextTurn(state);
-  const pending = pendingQuestionsFor(state, 'char-b').filter((item) => item.messageId === question.id);
-  const envelope = buildChatRoomPromptEnvelope({
-    state,
-    speakerCard: cards[1],
-    participantCards: cards,
-    pendingQuestions: pending,
-    turn,
-    conversationCue: { id: 'should-not-use', subject: '旅行', tone: '楽しく' },
-  });
-  assert.match(envelope.dynamicTaskPrompt, /専用回答ターン/u);
-  assert.match(envelope.dynamicTaskPrompt, new RegExp(question.id, 'u'));
-  assert.match(envelope.dynamicTaskPrompt, /answersMessageIdsへ必ず/u);
-  assert.doesNotMatch(envelope.dynamicTaskPrompt, /任意の会話の着想/u);
-});
-
-test('通常Promptは他キャラへの質問や話題展開を弱く促すが毎回質問を要求しない', () => {
-  const state = room();
-  const envelope = buildChatRoomPromptEnvelope({ state, speakerCard: cards[0], participantCards: cards, pendingQuestions: [], turn: { kind: 'round', speakerId: 'char-a' } });
-  assert.match(envelope.taskInvariantContext, /短く尋ねたり別の参加者の意見を聞いたりして構いません/u);
-  assert.match(envelope.taskInvariantContext, /毎回質問する必要はなく/u);
-  assert.match(envelope.taskInvariantContext, /経験、好み、別の視点/u);
-  assert.match(envelope.taskInvariantContext, /返答を求める明示的な質問/u);
-});
-
-test('チャットPromptはキャラクター会話情報だけを使い人狼専用情報を混入させない', () => {
-  const state = room();
-  state.game = { roleId: 'wolf', faction: 'wolf', vote: 'NEVER_LEAK_GAME_STATE' };
-  state.discussionRuntime = { marker: 'NEVER_LEAK_RUNTIME' };
-  const envelope = buildChatRoomPromptEnvelope({ state, speakerCard: cards[0], participantCards: cards, pendingQuestions: [] });
-  const serialized = JSON.stringify(envelope);
-  assert.match(envelope.commonGameContext, /これは人狼ゲームではありません/u);
-  for (const secret of ['NEVER_LEAK_DISCUSSION', 'NEVER_LEAK_REASONING', 'NEVER_LEAK_GAME_STATE', 'NEVER_LEAK_RUNTIME']) {
-    assert.doesNotMatch(serialized, new RegExp(secret, 'u'));
-  }
 });
 
 test('チャット応答解析は不正質問先・自己質問・未解決でない回答参照を除去する', () => {

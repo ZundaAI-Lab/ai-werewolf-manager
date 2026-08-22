@@ -40,7 +40,7 @@ test('順番制は既存speech契約とプロンプトを維持し専用議論�
   assert.equal(getCurrentGmTask(state).type, 'speech');
   assert.deepEqual(getResponseTopLevelKeys('speech'), [
     'publicSpeech', 'speechInteraction', 'coOperation', 'abilityClaims',
-    'decisionPatch', 'factionStrategyUpdate', 'heartVoice', 'memoAdd',
+    'decisionPatch', 'factionStrategy', 'heartVoice', 'memoAdd',
   ]);
 
   const artifact = prepareAiTask(state, { playerId: firstId, taskType: 'speech' });

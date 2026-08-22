@@ -13,7 +13,7 @@ function speechRecord(context, event, publicSpeechById) {
   const questionTargets = [...new Set((interaction.questionTargetIds ?? [])
     .map((id) => playerName(context, id, ''))
     .filter(Boolean))];
-  const answerEventSequences = [...new Set((interaction.answersEventIds ?? [])
+  const answerToRefs = [...new Set((interaction.answersEventIds ?? [])
     .map((eventId) => publicSpeechById.get(eventId))
     .filter((source) => (source?.payload?.structured?.interaction?.questionTargetIds ?? []).includes(event.actorId))
     .map((source) => source.sequence)
@@ -21,7 +21,7 @@ function speechRecord(context, event, publicSpeechById) {
     .map((sequence) => Number(sequence)))];
   const annotations = [
     questionTargets.length ? `質問:${questionTargets.join('、')}` : '',
-    answerEventSequences.length ? `回答:${answerEventSequences.map((sequence) => `#${sequence}`).join('、')}` : '',
+    answerToRefs.length ? `回答:${answerToRefs.map((sequence) => `#${sequence}`).join('、')}` : '',
   ].filter(Boolean).join('/');
   const speaker = playerName(context, event.actorId);
   const rawText = String(event?.payload?.text ?? '');

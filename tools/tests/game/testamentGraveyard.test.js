@@ -23,6 +23,9 @@ import { getCurrentGmTask } from '../../../app/renderer/js/domain/game/workflow.
 import { buildPlayerVisibleContext } from '../../../app/renderer/js/prompts/context/promptContext.js';
 import { detectGameResult, confirmGameResult, publishGameResult } from '../../../app/renderer/js/domain/result/resultRuntime.js';
 import { buildPublicSnapshot } from '../../../app/renderer/js/public/publicSnapshot.js';
+import { prepareImportedState } from '../../../app/renderer/js/state/stateImport.js';
+import { createGameCallNameSnapshot } from '../../../app/renderer/js/characters/callNames/callNameResolver.js';
+import { synchronizePlayerKnowledgeForTest } from './testStateHelpers.js';
 
 function prepareCompletedDiscussion(state) {
   const ids = state.players.map((player) => player.id);
@@ -172,6 +175,12 @@ test('遺言ONでは処刑公開前に一度だけ公開発言または辞退を
   store.commit('処刑公開', (draft) => { published = publishExecution(draft); }, { publicBarrier: true });
   assert.equal(published.ok, true, published.message);
   assert.equal(store.getState().players.find((player) => player.id === targetId).alive, false);
+  {
+    const importable = structuredClone(store.getState());
+    importable.game.callNameSnapshot = createGameCallNameSnapshot(importable.players);
+    synchronizePlayerKnowledgeForTest(importable);
+    assert.doesNotThrow(() => prepareImportedState(importable), '遺言完了後の公開済み処刑状態を再読込できる');
+  }
 });
 
 test('遺言は辞退しても処刑進行を再開でき、二重登録できない', () => {
@@ -194,6 +203,12 @@ test('遺言は辞退しても処刑進行を再開でき、二重登録でき�
   let published = null;
   store.commit('処刑公開', (draft) => { published = publishExecution(draft); }, { publicBarrier: true });
   assert.equal(published.ok, true, published.message);
+  {
+    const importable = structuredClone(store.getState());
+    importable.game.callNameSnapshot = createGameCallNameSnapshot(importable.players);
+    synchronizePlayerKnowledgeForTest(importable);
+    assert.doesNotThrow(() => prepareImportedState(importable), '遺言辞退後の公開済み処刑状態を再読込できる');
+  }
 });
 
 
@@ -280,13 +295,21 @@ test('墓場会話は夜開始時死亡者だけで開始し、設定回数を�
   assert.deepEqual(session.remainingByParticipant, Object.fromEntries(dead.map((player) => [player.id, 2])));
   assert.equal(getCurrentGmTask(current).type, 'graveyard-conversation');
 
-  for (const player of dead) {
+  for (const [index, player] of dead.entries()) {
     let response = null;
     store.commit('墓場発言', (draft) => {
       response = recordGraveyardMessage(draft, { speakerId: player.id, content: `${player.name}の1巡目` });
     });
     assert.equal(response.ok, true, response.message);
     assert.equal(response.conversationCompleted, false);
+    if (index === 0) {
+      let repeated = null;
+      store.commit('墓場連続発言拒否', (draft) => {
+        repeated = recordGraveyardMessage(draft, { speakerId: player.id, content: `${player.name}の連続発言` });
+      });
+      assert.equal(repeated.ok, false);
+      assert.match(repeated.message, /連続して発言できません/u);
+    }
   }
   current = store.getState();
   session = current.graveyardConversations.find((item) => item.id === sessionId);

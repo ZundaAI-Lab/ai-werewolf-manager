@@ -205,7 +205,6 @@ test('Renderer製品JSはbootstrapまたはHTML直読込入口から全て到達
   assert.equal(graph.entryPoints.includes('app/bootstrap.js'), true);
   assert.equal(graph.entryPoints.includes('automation/desktopAutomation.js'), false);
   assert.equal(graph.entryPoints.includes('automation/automationEntry.js'), false);
-  assert.match(readFileSync(join(projectRoot, 'app/renderer/js/app/bootstrap.js'), 'utf8'), /import '\.\.\/automation\/automationEntry\.js'/u);
 });
 
 

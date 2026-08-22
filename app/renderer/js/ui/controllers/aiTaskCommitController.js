@@ -206,8 +206,8 @@ export function createAiTaskCommitController({
         internalMemoUpdate: parsed?.internalMemoUpdate ?? null,
         parsedDecisionUpdate: parsed?.decisionUpdate ?? null,
         decisionUpdate: validation?.resolvedDecisionUpdate ?? null,
-        parsedFactionStrategyUpdate: parsed?.factionStrategyUpdate ?? null,
-        factionStrategyUpdate: validation?.resolvedFactionStrategyUpdate ?? null,
+        parsedFactionStrategyPatch: parsed?.factionStrategyPatch ?? null,
+        factionStrategyPatch: validation?.resolvedFactionStrategyState ?? null,
         warnings: [...(validation?.warnings ?? []), fallbackWarning],
         generationRun: fallbackRun,
       };
@@ -234,7 +234,7 @@ export function createAiTaskCommitController({
           playerId,
           questionEventId: slotId,
           reason,
-          parsedAbilityClaims: parsed?.abilityClaims ?? null,
+          parsedAbilityClaims: null,
           ...common,
         });
       } else if (taskType === 'testament') {
@@ -342,13 +342,13 @@ export function createAiTaskCommitController({
         resolvedInternalReasoningDirective: taskArtifact.internalReasoningDirective ?? null,
         heartVoice: parsed.heartVoice,
         internalMemoUpdate: parsed.internalMemoUpdate,
-        actionRationale: parsed.actionRationale,
+        selectionRationale: parsed.selectionRationale,
         parsedAttackAssessment: parsed.attackAssessment,
         resolvedAttackAssessment: validation.resolvedAttackAssessment,
         estimatedWerewolfIds: validation.resolvedFreezeEstimates?.estimatedWerewolfIds ?? [],
         predictedAttackTargetIds: validation.resolvedFreezeEstimates?.predictedAttackTargetIds ?? [],
-        parsedFactionStrategyUpdate: parsed.factionStrategyUpdate,
-        factionStrategyUpdate: validation.resolvedFactionStrategyUpdate,
+        parsedFactionStrategyPatch: parsed.factionStrategyPatch,
+        factionStrategyPatch: validation.resolvedFactionStrategyState,
         warnings: validation.warnings,
         generationRun,
         override,
@@ -396,12 +396,12 @@ export function createAiTaskCommitController({
           publicSequenceAtGeneration: taskArtifact.publicSequenceAtGeneration,
           resolvedInternalReasoningDirective: taskArtifact.internalReasoningDirective ?? null,
           coOperation: parsed.coOperation,
-          parsedAbilityClaims: parsed.abilityClaims,
+          parsedAbilityClaims: validation.normalizedParsedAbilityClaims,
           abilityClaims: validation.resolvedAbilityClaims,
           parsedDecisionUpdate: parsed.decisionUpdate,
           decisionUpdate: validation.resolvedDecisionUpdate,
-          parsedFactionStrategyUpdate: parsed.factionStrategyUpdate,
-          factionStrategyUpdate: validation.resolvedFactionStrategyUpdate,
+          parsedFactionStrategyPatch: parsed.factionStrategyPatch,
+          factionStrategyPatch: validation.resolvedFactionStrategyState,
           warnings: validation.warnings,
           generationRun,
         });
@@ -411,7 +411,7 @@ export function createAiTaskCommitController({
           playerId,
           content: parsed.publicSpeech,
           coOperation: parsed.coOperation,
-          parsedAbilityClaims: parsed.abilityClaims,
+          parsedAbilityClaims: validation.normalizedParsedAbilityClaims,
           abilityClaims: validation.resolvedAbilityClaims,
           ...common,
         });
@@ -429,8 +429,8 @@ export function createAiTaskCommitController({
           internalMemoUpdate: common.internalMemoUpdate,
           parsedDecisionUpdate: parsed.decisionUpdate,
           decisionUpdate: validation.resolvedDecisionUpdate,
-          parsedFactionStrategyUpdate: common.parsedFactionStrategyUpdate,
-          factionStrategyUpdate: common.factionStrategyUpdate,
+          parsedFactionStrategyPatch: common.parsedFactionStrategyPatch,
+          factionStrategyPatch: common.factionStrategyPatch,
           warnings: common.warnings,
           generationRun: common.generationRun,
           aiTaskType: taskType,
@@ -443,7 +443,7 @@ export function createAiTaskCommitController({
           parsedSpeechInteraction: parsed.speechInteraction,
           speechInteraction: validation.resolvedSpeechInteraction,
           coOperation: parsed.coOperation,
-          parsedAbilityClaims: parsed.abilityClaims,
+          parsedAbilityClaims: validation.normalizedParsedAbilityClaims,
           abilityClaims: validation.resolvedAbilityClaims,
         });
         options = { publicBarrier: true };
@@ -465,11 +465,11 @@ export function createAiTaskCommitController({
       } else if (taskType === 'graveyard-conversation') {
         command = (draft) => domainCommands.recordGraveyardMessage(draft, { speakerId: playerId, content: parsed.graveyardMessage, ...common });
       } else if (taskType === 'wolf-conversation') {
-        command = (draft) => domainCommands.recordWolfMessage(draft, { speakerId: playerId, content: parsed.wolfMessage, sharedStrategyUpdate: parsed.sharedStrategyUpdate, ...common });
+        command = (draft) => domainCommands.recordWolfMessage(draft, { speakerId: playerId, content: parsed.wolfMessage, sharedStrategyPatch: parsed.sharedStrategyPatch, ...common });
       } else if (taskType === 'memo-consolidate') {
         command = (draft) => domainCommands.consolidatePlayerInternalMemory(draft, {
           playerId,
-          summary: parsed.consolidatedMemo,
+          summary: parsed.fullMemo,
           rawResponse: String(rawResponse ?? ''),
           promptText: taskArtifact.text,
           promptFingerprint: taskArtifact.fingerprint,

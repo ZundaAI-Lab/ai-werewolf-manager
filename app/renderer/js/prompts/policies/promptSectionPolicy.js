@@ -55,7 +55,7 @@ function resolveOwnHistoryMode(taskType) {
 }
 
 export function resolvePromptSectionPolicy(situation, {
-  factionStrategyUpdatePolicy = null,
+  factionStrategyPolicy = null,
   includeInitial = false,
   publicHistoryPolicy = null,
 } = {}) {
@@ -73,7 +73,7 @@ export function resolvePromptSectionPolicy(situation, {
   );
   const showDayFactionStrategy = DAY_SHARED_COMMUNICATION_TASKS.has(taskType);
   const showWolfTacticalDetail = showDayFactionStrategy
-    && Boolean(factionStrategyUpdatePolicy?.showTacticalDetail);
+    && Boolean(factionStrategyPolicy?.showTacticalDetail);
 
   return Object.freeze({
     showPlayerProfile: taskType !== 'memo-consolidate',
@@ -99,10 +99,10 @@ export function resolvePromptSectionPolicy(situation, {
     ownHistoryMode: resolveOwnHistoryMode(taskType),
     showLatestDecision: LATEST_DECISION_TASKS.has(taskType),
     showLatestFactionStrategy: showDayFactionStrategy
-      && Boolean(factionStrategyUpdatePolicy?.showLatestFactionStrategy),
+      && Boolean(factionStrategyPolicy?.showLatestFactionStrategy),
     showWolfTacticalDetail,
     showPartnerPublicPositions: showDayFactionStrategy
-      && Boolean(factionStrategyUpdatePolicy?.showPartnerPublicPositions),
+      && Boolean(factionStrategyPolicy?.showPartnerPublicPositions),
     showDiscussionReconsideration: showDayPublicResponse,
     showRoleDecision: situation.isDayDecision,
     showEndgameFactionTactics: (showDayPublicResponse || (situation.isVote && situation.strategyProfile === 'madman')) && situation.isEndgameFactionTactics,

@@ -13,12 +13,12 @@ const FIELD_TABLE = Object.freeze({
   'priority-answer': Object.freeze({ publicSpeech: 'public-dialogue', heartVoice: 'inner-voice' }),
   testament: Object.freeze({ publicSpeech: 'public-dialogue' }),
   'result-impression': Object.freeze({ publicSpeech: 'result-comment' }),
-  vote: Object.freeze({ actionRationale: 'audit-rationale' }),
-  'wolf-attack': Object.freeze({ actionRationale: 'audit-rationale' }),
+  vote: Object.freeze({ rationale: 'audit-rationale' }),
+  'wolf-attack': Object.freeze({ rationale: 'audit-rationale' }),
   'wolf-conversation': Object.freeze({ wolfMessage: 'private-dialogue' }),
   'mason-conversation': Object.freeze({ masonMessage: 'private-dialogue' }),
   'graveyard-conversation': Object.freeze({ graveyardMessage: 'private-dialogue' }),
-  'memo-consolidate': Object.freeze({ consolidatedMemo: 'internal-memo' }),
+  'memo-consolidate': Object.freeze({ fullMemo: 'internal-memo' }),
 });
 
 const LOCK_FIELDS_BY_TASK = Object.freeze({
@@ -29,7 +29,7 @@ const LOCK_FIELDS_BY_TASK = Object.freeze({
   testament: Object.freeze(['coOperation', 'abilityClaims']),
   vote: Object.freeze(['actionAnswer', 'decisionPatch']),
   'wolf-attack': Object.freeze(['actionAnswer', 'attackAssessment']),
-  'wolf-conversation': Object.freeze(['sharedStrategyUpdate']),
+  'wolf-conversation': Object.freeze(['sharedStrategy']),
   'mason-conversation': Object.freeze(['decisionPatch']),
   'graveyard-conversation': Object.freeze([]),
   'result-impression': Object.freeze([]),
@@ -62,7 +62,7 @@ const CONTEXT_SECTIONS_BY_PURPOSE = Object.freeze({
 
 function tableForTask(taskType) {
   if (Object.hasOwn(FIELD_TABLE, taskType)) return FIELD_TABLE[taskType];
-  if (isPersonalNightActionTask(taskType)) return Object.freeze({ actionRationale: 'audit-rationale' });
+  if (isPersonalNightActionTask(taskType)) return Object.freeze({ rationale: 'audit-rationale' });
   throw new RangeError(`生成工程で未対応のtaskTypeです: ${taskType}`);
 }
 

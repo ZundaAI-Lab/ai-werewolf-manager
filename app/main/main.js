@@ -1,6 +1,6 @@
 /**
  * 責務: Electronウィンドウ、秘密情報を扱うIPC、外観設定IPC、組み込み/ユーザーキャラクターライブラリ、人狼ゲームとは独立した自由チャットルーム保存・観戦ルーム保存、構造化プロンプトEnvelopeのLLM要求、外部LLMデータ送信確認とプロファイル利用上限の送信前ガード、API使用量・実績料金集計、自動保存を提供する。
- * 変更ルール: ゲーム規則とDOM操作を持たず、現在のメインウィンドウmainFrameから届く固定IPCだけを受理する。通常生成ではRendererが渡した固定完全応答契約をプロバイダーのsystem指示へ分離して送り、本文プロンプトへ再結合しない。プロファイルの一時上書きはOllama投票再試行のthinking=noneだけを厳密条件下で許可し、保存設定を変更しない。LLM失敗は構造化して返し、HTTP分類はproviderClients.js、料金計算・プロファイル上限判定はllm/usageCostCalculator.js、並行要求の上限予約はprofileBudgetReservation.js、ローカルモデル発見はlocalLlmClient.js、自動保存順序はautosaveStore.jsを正本とする。アプリ終了時はゲーム自動保存・自由チャット保存・観戦ルーム保存を期限付きで完了待機してから終了する。外部ナビゲーションと任意ファイルアクセスは許可しない。組み込みキャラクターは固定ディレクトリから読み、ユーザー作成分・使用状態・表示順だけをuserDataへ保存する。
+ * 変更ルール: ゲーム規則とDOM操作を持たず、現在のメインウィンドウmainFrameから届く固定IPCだけを受理する。通常生成ではRendererが渡した固定完全応答契約をプロバイダーのsystem指示へ分離して送り、本文プロンプトへ再結合しない。プロファイルの一時上書きはOllama投票再試行のthinking=noneだけを厳密条件下で許可し、保存設定を変更しない。LLM失敗は構造化して返し、HTTP分類はproviderClients.js、料金計算・プロファイル上限判定はllm/usageCostCalculator.js、並行要求の上限予約はprofileBudgetReservation.js、ローカルモデル発見はlocalLlmClient.js、自動保存順序はautosaveStore.jsを正本とする。アプリ終了時はゲーム自動保存・自由チャット保存・観戦ルーム保存を期限付きで完了待機してから終了する。外部ナビゲーションと任意ファイルアクセスは許可せず、Clipboard書込もMain IPC境界でUTF-8バイト上限を検証する。組み込みキャラクターは固定ディレクトリから読み、ユーザー作成分・使用状態・表示順だけをuserDataへ保存する。
  */
 
 'use strict';
@@ -43,6 +43,7 @@ let quitFlushInProgress = false;
 const activeRequests = new Map();
 const CHAT_ROOM_FLUSH_TIMEOUT_MS = 5000;
 const SPECTATOR_ROOM_FLUSH_TIMEOUT_MS = 5000;
+const MAX_CLIPBOARD_BYTES = 8 * 1024 * 1024;
 
 function requestHash(value) {
   return createHash('sha256').update(String(value ?? '')).digest('hex');
@@ -214,7 +215,12 @@ function registerIpc() {
   trustedIpc.handle('desktop:reset-usage-summary', (_event, scope) => settingsStore.resetUsageSummary(scope));
   trustedIpc.handle('desktop:reset-profile-usage', (_event, profileId) => settingsStore.resetUsageSummary('profile', profileId));
   trustedIpc.handle('desktop:write-clipboard', (_event, text) => {
-    clipboard.writeText(String(text ?? ''));
+    const value = String(text ?? '');
+    const byteLength = Buffer.byteLength(value, 'utf8');
+    if (byteLength > MAX_CLIPBOARD_BYTES) {
+      return { ok: false, code: 'CLIPBOARD_TEXT_TOO_LARGE', maxBytes: MAX_CLIPBOARD_BYTES };
+    }
+    clipboard.writeText(value);
     return { ok: true };
   });
 

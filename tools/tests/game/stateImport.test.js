@@ -1,12 +1,11 @@
 /**
- * 責務: 製品版ゲームJSONのschema互換境界、現在仕様の構造・参照検証、イベント履歴を一次情報とする派生状態再構築を検証する。
- * 変更ルール: 過去不具合の版番号再現テストは持たない。現行schema受入、未来/無版schema拒否、migration後も必要な構造検証、Undo/Redo/復元ポイント保持という今後の製品契約だけを確認する。
+ * 責務: 現行ゲームJSONのschema境界、現在仕様の構造・参照検証、イベント履歴を一次情報とする派生状態再構築を検証する。
+ * 変更ルール: 旧schema救済、欠落項目補完、未知項目除去、壊れた履歴の黙示除外をテスト契約として固定しない。現行schema受入、未来/無版schema拒否、現在必要な構造の厳格検証、決定的な派生状態再構築だけを確認する。
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { APP_VERSION, DEFAULT_RULES, PROMPT_SPEC_VERSION, SCHEMA_VERSION } from '../../../app/renderer/js/config/constants.js';
-import { BUILD_ID } from '../../../app/renderer/generated/buildInfo.js';
+import { DEFAULT_RULES, SCHEMA_VERSION } from '../../../app/renderer/js/config/constants.js';
 import { createInitialState, StateStore } from '../../../app/renderer/js/state/stateStore.js';
 import { recordAiSpeech } from '../../../app/renderer/js/domain/discussion/discussionCommands.js';
 import { createEvent } from '../../../app/renderer/js/domain/events/eventStore.js';
@@ -58,62 +57,6 @@ test('schemaVersionがないゲームJSONは製品データとして受理しな
   assert.throws(() => prepareImportedState(raw), /有効なschemaVersionがありません/u);
 });
 
-test('appVersion・buildId・promptSpecVersionはschema互換判定と分離し現行メタデータへ正規化する', () => {
-  const raw = runningDiscussionStateForGenerationAudit();
-  raw.appVersion = '0.0.0-dev';
-  raw.runtime = {
-    ...raw.runtime,
-    appVersion: '0.0.0-dev',
-    buildId: 'old-build',
-    promptSpecVersion: 1,
-  };
-  const prepared = prepareImportedState(raw);
-  assert.equal(prepared.appVersion, APP_VERSION);
-  assert.deepEqual(prepared.runtime, {
-    appVersion: APP_VERSION,
-    schemaVersion: SCHEMA_VERSION,
-    buildId: BUILD_ID,
-    promptSpecVersion: PROMPT_SPEC_VERSION,
-  });
-});
-
-test('現在不要な未知ルート・player項目は無視し、再生成可能な欠落派生値は補完する', () => {
-  const raw = runningDiscussionStateForGenerationAudit();
-  raw.futureRootMetadata = { arbitrary: true };
-  raw.players[0].futurePlayerMetadata = 'future';
-  delete raw.players[0].decisionState;
-  delete raw.players[0].memoryLedger;
-  delete raw.claims;
-  delete raw.publicAbilityClaims;
-  delete raw.relationshipSnapshots;
-
-  const prepared = prepareImportedState(raw);
-  assert.equal(Object.hasOwn(prepared, 'futureRootMetadata'), false);
-  assert.equal(Object.hasOwn(prepared.players[0], 'futurePlayerMetadata'), false);
-  assert.ok(prepared.players[0].decisionState);
-  assert.ok(prepared.players[0].memoryLedger);
-  assert.deepEqual(prepared.claims, []);
-  assert.deepEqual(prepared.publicAbilityClaims, []);
-  assert.deepEqual(prepared.relationshipSnapshots, []);
-});
-
-
-test('利用不能な履歴だけを警告付きで除外し有効な履歴は保持する', () => {
-  const raw = runningDiscussionStateForGenerationAudit();
-  raw.undoStack.push(createHistoryEntry('valid-history', runningDiscussionStateForGenerationAudit()));
-  const invalidState = runningDiscussionStateForGenerationAudit();
-  invalidState.players[0].alive = 'false';
-  raw.undoStack.push(createHistoryEntry('invalid-history', invalidState));
-  const warnings = [];
-
-  const prepared = prepareImportedState(raw, { onWarning: (items) => warnings.push(...items) });
-  assert.equal(prepared.undoStack.length, 1);
-  assert.equal(prepared.undoStack[0].id, 'valid-history');
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /undoStack\[1\].*除外/u);
-});
-
-
 test('ゲーム事実のaliveは真偽値以外を補正せず拒否する', () => {
   const raw = runningDiscussionStateForGenerationAudit();
   raw.players[0].alive = 'false';
@@ -156,29 +99,6 @@ test('開始前プレイヤー別配役スナップショットは全参加者�
   unknownRole.game.setupRoleAssignments[unknownRole.players[0].id] = 'not-a-role';
   assert.throws(() => prepareImportedState(unknownRole), /役職IDが不正/u);
 });
-
-test('ゲームルールは版番号に依存せず既知の欠落を補完し未知項目を除去する', () => {
-  const raw = createInitialState(6);
-  delete raw.game.rules.guard;
-  delete raw.game.rules.vote.abstentionAllowed;
-  raw.game.rules.futureRule = { enabled: true };
-  raw.game.rules.vote.futureVoteRule = 'future';
-
-  const prepared = prepareImportedState(raw);
-  assert.deepEqual(prepared.game.rules.guard, DEFAULT_RULES.guard);
-  assert.equal(prepared.game.rules.vote.abstentionAllowed, DEFAULT_RULES.vote.abstentionAllowed);
-  assert.equal(Object.hasOwn(prepared.game.rules, 'futureRule'), false);
-  assert.equal(Object.hasOwn(prepared.game.rules.vote, 'futureVoteRule'), false);
-});
-
-
-test('game.rules全体が欠落した保存JSONも現在の既定値で補完する', () => {
-  const raw = createInitialState(6);
-  delete raw.game.rules;
-  const prepared = prepareImportedState(raw);
-  assert.deepEqual(prepared.game.rules, DEFAULT_RULES);
-});
-
 
 test('ゲームルールに存在する不正な型・列挙値・数値範囲は補正せず拒否する', () => {
   const cases = [

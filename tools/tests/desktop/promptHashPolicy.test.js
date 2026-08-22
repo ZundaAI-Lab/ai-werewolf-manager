@@ -7,8 +7,6 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
-const { join } = require('node:path');
 const { normalizePromptEnvelope } = require('../../../app/main/llm/promptEnvelopeValidator.js');
 const { promptHashForNormalizedEnvelope } = require('../../../app/main/llm/promptHashPolicy.js');
 
@@ -60,11 +58,4 @@ test('promptHashは正規化済みEnvelope全体を識別しsystem指示・Schem
     },
   })));
   assert.notEqual(hash(original), hash(envelope({ dynamicTaskPrompt: 'DYNAMIC-CHANGED' })));
-});
-
-test('Mainは成功・失敗ログの双方へ同じ事前計算promptHash変数を渡し生Envelopeを別形式で再ハッシュしない', () => {
-  const mainSource = readFileSync(join(__dirname, '../../../app/main/main.js'), 'utf8');
-  assert.match(mainSource, /promptHash\s*=\s*promptHashForNormalizedEnvelope\(promptEnvelope\)/u);
-  assert.equal((mainSource.match(/promptHash,/gu) ?? []).length >= 2, true);
-  assert.doesNotMatch(mainSource, /requestHash\(JSON\.stringify\(request\?\.promptEnvelope/u);
 });

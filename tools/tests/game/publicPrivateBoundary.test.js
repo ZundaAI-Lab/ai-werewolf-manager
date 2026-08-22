@@ -61,7 +61,7 @@ test('AI私有情報を生成・保存しつつ公開イベントへ格納しな
     profile: 'wolf', publicWorld: '', dayWinPath: '', partnerDisposition: '', collapsePlan: '', failureRisk: '',
     updatedAt: null, sourceAiTurnId: null,
   };
-  const factionStrategyUpdate = {
+  const factionStrategyPatch = {
     publicWorld: '公開情報だけで対象比較が成立する',
     dayWinPath: '必要票を一票動かして生存する',
     partnerDisposition: 'independent',
@@ -75,7 +75,7 @@ test('AI私有情報を生成・保存しつつ公開イベントへ格納しな
     internalMemoUpdate: { mode: 'add', text: '本人だけの内部継続メモ' },
     coOperation: { action: 'none', roleId: 'none' },
     decisionUpdate: decisionUpdate(target.id),
-    factionStrategyUpdate,
+    factionStrategyPatch,
   });
   assert.equal(response.ok, true, response.message);
   const event = state.events.find((item) => item.id === response.eventId);
@@ -83,7 +83,7 @@ test('AI私有情報を生成・保存しつつ公開イベントへ格納しな
   assert.equal(turn.parsedHeartVoice, 'これは本人だけの心の声です。');
   assert.equal(actor.internalMemory.notes.at(-1).text, '本人だけの内部継続メモ');
   assert.deepEqual(actor.decisionState.suspicionCandidateIds, [target.id]);
-  assert.equal(actor.factionStrategyState.dayWinPath, factionStrategyUpdate.dayWinPath);
+  assert.equal(actor.factionStrategyState.dayWinPath, factionStrategyPatch.dayWinPath);
   assert.deepEqual(Object.keys(event.payload.structured).sort(), ['abilityClaims', 'coOperation', 'interaction']);
   for (const secret of ['心の声', '内部継続メモ', 'dayWinPath', 'decisionUpdate', 'sourceAiTurnId']) {
     assert.equal(JSON.stringify(event).includes(secret), false, `公開イベントへ${secret}が混入しています。`);

@@ -1,6 +1,6 @@
 /**
  * 責務: AI応答の単一JSONオブジェクトを、公開発言・CO操作・能力結果主張・判断差分・判断根拠参照・陣営戦略差分・秘密会話・襲撃判断・雪女の推定候補・夜行動理由・心の声・内部メモへ厳密に構文分解する。
- * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。
+ * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、再帰解析によるRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
@@ -10,6 +10,7 @@ const ABILITY_SELECTION_BASES = new Set(['no-public-information', 'public-eviden
 const ASSESSMENT_LEVELS = new Set(DECISION_ASSESSMENT_LEVELS);
 const CO_ACTIONS = new Set(['declare', 'change', 'withdraw']);
 const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_JSON_NESTING_DEPTH = 64;
 const FACTION_STRATEGY_KEYS = new Set([
   'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
   'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
@@ -17,10 +18,24 @@ const FACTION_STRATEGY_KEYS = new Set([
 
 function parseStrictJson(text) {
   let index = 0;
+  let depth = 0;
   const duplicateErrors = [];
 
   function fail(message) {
     throw new SyntaxError(`${message}（位置${index + 1}）`);
+  }
+
+  function enterNesting() {
+    depth += 1;
+    if (depth <= MAX_JSON_NESTING_DEPTH) return;
+    depth -= 1;
+    const error = new RangeError(`JSONのネストが上限（${MAX_JSON_NESTING_DEPTH}段）を超えています。`);
+    error.code = 'JSON_TOO_DEEP';
+    throw error;
+  }
+
+  function leaveNesting() {
+    depth -= 1;
   }
 
   function skipWhitespace() {
@@ -68,58 +83,68 @@ function parseStrictJson(text) {
   }
 
   function parseArray(path) {
-    index += 1;
-    const result = [];
-    skipWhitespace();
-    if (text[index] === ']') {
+    enterNesting();
+    try {
       index += 1;
-      return result;
-    }
-    let itemIndex = 0;
-    while (index < text.length) {
-      result.push(parseValue(`${path}[${itemIndex}]`));
-      itemIndex += 1;
+      const result = [];
       skipWhitespace();
       if (text[index] === ']') {
         index += 1;
         return result;
       }
-      if (text[index] !== ',') fail('配列要素の区切りがありません');
-      index += 1;
-      skipWhitespace();
+      let itemIndex = 0;
+      while (index < text.length) {
+        result.push(parseValue(`${path}[${itemIndex}]`));
+        itemIndex += 1;
+        skipWhitespace();
+        if (text[index] === ']') {
+          index += 1;
+          return result;
+        }
+        if (text[index] !== ',') fail('配列要素の区切りがありません');
+        index += 1;
+        skipWhitespace();
+      }
+      fail('配列が閉じられていません');
+    } finally {
+      leaveNesting();
     }
-    fail('配列が閉じられていません');
   }
 
   function parseObject(path) {
-    index += 1;
-    const result = {};
-    const seen = new Set();
-    skipWhitespace();
-    if (text[index] === '}') {
+    enterNesting();
+    try {
       index += 1;
-      return result;
-    }
-    while (index < text.length) {
-      skipWhitespace();
-      const key = parseString();
-      const keyPath = path ? `${path}.${key}` : key;
-      if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`);
-      if (seen.has(key)) duplicateErrors.push(`${keyPath}が重複しています。`);
-      seen.add(key);
-      skipWhitespace();
-      if (text[index] !== ':') fail('オブジェクトのキーと値の区切りがありません');
-      index += 1;
-      result[key] = parseValue(keyPath);
+      const result = {};
+      const seen = new Set();
       skipWhitespace();
       if (text[index] === '}') {
         index += 1;
         return result;
       }
-      if (text[index] !== ',') fail('オブジェクト項目の区切りがありません');
-      index += 1;
+      while (index < text.length) {
+        skipWhitespace();
+        const key = parseString();
+        const keyPath = path ? `${path}.${key}` : key;
+        if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`);
+        if (seen.has(key)) duplicateErrors.push(`${keyPath}が重複しています。`);
+        seen.add(key);
+        skipWhitespace();
+        if (text[index] !== ':') fail('オブジェクトのキーと値の区切りがありません');
+        index += 1;
+        result[key] = parseValue(keyPath);
+        skipWhitespace();
+        if (text[index] === '}') {
+          index += 1;
+          return result;
+        }
+        if (text[index] !== ',') fail('オブジェクト項目の区切りがありません');
+        index += 1;
+      }
+      fail('オブジェクトが閉じられていません');
+    } finally {
+      leaveNesting();
     }
-    fail('オブジェクトが閉じられていません');
   }
 
   function parseValue(path) {
@@ -248,7 +273,7 @@ function parseSpeechInteraction(value, errors) {
   const object = validateExactKeys(
     value,
     'speechInteraction',
-    ['questionTargets', 'answerEventSequences'],
+    ['questionTargets', 'answerToRefs'],
     [],
     errors,
   );
@@ -257,8 +282,8 @@ function parseSpeechInteraction(value, errors) {
     questionTargetNames: hasUsableOptionalValue(object, 'questionTargets')
       ? parseStringArray(object.questionTargets, 'speechInteraction.questionTargets', errors)
       : [],
-    answerEventSequences: hasUsableOptionalValue(object, 'answerEventSequences')
-      ? parsePositiveIntegerRefs(object.answerEventSequences, 'speechInteraction.answerEventSequences', errors)
+    answerToRefs: hasUsableOptionalValue(object, 'answerToRefs')
+      ? parsePositiveIntegerRefs(object.answerToRefs, 'speechInteraction.answerToRefs', errors)
       : [],
   };
 }
@@ -289,32 +314,74 @@ function parseAbilityClaims(value, errors) {
   }
   const claims = value.map((claim, index) => {
     const label = `abilityClaims[${index}]`;
-    const commonKeys = ['roleId', 'resultDay', 'target', 'result'];
-    const optionalSelectionKeys = ['selectionBasis', 'evidenceEventSequences', 'selectionReasonAtTime'];
-    const item = validateExactKeys(claim, label, [...commonKeys, ...optionalSelectionKeys], [], errors);
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) {
+      errors.push(`${label}はオブジェクトで指定してください。`);
+      return null;
+    }
+    const intent = hasUsableOptionalValue(claim, 'intent')
+      ? parseEnum(claim.intent, `${label}.intent`, new Set(['truthful', 'deception']), errors)
+      : '';
+    if (!intent) {
+      errors.push(`${label}.intentはtruthfulまたはdeceptionで指定してください。`);
+      return null;
+    }
+
+    const optionalSelectionKeys = ['selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'];
+    if (intent === 'truthful') {
+      const item = validateExactKeys(
+        claim,
+        label,
+        ['intent', 'sourceRef', ...optionalSelectionKeys],
+        ['intent', 'sourceRef'],
+        errors,
+      );
+      if (!item) return null;
+      const sourceRef = Number.isInteger(item.sourceRef) && item.sourceRef >= 1
+        ? item.sourceRef
+        : null;
+      if (sourceRef === null) errors.push(`${label}.sourceRefは本人へ表示されたP#番号の正整数で指定してください。`);
+      let evidenceRefs = [];
+      if (hasUsableOptionalValue(item, 'evidenceRefs')) {
+        if (!Array.isArray(item.evidenceRefs) || item.evidenceRefs.some((ref) => !Number.isInteger(ref) || ref < 1)) {
+          errors.push(`${label}.evidenceRefsは公開イベント番号の正整数配列で指定してください。`);
+        }
+        evidenceRefs = Array.isArray(item.evidenceRefs)
+          ? item.evidenceRefs.filter((ref) => Number.isInteger(ref) && ref > 0)
+          : [];
+        if (new Set(evidenceRefs).size !== evidenceRefs.length) errors.push(`${label}.evidenceRefsに同じ参照が重複しています。`);
+      }
+      const selectionBasis = hasUsableOptionalValue(item, 'selectionBasis')
+        ? parseEnum(item.selectionBasis, `${label}.selectionBasis`, ABILITY_SELECTION_BASES, errors)
+        : evidenceRefs.length
+          ? 'public-evidence'
+          : 'no-public-information';
+      const selectionReasonAtTime = parseOptionalStringField(item, 'selectionReasonAtTime', `${label}.selectionReasonAtTime`, errors);
+      return { intent, sourceRef, selectionBasis, evidenceRefs, selectionReasonAtTime };
+    }
+
+    const commonKeys = ['intent', 'roleId', 'resultDay', 'target', 'result'];
+    const item = validateExactKeys(claim, label, [...commonKeys, ...optionalSelectionKeys], commonKeys, errors);
     if (!item) return null;
-    const hasAllCommonKeys = commonKeys.every((key) => hasUsableOptionalValue(item, key));
-    const roleId = hasUsableOptionalValue(item, 'roleId') ? parseString(item.roleId, `${label}.roleId`, errors) : '';
+    const roleId = parseString(item.roleId, `${label}.roleId`, errors);
     let resultDay = null;
     if (Object.hasOwn(item, 'resultDay') && item.resultDay !== null) {
       resultDay = Number.isInteger(item.resultDay) && item.resultDay >= 1 ? item.resultDay : null;
       if (resultDay === null) errors.push(`${label}.resultDayは1以上の整数で指定してください。`);
     }
-    const targetName = hasUsableOptionalValue(item, 'target') ? parseString(item.target, `${label}.target`, errors) : '';
-    const result = hasUsableOptionalValue(item, 'result') ? parseString(item.result, `${label}.result`, errors) : '';
-    if (!hasAllCommonKeys) return null;
+    const targetName = parseString(item.target, `${label}.target`, errors);
+    const result = parseString(item.result, `${label}.result`, errors);
     if (roleId === 'medium') {
-      return { roleId, resultDay, targetName, result, selectionBasis: '', evidenceRefs: [], selectionReasonAtTime: '' };
+      return { intent, roleId, resultDay, targetName, result, selectionBasis: '', evidenceRefs: [], selectionReasonAtTime: '' };
     }
     let evidenceRefs = [];
-    if (hasUsableOptionalValue(item, 'evidenceEventSequences')) {
-      if (!Array.isArray(item.evidenceEventSequences) || item.evidenceEventSequences.some((ref) => !Number.isInteger(ref) || ref < 1)) {
-        errors.push(`${label}.evidenceEventSequencesは公開イベント番号の正整数配列で指定してください。`);
+    if (hasUsableOptionalValue(item, 'evidenceRefs')) {
+      if (!Array.isArray(item.evidenceRefs) || item.evidenceRefs.some((ref) => !Number.isInteger(ref) || ref < 1)) {
+        errors.push(`${label}.evidenceRefsは公開イベント番号の正整数配列で指定してください。`);
       }
-      evidenceRefs = Array.isArray(item.evidenceEventSequences)
-        ? item.evidenceEventSequences.filter((ref) => Number.isInteger(ref) && ref > 0)
+      evidenceRefs = Array.isArray(item.evidenceRefs)
+        ? item.evidenceRefs.filter((ref) => Number.isInteger(ref) && ref > 0)
         : [];
-      if (new Set(evidenceRefs).size !== evidenceRefs.length) errors.push(`${label}.evidenceEventSequencesに同じ参照が重複しています。`);
+      if (new Set(evidenceRefs).size !== evidenceRefs.length) errors.push(`${label}.evidenceRefsに同じ参照が重複しています。`);
     }
     const selectionBasis = hasUsableOptionalValue(item, 'selectionBasis')
       ? parseEnum(item.selectionBasis, `${label}.selectionBasis`, ABILITY_SELECTION_BASES, errors)
@@ -322,7 +389,7 @@ function parseAbilityClaims(value, errors) {
         ? 'public-evidence'
         : 'no-public-information';
     const selectionReasonAtTime = parseOptionalStringField(item, 'selectionReasonAtTime', `${label}.selectionReasonAtTime`, errors);
-    return { roleId, resultDay, targetName, result, selectionBasis, evidenceRefs, selectionReasonAtTime };
+    return { intent, roleId, resultDay, targetName, result, selectionBasis, evidenceRefs, selectionReasonAtTime };
   }).filter(Boolean);
   if (!claims.length) return null;
   return { action: 'publish', count: claims.length, claims };
@@ -350,8 +417,8 @@ function parseDecisionPatch(value, errors, { responseMode = 'speech' } = {}) {
   if (!object) return null;
   const changes = {};
   const text = (key) => parseString(object[key], `decisionPatch.${key}`, errors, { allowNull: true, allowEmpty: true });
-  if (Object.hasOwn(object, 'suspicionCandidates') && object.suspicionCandidates !== null) {
-    changes.suspicionCandidateNames = parseStringArray(object.suspicionCandidates, 'decisionPatch.suspicionCandidates', errors);
+  if (Object.hasOwn(object, 'suspects') && object.suspects !== null) {
+    changes.suspicionCandidateNames = parseStringArray(object.suspects, 'decisionPatch.suspects', errors);
   }
   if (Object.hasOwn(object, 'executionCandidates') && object.executionCandidates !== null) {
     changes.executionCandidateNames = parseStringArray(object.executionCandidates, 'decisionPatch.executionCandidates', errors);
@@ -371,11 +438,11 @@ function parseDecisionPatch(value, errors, { responseMode = 'speech' } = {}) {
     changes.nextDiscriminatingInformation = text('nextDiscriminatingInformation');
   }
   if (!Object.keys(changes).length) return null;
-  const correctedSpeechSequences = hasUsableOptionalValue(object, 'correctedSpeechSequences')
-    ? parsePositiveIntegerRefs(object.correctedSpeechSequences, 'decisionPatch.correctedSpeechSequences', errors)
+  const correctedSpeechRefs = hasUsableOptionalValue(object, 'correctedSpeechRefs')
+    ? parsePositiveIntegerRefs(object.correctedSpeechRefs, 'decisionPatch.correctedSpeechRefs', errors)
     : [];
-  const evidenceEventSequences = hasUsableOptionalValue(object, 'evidenceEventSequences')
-    ? parsePositiveIntegerRefs(object.evidenceEventSequences, 'decisionPatch.evidenceEventSequences', errors)
+  const evidenceRefs = hasUsableOptionalValue(object, 'evidenceRefs')
+    ? parsePositiveIntegerRefs(object.evidenceRefs, 'decisionPatch.evidenceRefs', errors)
     : [];
   return {
     mode: 'patch',
@@ -383,33 +450,33 @@ function parseDecisionPatch(value, errors, { responseMode = 'speech' } = {}) {
     decisionReason: responseMode === 'vote'
       ? ''
       : parseOptionalStringField(object, 'reason', 'decisionPatch.reason', errors),
-    grounding: correctedSpeechSequences.length || evidenceEventSequences.length
-      ? { correctedSpeechSequences, evidenceEventSequences }
+    grounding: correctedSpeechRefs.length || evidenceRefs.length
+      ? { correctedSpeechRefs, evidenceRefs }
       : null,
   };
 }
 
 function parseFactionStrategyPatch(value, errors) {
-  const object = validateExactKeys(value, 'factionStrategyUpdate', ['mode', 'changes'], [], errors);
+  const object = validateExactKeys(value, 'factionStrategy', ['mode', 'changes'], [], errors);
   if (!object) return null;
   const changes = hasUsableOptionalValue(object, 'changes')
-    ? requireObject(object.changes, 'factionStrategyUpdate.changes', errors) ?? {}
+    ? requireObject(object.changes, 'factionStrategy.changes', errors) ?? {}
     : {};
   Object.keys(changes).forEach((key) => {
     if (!FACTION_STRATEGY_KEYS.has(key)) {
       const suggestion = closestKey(key, FACTION_STRATEGY_KEYS);
       errors.push(suggestion
-        ? `factionStrategyUpdate.changes.${key}は未定義です。${suggestion}の誤記ではありませんか。`
-        : `factionStrategyUpdate.changes.${key}は未定義です。`);
+        ? `factionStrategy.changes.${key}は未定義です。${suggestion}の誤記ではありませんか。`
+        : `factionStrategy.changes.${key}は未定義です。`);
     }
   });
   const normalizedChanges = Object.fromEntries(
     Object.entries(changes)
       .filter(([key, item]) => FACTION_STRATEGY_KEYS.has(key) && item !== null && !(typeof item === 'string' && !item.trim()))
-      .map(([key, item]) => [key, parseString(item, `factionStrategyUpdate.changes.${key}`, errors)]),
+      .map(([key, item]) => [key, parseString(item, `factionStrategy.changes.${key}`, errors)]),
   );
   const mode = hasUsableOptionalValue(object, 'mode')
-    ? parseEnum(object.mode, 'factionStrategyUpdate.mode', new Set(['keep', 'patch']), errors)
+    ? parseEnum(object.mode, 'factionStrategy.mode', new Set(['keep', 'patch']), errors)
     : Object.keys(normalizedChanges).length
       ? 'patch'
       : '';
@@ -417,43 +484,43 @@ function parseFactionStrategyPatch(value, errors) {
   return { mode, changes: normalizedChanges };
 }
 
-function parseSharedStrategyUpdate(value, errors) {
+function parseSharedStrategyPatch(value, errors) {
   const strategyKeys = new Set(['claimPlan', 'blackReceivedPlan', 'partnerExecutionPlan', 'collapsePlan', 'discussionPlan', 'attackPlan']);
-  const object = validateExactKeys(value, 'sharedStrategyUpdate', ['mode', 'changes'], [], errors);
+  const object = validateExactKeys(value, 'sharedStrategy', ['mode', 'changes'], [], errors);
   if (!object) return null;
   const changesObject = hasUsableOptionalValue(object, 'changes')
-    ? requireObject(object.changes, 'sharedStrategyUpdate.changes', errors) ?? {}
+    ? requireObject(object.changes, 'sharedStrategy.changes', errors) ?? {}
     : {};
   Object.keys(changesObject).forEach((key) => {
-    if (!strategyKeys.has(key)) errors.push(`sharedStrategyUpdate.changes.${key}は未定義です。`);
+    if (!strategyKeys.has(key)) errors.push(`sharedStrategy.changes.${key}は未定義です。`);
   });
   const changes = Object.fromEntries(Object.entries(changesObject)
     .filter(([key, item]) => strategyKeys.has(key) && item !== null && !(typeof item === 'string' && !item.trim()))
-    .map(([key, item]) => [key, parseString(item, `sharedStrategyUpdate.changes.${key}`, errors)]));
+    .map(([key, item]) => [key, parseString(item, `sharedStrategy.changes.${key}`, errors)]));
   const mode = hasUsableOptionalValue(object, 'mode')
-    ? parseEnum(object.mode, 'sharedStrategyUpdate.mode', new Set(['keep', 'patch']), errors)
+    ? parseEnum(object.mode, 'sharedStrategy.mode', new Set(['keep', 'patch']), errors)
     : Object.keys(changes).length
       ? 'patch'
       : '';
   if (!mode || (mode === 'patch' && !Object.keys(changes).length)) return null;
-  if (mode === 'keep' && Object.keys(changes).length) errors.push('sharedStrategyUpdate.modeがkeepの場合、changesは空オブジェクトにしてください。');
+  if (mode === 'keep' && Object.keys(changes).length) errors.push('sharedStrategy.modeがkeepの場合、changesは空オブジェクトにしてください。');
   return { mode, changes };
 }
 
 function parseAttackAssessment(value, errors) {
-  const assessmentKeys = ['hunterSurvivalLikelihood', 'guardRisk', 'alternativeTarget', 'alternativeGuardRisk'];
+  const assessmentKeys = ['hunterAliveChance', 'guardRisk', 'otherTarget', 'otherGuardRisk'];
   const object = validateExactKeys(value, 'attackAssessment', assessmentKeys, [], errors);
   if (!object || !assessmentKeys.some((key) => hasUsableOptionalValue(object, key))) return null;
   const risk = new Set(['low', 'medium', 'high']);
   return {
-    hunterSurvivalLikelihood: parseOptionalEnumField(object, 'hunterSurvivalLikelihood', 'attackAssessment.hunterSurvivalLikelihood', risk, errors),
+    hunterAliveChance: parseOptionalEnumField(object, 'hunterAliveChance', 'attackAssessment.hunterAliveChance', risk, errors),
     hunterSurvivalReason: '',
     selectedTargetGuardRisk: parseOptionalEnumField(object, 'guardRisk', 'attackAssessment.guardRisk', risk, errors),
     selectedTargetValue: '',
     selectedTargetFailureCost: '',
-    alternativeTargetName: parseOptionalStringField(object, 'alternativeTarget', 'attackAssessment.alternativeTarget', errors),
-    alternativeTargetGuardRisk: parseOptionalEnumField(object, 'alternativeGuardRisk', 'attackAssessment.alternativeGuardRisk', risk, errors),
-    alternativeTargetValue: '',
+    otherTargetName: parseOptionalStringField(object, 'otherTarget', 'attackAssessment.otherTarget', errors),
+    otherTargetGuardRisk: parseOptionalEnumField(object, 'otherGuardRisk', 'attackAssessment.otherGuardRisk', risk, errors),
+    otherTargetValue: '',
     selectionDifference: '',
   };
 }
@@ -484,18 +551,18 @@ function emptyParsedValue() {
     coOperation: null,
     abilityClaims: null,
     decisionUpdate: null,
-    factionStrategyUpdate: null,
+    factionStrategyPatch: null,
     wolfMessage: '',
     masonMessage: '',
     graveyardMessage: '',
-    sharedStrategyUpdate: null,
+    sharedStrategyPatch: null,
     attackAssessment: null,
     estimatedWerewolfIds: [],
     predictedAttackTargetIds: [],
-    actionRationale: '',
+    selectionRationale: '',
     heartVoice: '',
     internalMemoUpdate: null,
-    consolidatedMemo: '',
+    fullMemo: '',
     actionAnswer: '',
     nextSpeakerPreference: '',
     discussionPreference: '',
@@ -554,7 +621,11 @@ export function parseAiResponse(rawResponse, mode) {
     payload = parsedJson.value;
     duplicateErrors = parsedJson.duplicateErrors;
   } catch (error) {
-    return createParseResult(value, [`AI応答をJSONとして解析できません。${error.message}`]);
+    const result = createParseResult(value, [`AI応答をJSONとして解析できません。${error.message}`]);
+    if (error?.code === 'JSON_TOO_DEEP' && result.diagnostics.issues[0]) {
+      result.diagnostics.issues[0].code = 'JSON_TOO_DEEP';
+    }
+    return result;
   }
   const errors = [...duplicateErrors];
   const allowedTop = getResponseTopLevelKeys(mode);
@@ -567,21 +638,21 @@ export function parseAiResponse(rawResponse, mode) {
   if (hasUsableOptionalValue(object, 'coOperation')) value.coOperation = parseCoOperation(object.coOperation, errors);
   if (hasUsableOptionalValue(object, 'abilityClaims')) value.abilityClaims = parseAbilityClaims(object.abilityClaims, errors);
   if (hasUsableOptionalValue(object, 'decisionPatch')) value.decisionUpdate = parseDecisionPatch(object.decisionPatch, errors, { responseMode: mode });
-  if (hasUsableOptionalValue(object, 'factionStrategyUpdate')) value.factionStrategyUpdate = parseFactionStrategyPatch(object.factionStrategyUpdate, errors);
+  if (hasUsableOptionalValue(object, 'factionStrategy')) value.factionStrategyPatch = parseFactionStrategyPatch(object.factionStrategy, errors);
   if (Object.hasOwn(object, 'wolfMessage')) value.wolfMessage = parseString(object.wolfMessage, 'wolfMessage', errors);
   if (Object.hasOwn(object, 'masonMessage')) value.masonMessage = parseString(object.masonMessage, 'masonMessage', errors);
   if (Object.hasOwn(object, 'graveyardMessage')) value.graveyardMessage = parseString(object.graveyardMessage, 'graveyardMessage', errors);
-  if (hasUsableOptionalValue(object, 'sharedStrategyUpdate')) value.sharedStrategyUpdate = parseSharedStrategyUpdate(object.sharedStrategyUpdate, errors);
+  if (hasUsableOptionalValue(object, 'sharedStrategy')) value.sharedStrategyPatch = parseSharedStrategyPatch(object.sharedStrategy, errors);
   if (hasUsableOptionalValue(object, 'attackAssessment')) value.attackAssessment = parseAttackAssessment(object.attackAssessment, errors);
   if (hasUsableOptionalValue(object, 'estimate')) {
     const estimate = parseEstimate(object.estimate, errors);
     value.estimatedWerewolfIds = estimate?.estimatedWerewolfIds ?? [];
     value.predictedAttackTargetIds = estimate?.predictedAttackTargetIds ?? [];
   }
-  if (hasUsableOptionalValue(object, 'actionRationale')) value.actionRationale = parseString(object.actionRationale, 'actionRationale', errors, { allowEmpty: true, allowNull: true });
+  if (hasUsableOptionalValue(object, 'rationale')) value.selectionRationale = parseString(object.rationale, 'rationale', errors, { allowEmpty: true, allowNull: true });
   if (hasUsableOptionalValue(object, 'heartVoice')) value.heartVoice = parseString(object.heartVoice, 'heartVoice', errors, { allowEmpty: true, allowNull: true });
   if (hasUsableOptionalValue(object, 'memoAdd')) value.internalMemoUpdate = parseMemoAdd(object.memoAdd, errors);
-  if (Object.hasOwn(object, 'consolidatedMemo')) value.consolidatedMemo = parseString(object.consolidatedMemo, 'consolidatedMemo', errors);
+  if (Object.hasOwn(object, 'fullMemo')) value.fullMemo = parseString(object.fullMemo, 'fullMemo', errors);
   if (Object.hasOwn(object, 'actionAnswer')) value.actionAnswer = parseString(object.actionAnswer, 'actionAnswer', errors);
   if (Object.hasOwn(object, 'nextSpeakerPreference')) value.nextSpeakerPreference = parseString(object.nextSpeakerPreference, 'nextSpeakerPreference', errors, { allowEmpty: true });
   if (Object.hasOwn(object, 'discussionPreference')) value.discussionPreference = parseString(object.discussionPreference, 'discussionPreference', errors).trim().toUpperCase();

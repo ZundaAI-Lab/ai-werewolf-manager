@@ -26,13 +26,13 @@ function truncateAtSentenceBoundary(text, limit) {
   return boundary >= Math.floor(limit * 0.45) ? head.slice(0, boundary + 1).trim() : head.trim();
 }
 
-function repairActionRationale(taskType, payload, operations) {
-  if (!Object.hasOwn(payload, 'actionRationale') || typeof payload.actionRationale !== 'string') return;
+function repairSelectionRationale(taskType, payload, operations) {
+  if (!Object.hasOwn(payload, 'rationale') || typeof payload.rationale !== 'string') return;
   if (!(isPersonalNightActionTask(taskType) || taskType === 'wolf-attack')) return;
   const limit = taskType === 'freeze' ? MAX_FREEZE_ACTION_RATIONALE_LENGTH : MAX_NIGHT_ACTION_RATIONALE_LENGTH;
-  if (payload.actionRationale.trim().length <= limit) return;
-  payload.actionRationale = truncateAtSentenceBoundary(payload.actionRationale, limit);
-  operation(operations, 'OPTIONAL_TEXT_TRUNCATED', 'actionRationale', `actionRationaleを${limit}文字以内へ短縮しました。`);
+  if (payload.rationale.trim().length <= limit) return;
+  payload.rationale = truncateAtSentenceBoundary(payload.rationale, limit);
+  operation(operations, 'OPTIONAL_TEXT_TRUNCATED', 'rationale', `rationaleを${limit}文字以内へ短縮しました。`);
 }
 
 function repairInternalMemo(payload, operations) {
@@ -57,4 +57,4 @@ function repairTopLevel(payload, mode, operations) {
 }
 
 
-export { repairActionRationale, repairInternalMemo, repairTopLevel };
+export { repairSelectionRationale, repairInternalMemo, repairTopLevel };

@@ -1,6 +1,6 @@
 /**
  * 責務: 進行卓のフェーズ表示、現在タスク、参加者状態、人間入力フォーム、夜・投票・結果操作のHTMLを生成する。
- * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。
+ * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。機密会話の既定話者は各会話ポリシーのround-robinを使用し、GMが別参加者を選んだ場合も連続発言禁止を満たす選択だけを保持する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。
  */
 
 import { isNormalSpeechTask } from '../../../config/discussionAiTaskTypes.js';
@@ -12,15 +12,21 @@ import {
   publicAbilityResultLabel,
 } from '../../../domain/policies/publicAbilityClaimPolicy.js';
 import {
+  canGraveyardConversationSpeakerTakeTurn,
   getGraveyardConversationEligibleSpeakerIds,
+  getGraveyardConversationNextSpeakerId,
   getGraveyardConversationRemaining,
 } from '../../../domain/night/graveyardConversationPolicy.js';
 import {
+  canWolfConversationSpeakerTakeTurn,
   getWolfConversationEligibleSpeakerIds,
+  getWolfConversationNextSpeakerId,
   getWolfConversationRemaining,
 } from '../../../domain/night/wolfConversationPolicy.js';
 import {
+  canMasonConversationSpeakerTakeTurn,
   getMasonConversationEligibleSpeakerIds,
+  getMasonConversationNextSpeakerId,
   getMasonConversationRemaining,
 } from '../../../domain/night/masonConversationPolicy.js';
 import {
@@ -434,9 +440,10 @@ export class WorkbenchTaskRenderer {
     if (!session) return '<div class="empty-state"><strong>墓場会話を確認できません</strong><span>夜状態を確認してください。</span></div>';
     const eligibleIds = getGraveyardConversationEligibleSpeakerIds(session);
     const participants = eligibleIds.map((id) => getPlayer(state, id));
-    const selectedId = this.host.selectedGraveyardSpeakerId() && eligibleIds.includes(this.host.selectedGraveyardSpeakerId())
-      ? this.host.selectedGraveyardSpeakerId()
-      : eligibleIds[0] ?? null;
+    const requestedSpeakerId = this.host.selectedGraveyardSpeakerId();
+    const selectedId = requestedSpeakerId && canGraveyardConversationSpeakerTakeTurn(session, requestedSpeakerId)
+      ? requestedSpeakerId
+      : getGraveyardConversationNextSpeakerId(session);
     this.host.setSelectedGraveyardSpeakerId(selectedId);
     const speaker = selectedId ? getPlayer(state, selectedId) : null;
     const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${escapeHtml(getPlayerName(state, message.speakerId))}</strong><p>${escapeHtml(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ墓場発言はありません。</div>';
@@ -454,9 +461,10 @@ export class WorkbenchTaskRenderer {
     const session = getActiveMasonConversation(state);
     const eligibleIds = getMasonConversationEligibleSpeakerIds(session);
     const participants = eligibleIds.map((id) => getPlayer(state, id));
-    const selectedId = this.host.selectedMasonSpeakerId() && eligibleIds.includes(this.host.selectedMasonSpeakerId())
-      ? this.host.selectedMasonSpeakerId()
-      : eligibleIds[0] ?? null;
+    const requestedSpeakerId = this.host.selectedMasonSpeakerId();
+    const selectedId = requestedSpeakerId && canMasonConversationSpeakerTakeTurn(session, requestedSpeakerId)
+      ? requestedSpeakerId
+      : getMasonConversationNextSpeakerId(session);
     this.host.setSelectedMasonSpeakerId(selectedId);
     const speaker = selectedId ? getPlayer(state, selectedId) : null;
     const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${escapeHtml(getPlayerName(state, message.speakerId))}</strong><p>${escapeHtml(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ共有発言はありません。</div>';
@@ -473,9 +481,10 @@ export class WorkbenchTaskRenderer {
     const session = getActiveWolfConversation(state);
     const eligibleIds = getWolfConversationEligibleSpeakerIds(session);
     const participants = eligibleIds.map((id) => getPlayer(state, id));
-    const selectedId = this.host.selectedWolfSpeakerId() && eligibleIds.includes(this.host.selectedWolfSpeakerId())
-      ? this.host.selectedWolfSpeakerId()
-      : eligibleIds[0] ?? null;
+    const requestedSpeakerId = this.host.selectedWolfSpeakerId();
+    const selectedId = requestedSpeakerId && canWolfConversationSpeakerTakeTurn(session, requestedSpeakerId)
+      ? requestedSpeakerId
+      : getWolfConversationNextSpeakerId(session);
     this.host.setSelectedWolfSpeakerId(selectedId);
     const speaker = selectedId ? getPlayer(state, selectedId) : null;
     const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${escapeHtml(getPlayerName(state, message.speakerId))}</strong><p>${escapeHtml(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ共有発言はありません。</div>';

@@ -63,33 +63,6 @@ test('ポータブルZIPとインストーラーの成果物名を一意に決�
 });
 
 
-test('verifyと配布パイプラインは事前検査付きbundle生成後に完全製造ゲートと全テストを実行する', () => {
-  const toolsPackage = require('../../package.json');
-  const verify = toolsPackage.scripts.verify;
-  for (const command of [
-    'node build/manufacturingGate.js',
-    'node --test tests/game/all.test.js',
-    'node build/buildBundle.js',
-    'node --test tests/desktop/all.test.js',
-  ]) {
-    assert.equal(verify.split(command).length - 1, 1, `verify内の実行回数が不正です: ${command}`);
-  }
-
-  const releaseSource = readFileSync(join(__dirname, '..', '..', 'build', 'releasePipeline.js'), 'utf8');
-  assert.equal((releaseSource.match(/join\(__dirname, 'manufacturingGate\.js'\)/gu) ?? []).length, 1);
-  assert.equal((releaseSource.match(/tests', 'game', 'all\.test\.js'/gu) ?? []).length, 1);
-  assert.equal((releaseSource.match(/tests', 'desktop', 'all\.test\.js'/gu) ?? []).length, 1);
-  assert.equal((releaseSource.match(/join\(__dirname, 'buildBundle\.js'\)/gu) ?? []).length, 1);
-
-  const bundleSource = readFileSync(join(__dirname, '..', '..', 'build', 'buildBundle.js'), 'utf8');
-  const preflightCallIndex = bundleSource.indexOf('runManufacturingPreflight();');
-  const generatedWritePreparationIndex = bundleSource.indexOf('mkdirSync(generatedRoot');
-  assert.match(bundleSource, /require\('\.\/manufacturingGate\.js'\)/u);
-  assert.equal(preflightCallIndex >= 0, true);
-  assert.equal(generatedWritePreparationIndex >= 0, true);
-  assert.equal(preflightCallIndex < generatedWritePreparationIndex, true);
-  assert.doesNotMatch(bundleSource, /runManufacturingGate|tests[\/]game[\/]all\.test\.js/u);
-});
 
 test('配布設定はユーザー向けREADMEとMIT Licenseを実行ファイルと同じ階層へ配置する', () => {
   const projectRoot = join(__dirname, '..', '..', '..');

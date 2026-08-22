@@ -1,6 +1,6 @@
 /**
- * 責務: 夜間機密会話に共通する参加者別発言回数を初期化・参照・消費する。
- * 変更ルール: ゲーム状態全体・イベント・夜行動を変更しない。会話種別固有の参加資格や作戦情報を扱わない。
+ * 責務: 夜間機密会話に共通する参加者別発言回数と、参加者順の次話者導出・連続発言防止を一元管理する。
+ * 変更ルール: ゲーム状態全体・イベント・夜行動を変更しない。会話種別固有の参加資格や作戦情報を扱わず、通常の次話者はparticipantIds順のround-robinとする。GMによる別参加者指定は許可するが、他に発言可能者がいる間の同一人物連続発言は許可しない。
  */
 
 export function validatePrivateConversationSpeechCount(value, label = '夜間機密会話') {
@@ -25,6 +25,29 @@ export function getPrivateConversationRemaining(session, playerId) {
 
 export function getPrivateConversationEligibleSpeakerIds(session) {
   return (session?.participantIds ?? []).filter((id) => getPrivateConversationRemaining(session, id) > 0);
+}
+
+
+export function getPrivateConversationNextSpeakerId(session) {
+  const participantIds = [...(session?.participantIds ?? [])];
+  const eligibleIds = new Set(getPrivateConversationEligibleSpeakerIds(session));
+  if (!eligibleIds.size) return null;
+  const lastSpeakerId = String(session?.messages?.at(-1)?.speakerId ?? '');
+  const lastIndex = participantIds.findIndex((id) => String(id) === lastSpeakerId);
+  if (lastIndex < 0) return participantIds.find((id) => eligibleIds.has(id)) ?? null;
+  for (let offset = 1; offset <= participantIds.length; offset += 1) {
+    const candidateId = participantIds[(lastIndex + offset) % participantIds.length];
+    if (eligibleIds.has(candidateId)) return candidateId;
+  }
+  return null;
+}
+
+export function canPrivateConversationSpeakerTakeTurn(session, playerId) {
+  const eligibleIds = getPrivateConversationEligibleSpeakerIds(session);
+  if (!eligibleIds.includes(playerId)) return false;
+  const lastSpeakerId = session?.messages?.at(-1)?.speakerId ?? null;
+  if (!lastSpeakerId || lastSpeakerId !== playerId) return true;
+  return eligibleIds.length === 1;
 }
 
 export function consumePrivateConversationSpeech(session, playerId) {

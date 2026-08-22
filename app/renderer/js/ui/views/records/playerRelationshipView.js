@@ -1,6 +1,6 @@
 /**
  * 責務: リアルタイムまたは日終了スナップショットのプレイヤー相関モデルを、公開／機密境界と選択中レイヤーに従って描画する。
- * 変更ルール: ゲーム状態とスナップショットを更新しない。モデル構築・日終了保存・死亡時点別の疑い線除外はdomain/records/playerRelationshipModel.jsへ委譲し、機密情報非表示時は疑い関係・疑い強度・真役職をDOMへ生成しない。公開能力結果はそのゲームの配役に含まれる公開主張可能役職だけを独立レイヤーとして切り替え、配役に存在しない役職の切替UIは生成しない。線種は能力役職、疑い線は判断強度を表示クラスへ射影する。状態由来の文字列と識別子は必ずHTMLエスケープする。
+ * 変更ルール: ゲーム状態とスナップショットを更新しない。モデル構築・日終了保存・死亡時点別の疑い線除外はdomain/records/playerRelationshipModel.jsへ委譲し、機密情報非表示時は疑い関係・疑い強度・真役職をDOMへ生成しない。公開能力結果はそのゲームの配役に含まれる公開主張可能役職だけを独立レイヤーとして切り替え、配役に存在しない役職の切替UIは生成しない。線種は能力役職、疑い線は判断強度を表示クラスへ射影する。SVGではプレイヤーカードを先に描画し、相関線を後から描画して常にカードより前面へ表示する。状態由来の文字列と識別子は必ずHTMLエスケープする。
  */
 
 import {
@@ -275,7 +275,7 @@ export function renderPlayerRelationshipView({
   const hasAnyRelation = edges.length > 0;
   const viewTitle = snapshot ? `Day ${Number(snapshot.day)} 終了時点` : 'リアルタイム';
 
-  return `<section class="player-relationship-view panel">${renderSnapshotSelector(state.relationshipSnapshots, resolvedSnapshotId)}<div class="relationship-toolbar"><div><span class="eyebrow">プレイヤー相関図・${escapeHtml(viewTitle)}</span><h3>CO・疑い・公開結果</h3></div>${renderLegend(model, visibleTypes, getRoleName, state)}</div><div class="relationship-layout"><div class="relationship-canvas-wrap"><svg class="relationship-canvas" viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" role="img" aria-label="${escapeHtml(viewTitle)}のプレイヤーCOと関係を示す相関図"><defs>${renderMarkerDefinitions()}</defs>${renderEdges(edges, positions, validSelectedPlayerId, suspicionStrengthBySource)}${renderNodes(model.nodes, positions, edges, validSelectedPlayerId)}</svg>${hasAnyRelation ? '' : `<div class="relationship-empty">${!showConfidential && model.counts.ability === 0 && model.counts.vote === 0 ? 'CO以外の公開関係はまだありません。疑い関係は機密情報を表示すると確認できます。' : '選択中の関係はまだ記録されていません。'}</div>`}</div><aside class="relationship-side-panel">${renderSelectedPlayerDetail(model, validSelectedPlayerId, getRoleName, visibleTypes)}${renderPlayerIndex(model.nodes, validSelectedPlayerId)}</aside></div></section>`;
+  return `<section class="player-relationship-view panel">${renderSnapshotSelector(state.relationshipSnapshots, resolvedSnapshotId)}<div class="relationship-toolbar"><div><span class="eyebrow">プレイヤー相関図・${escapeHtml(viewTitle)}</span><h3>CO・疑い・公開結果</h3></div>${renderLegend(model, visibleTypes, getRoleName, state)}</div><div class="relationship-layout"><div class="relationship-canvas-wrap"><svg class="relationship-canvas" viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" role="img" aria-label="${escapeHtml(viewTitle)}のプレイヤーCOと関係を示す相関図"><defs>${renderMarkerDefinitions()}</defs>${renderNodes(model.nodes, positions, edges, validSelectedPlayerId)}${renderEdges(edges, positions, validSelectedPlayerId, suspicionStrengthBySource)}</svg>${hasAnyRelation ? '' : `<div class="relationship-empty">${!showConfidential && model.counts.ability === 0 && model.counts.vote === 0 ? 'CO以外の公開関係はまだありません。疑い関係は機密情報を表示すると確認できます。' : '選択中の関係はまだ記録されていません。'}</div>`}</div><aside class="relationship-side-panel">${renderSelectedPlayerDetail(model, validSelectedPlayerId, getRoleName, visibleTypes)}${renderPlayerIndex(model.nodes, validSelectedPlayerId)}</aside></div></section>`;
 }
 
 export {

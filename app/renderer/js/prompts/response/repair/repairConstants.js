@@ -14,7 +14,7 @@ const SHARED_STRATEGY_KEYS = Object.freeze([
   'collapsePlan', 'discussionPlan', 'attackPlan',
 ]);
 const ATTACK_ASSESSMENT_KEYS = Object.freeze([
-  'hunterSurvivalLikelihood', 'guardRisk', 'alternativeTarget', 'alternativeGuardRisk',
+  'hunterAliveChance', 'guardRisk', 'otherTarget', 'otherGuardRisk',
 ]);
 const RISK_ALIASES = Object.freeze(new Map([
   ['low', 'low'], ['低', 'low'], ['low risk', 'low'], ['low-risk', 'low'],

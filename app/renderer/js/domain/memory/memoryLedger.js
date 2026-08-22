@@ -33,7 +33,7 @@ export function createEmptyMemoryLedger(overrides = {}) {
   return {
     privateFacts: Array.isArray(overrides.privateFacts) ? overrides.privateFacts.map((item) => ({ ...item })) : [],
     publicCommitments: Array.isArray(overrides.publicCommitments) ? overrides.publicCommitments.map((item) => ({ ...item })) : [],
-    actionRationales: Array.isArray(overrides.actionRationales) ? overrides.actionRationales.map((item) => ({ ...item })) : [],
+    selectionRationales: Array.isArray(overrides.selectionRationales) ? overrides.selectionRationales.map((item) => ({ ...item })) : [],
     pendingDiscriminators: Array.isArray(overrides.pendingDiscriminators) ? overrides.pendingDiscriminators.map((item) => ({ ...item })) : [],
     updatedAt: overrides.updatedAt ?? null,
   };
@@ -201,9 +201,9 @@ function publicCommitmentsForPlayer(state, player) {
   return commitments;
 }
 
-function actionRationalesForPlayer(state, player, previousLedger, { deterministicTimestamps = false } = {}) {
+function selectionRationalesForPlayer(state, player, previousLedger, { deterministicTimestamps = false } = {}) {
   const activeEventIds = new Set(activeEvents(state).map((event) => event.id));
-  const preserved = (previousLedger?.actionRationales ?? [])
+  const preserved = (previousLedger?.selectionRationales ?? [])
     .filter((item) => item.active !== false && (!item.sourceEventId || activeEventIds.has(item.sourceEventId)))
     .map((item) => ({ ...item }));
   const knownIds = new Set(preserved.map((item) => item.id));
@@ -244,7 +244,7 @@ function pendingDiscriminatorsForPlayer(state, player) {
 }
 
 
-export function recordActionRationale(state, playerId, {
+export function recordSelectionRationale(state, playerId, {
   id = createId('action-rationale'),
   taskType,
   day = state.game?.day ?? 0,
@@ -270,26 +270,26 @@ export function recordActionRationale(state, playerId, {
     createdAt: nowIso(),
     active: true,
   };
-  const index = player.memoryLedger.actionRationales.findIndex((item) => item.id === id);
-  if (index >= 0) player.memoryLedger.actionRationales[index] = entry;
-  else player.memoryLedger.actionRationales.push(entry);
+  const index = player.memoryLedger.selectionRationales.findIndex((item) => item.id === id);
+  if (index >= 0) player.memoryLedger.selectionRationales[index] = entry;
+  else player.memoryLedger.selectionRationales.push(entry);
   return entry;
 }
 
-export function voidActionRationalesForDay(state, day, taskType = null) {
+export function voidSelectionRationalesForDay(state, day, taskType = null) {
   (state.players ?? []).forEach((player) => {
     player.memoryLedger = createEmptyMemoryLedger(player.memoryLedger ?? {});
-    player.memoryLedger.actionRationales.forEach((item) => {
+    player.memoryLedger.selectionRationales.forEach((item) => {
       if (Number(item.day) === Number(day) && (!taskType || item.taskType === taskType)) item.active = false;
     });
   });
 }
 
-export function voidActionRationalesForEvent(state, sourceEventId) {
+export function voidSelectionRationalesForEvent(state, sourceEventId) {
   if (!sourceEventId) return;
   (state.players ?? []).forEach((player) => {
     player.memoryLedger = createEmptyMemoryLedger(player.memoryLedger ?? {});
-    player.memoryLedger.actionRationales.forEach((item) => {
+    player.memoryLedger.selectionRationales.forEach((item) => {
       if (item.sourceEventId === sourceEventId) item.active = false;
     });
   });
@@ -302,7 +302,7 @@ export function rebuildPlayerMemoryLedger(state, playerId, { deterministicTimest
   player.memoryLedger = {
     privateFacts: privateFactsForPlayer(state, player),
     publicCommitments: publicCommitmentsForPlayer(state, player),
-    actionRationales: actionRationalesForPlayer(state, player, previous, { deterministicTimestamps }),
+    selectionRationales: selectionRationalesForPlayer(state, player, previous, { deterministicTimestamps }),
     pendingDiscriminators: pendingDiscriminatorsForPlayer(state, player),
     updatedAt: deterministicTimestamps ? deterministicLedgerUpdatedAt(state, player) : nowIso(),
   };
@@ -389,7 +389,7 @@ export function formatMemoryLedgerSnapshotForPrompt(ledgerValue, resolvePlayerNa
   };
   append('秘密の確定情報', ledger.privateFacts ?? []);
   append('自分が公開済みの立場・行動', ledger.publicCommitments ?? []);
-  append('結果判明前に保存した行動理由', (ledger.actionRationales ?? []).map((item) => ({
+  append('結果判明前に保存した行動理由', (ledger.selectionRationales ?? []).map((item) => ({
     text: `${item.taskType}: ${resolvePlayerName(item.targetId)} / ${item.rationale}`,
   })));
   append('次に区別したい情報', ledger.pendingDiscriminators ?? []);

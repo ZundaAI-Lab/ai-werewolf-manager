@@ -14,6 +14,27 @@ import {
   formatPromptEventText,
 } from './promptFormatters.js';
 
+
+const PRIVATE_ABILITY_ROLE_BY_ACTION = Object.freeze({
+  inspect: 'seer',
+  medium: 'medium',
+});
+
+function privateAbilityResult(context, event) {
+  const actionType = String(event?.payload?.actionType ?? '');
+  const result = String(event?.payload?.result ?? '').trim().toLowerCase();
+  const targetId = event?.payload?.targetId ?? event?.targetIds?.[0] ?? null;
+  return {
+    ref: `P#${event.sequence}`,
+    sourceRef: Number(event.sequence),
+    resultDay: Number(event?.payload?.availableFromDay ?? event.day),
+    actionType,
+    roleId: PRIVATE_ABILITY_ROLE_BY_ACTION[actionType] ?? null,
+    target: targetId ? playerName(context, targetId) : null,
+    verdict: result === 'wolf' ? 'WOLF' : result === 'not-wolf' ? 'NOT_WOLF' : String(result || 'UNKNOWN').toUpperCase(),
+  };
+}
+
 function publicEvents(context) {
   return Object.values(context.board.publicTimeline ?? {})
     .flatMap((items) => Array.isArray(items) ? items : []);
@@ -94,7 +115,7 @@ function actionLabel(taskType) {
 }
 
 function rationaleForEvent(context, event) {
-  const rationales = context.ownHistory.actionRationales ?? [];
+  const rationales = context.ownHistory.selectionRationales ?? [];
   return rationales.find((item) => item.active !== false && item.sourceEventId === event.id)
     ?? [...rationales].reverse().find((item) => item.active !== false
       && item.taskType === (event.type === 'vote-cast' ? 'vote' : event.payload?.actionType)
@@ -135,7 +156,7 @@ function standaloneRationaleActions(context) {
     ...(context.ownHistory.votes ?? []),
     ...(context.ownHistory.nightActions ?? []),
   ].map((event) => event.id));
-  return (context.ownHistory.actionRationales ?? [])
+  return (context.ownHistory.selectionRationales ?? [])
     .filter((item) => item.active !== false && !sourceEventIds.has(item.sourceEventId))
     .map((item) => ({
       ref: item.sourceEventId
@@ -168,7 +189,7 @@ function publishedAbilityClaim(context, claim) {
     target: playerName(context, claim.targetId),
     result: publicAbilityResultLabel(claim.result, claim.claimedRoleId),
     selectionBasis: claim.selectionBasis ?? null,
-    evidenceEventSequences: (claim.evidenceEventIds ?? [])
+    evidenceRefs: (claim.evidenceEventIds ?? [])
       .map((eventId) => publicSequenceByEventId(context, eventId))
       .filter(Number.isInteger),
     selectionReasonAtTime: String(claim.selectionReasonAtTime ?? '').trim() || null,
@@ -185,7 +206,7 @@ export function privateInformation(context, { mode = 'full' } = {}) {
       }
       : null,
     abilityResults: context.private.abilityResults
-      .map((event) => `P#${event.sequence} D${event.day} ${formatPromptEventText(context, event)}`),
+      .map((event) => privateAbilityResult(context, event)),
     personalNotifications: context.private.personalNotifications
       .map((event) => `P#${event.sequence} D${event.day} ${formatPromptEventText(context, event)}`),
   };
@@ -231,7 +252,7 @@ export function ownHistory(context, { mode = 'full' } = {}) {
     latestFreezeJudgment: freezeJudgment ? {
       nightDay: freezeJudgment.nightDay,
       frozenTarget: freezeJudgment.targetId ? playerName(context, freezeJudgment.targetId) : null,
-      actionRationale: freezeJudgment.actionRationale || null,
+      selectionRationale: freezeJudgment.selectionRationale || null,
     } : null,
   };
 }
@@ -278,7 +299,7 @@ export function latestDecisionState(context, decision, { taskType = context.task
           : null,
     } : {}),
     assessmentLevel: state.assessmentLevel ?? 'unresolved',
-    evidenceEventSequences: (state.keyPublicEvidenceEventIds ?? []).map((eventId) => {
+    evidenceRefs: (state.keyPublicEvidenceEventIds ?? []).map((eventId) => {
       const event = Object.values(context.board.publicTimeline ?? {})
         .flatMap((items) => Array.isArray(items) ? items : [])
         .find((item) => item.id === eventId);

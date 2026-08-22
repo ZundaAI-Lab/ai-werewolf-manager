@@ -266,7 +266,7 @@ export function captureDayEndPlayerRelationshipSnapshot(state, {
     day,
     capturedAt: nowIso(),
     sourceEventId: sourceEvent?.id ?? null,
-    sourceEventSequence: sourceEvent ? Number(sourceEvent.sequence ?? 0) : null,
+    sourceRef: sourceEvent ? Number(sourceEvent.sequence ?? 0) : null,
     latestVoteDay: model.latestVoteDay,
     nodes: model.nodes.map((node) => ({
       ...node,

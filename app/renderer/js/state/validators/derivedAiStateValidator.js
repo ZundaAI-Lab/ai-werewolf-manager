@@ -117,7 +117,7 @@ export function validateDerivedAndAiState(context) {
   (raw.aiTurns ?? []).forEach((turn) => {
     checkId(turn.playerId, 'AIターン対象');
     validateWolfSharedStrategyPatch(
-      turn.parsedSharedStrategyUpdate,
+      turn.parsedSharedStrategyPatch,
       `${label}: AIターン${turn.id ?? '不明'}の解析済み共有作戦更新`,
       errors,
     );
@@ -131,7 +131,7 @@ export function validateDerivedAndAiState(context) {
       }
       const grounding = turn.parsedDecisionUpdate.grounding;
       if (grounding !== null && grounding !== undefined) {
-        const groundingKeys = new Set(['correctedSpeechSequences', 'evidenceEventSequences']);
+        const groundingKeys = new Set(['correctedSpeechRefs', 'evidenceRefs']);
         const invalidGroundingObject = !isPlainObject(grounding);
         const invalidGroundingKey = !invalidGroundingObject
           && Object.keys(grounding).some((key) => !groundingKeys.has(key));
@@ -154,9 +154,9 @@ export function validateDerivedAndAiState(context) {
     if (turn.resolvedDecisionUpdate) validateDecisionMetadata(turn.resolvedDecisionUpdate, `${label}: AIターン${turn.id ?? '不明'}の解決済み判断更新`, errors);
     const turnPlayer = raw.players.find((player) => player.id === turn.playerId);
     const turnStrategyProfile = getFactionStrategyProfile(raw, turnPlayer);
-    if (turn.parsedFactionStrategyUpdate) {
-      const parsedStrategyMode = String(turn.parsedFactionStrategyUpdate.mode ?? '');
-      const parsedStrategyChanges = turn.parsedFactionStrategyUpdate.changes;
+    if (turn.parsedFactionStrategyPatch) {
+      const parsedStrategyMode = String(turn.parsedFactionStrategyPatch.mode ?? '');
+      const parsedStrategyChanges = turn.parsedFactionStrategyPatch.changes;
       if (!['keep', 'patch'].includes(parsedStrategyMode)) {
         errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み陣営戦略modeが不正です。`);
       }
@@ -174,44 +174,44 @@ export function validateDerivedAndAiState(context) {
         });
       }
     }
-    if (turn.resolvedFactionStrategyUpdate) {
-      if (turn.resolvedFactionStrategyUpdate.profile !== turnStrategyProfile) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み陣営戦略プロフィールが対象プレイヤーと一致しません。`);
+    if (turn.resolvedFactionStrategyState) {
+      if (turn.resolvedFactionStrategyState.profile !== turnStrategyProfile) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み陣営戦略プロフィールが対象プレイヤーと一致しません。`);
       getFactionStrategyFields(turnStrategyProfile).forEach((key) => {
         if (key === 'partnerDisposition') {
-          const disposition = String(turn.resolvedFactionStrategyUpdate[key] ?? '');
+          const disposition = String(turn.resolvedFactionStrategyState[key] ?? '');
           if (disposition && !WOLF_PARTNER_DISPOSITION_SET.has(disposition)) {
             errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み陣営戦略${key}が不正です。`);
           }
-        } else if (typeof (turn.resolvedFactionStrategyUpdate[key] ?? '') !== 'string') {
+        } else if (typeof (turn.resolvedFactionStrategyState[key] ?? '') !== 'string') {
           errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み陣営戦略${key}が文字列ではありません。`);
         }
       });
     }
-    if ((turn.parsedFactionStrategyUpdate || turn.resolvedFactionStrategyUpdate) && !turnStrategyProfile) {
+    if ((turn.parsedFactionStrategyPatch || turn.resolvedFactionStrategyState) && !turnStrategyProfile) {
       errors.push(`${label}: AIターン${turn.id ?? '不明'}の村人陣営応答に陣営戦略が含まれています。`);
     }
     if (turn.parsedAttackAssessment) {
-      ['hunterSurvivalLikelihood', 'hunterSurvivalReason', 'selectedTargetGuardRisk', 'selectedTargetValue', 'selectedTargetFailureCost', 'alternativeTargetName', 'alternativeTargetGuardRisk', 'alternativeTargetValue', 'selectionDifference'].forEach((key) => {
+      ['hunterAliveChance', 'hunterSurvivalReason', 'selectedTargetGuardRisk', 'selectedTargetValue', 'selectedTargetFailureCost', 'otherTargetName', 'otherTargetGuardRisk', 'otherTargetValue', 'selectionDifference'].forEach((key) => {
         if (typeof (turn.parsedAttackAssessment?.[key] ?? '') !== 'string') errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み襲撃判断${key}が文字列ではありません。`);
       });
-      if (turn.parsedAttackAssessment.hunterSurvivalLikelihood
-        && !['low', 'medium', 'high'].includes(turn.parsedAttackAssessment.hunterSurvivalLikelihood)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み狩人生存可能性が不正です。`);
+      if (turn.parsedAttackAssessment.hunterAliveChance
+        && !['low', 'medium', 'high'].includes(turn.parsedAttackAssessment.hunterAliveChance)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み狩人生存可能性が不正です。`);
       if (turn.parsedAttackAssessment.selectedTargetGuardRisk
         && !['low', 'medium', 'high'].includes(turn.parsedAttackAssessment.selectedTargetGuardRisk)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み選択対象護衛リスクが不正です。`);
-      if (turn.parsedAttackAssessment.alternativeTargetGuardRisk
-        && !['low', 'medium', 'high'].includes(turn.parsedAttackAssessment.alternativeTargetGuardRisk)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み別候補護衛リスクが不正です。`);
+      if (turn.parsedAttackAssessment.otherTargetGuardRisk
+        && !['low', 'medium', 'high'].includes(turn.parsedAttackAssessment.otherTargetGuardRisk)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解析済み別候補護衛リスクが不正です。`);
     }
     if (turn.resolvedAttackAssessment) {
-      checkId(turn.resolvedAttackAssessment.alternativeTargetId, 'AIターンの襲撃別候補');
-      ['hunterSurvivalLikelihood', 'hunterSurvivalReason', 'selectedTargetGuardRisk', 'selectedTargetValue', 'selectedTargetFailureCost', 'alternativeTargetGuardRisk', 'alternativeTargetValue', 'selectionDifference'].forEach((key) => {
+      checkId(turn.resolvedAttackAssessment.otherTargetId, 'AIターンの襲撃別候補');
+      ['hunterAliveChance', 'hunterSurvivalReason', 'selectedTargetGuardRisk', 'selectedTargetValue', 'selectedTargetFailureCost', 'otherTargetGuardRisk', 'otherTargetValue', 'selectionDifference'].forEach((key) => {
         if (typeof (turn.resolvedAttackAssessment?.[key] ?? '') !== 'string') errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み襲撃判断${key}が文字列ではありません。`);
       });
-      if (turn.resolvedAttackAssessment.hunterSurvivalLikelihood
-        && !['low', 'medium', 'high'].includes(turn.resolvedAttackAssessment.hunterSurvivalLikelihood)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み狩人生存可能性が不正です。`);
+      if (turn.resolvedAttackAssessment.hunterAliveChance
+        && !['low', 'medium', 'high'].includes(turn.resolvedAttackAssessment.hunterAliveChance)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み狩人生存可能性が不正です。`);
       if (turn.resolvedAttackAssessment.selectedTargetGuardRisk
         && !['low', 'medium', 'high'].includes(turn.resolvedAttackAssessment.selectedTargetGuardRisk)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み選択対象護衛リスクが不正です。`);
-      if (turn.resolvedAttackAssessment.alternativeTargetGuardRisk
-        && !['low', 'medium', 'high'].includes(turn.resolvedAttackAssessment.alternativeTargetGuardRisk)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み別候補護衛リスクが不正です。`);
+      if (turn.resolvedAttackAssessment.otherTargetGuardRisk
+        && !['low', 'medium', 'high'].includes(turn.resolvedAttackAssessment.otherTargetGuardRisk)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み別候補護衛リスクが不正です。`);
     }
     if (!Array.isArray(turn.estimatedWerewolfIds)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の推定人狼IDが配列ではありません。`);
     if (!Array.isArray(turn.predictedAttackTargetIds)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の予想襲撃先IDが配列ではありません。`);
@@ -237,7 +237,7 @@ export function validateDerivedAndAiState(context) {
       if (!PUBLIC_ABILITY_RESULTS.includes(claim.result)) errors.push(`${label}: AIターン${turn.id ?? '不明'}の解決済み能力履歴${index + 1}結果が不正です。`);
     });
     if (isPersonalNightActionTask(turn.taskType) || turn.taskType === 'wolf-attack') {
-      const rationale = String(turn.parsedActionRationale ?? '').trim();
+      const rationale = String(turn.parsedSelectionRationale ?? '').trim();
       const rationaleLimit = turn.taskType === 'freeze'
         ? MAX_FREEZE_ACTION_RATIONALE_LENGTH
         : MAX_NIGHT_ACTION_RATIONALE_LENGTH;
@@ -247,10 +247,10 @@ export function validateDerivedAndAiState(context) {
       if (turn.parsedInternalMemoUpdate.mode !== 'add') errors.push(`${label}: AIターン${turn.id ?? '不明'}の内部メモ更新modeが不正です。`);
       if (typeof turn.parsedInternalMemoUpdate.text !== 'string') errors.push(`${label}: AIターン${turn.id ?? '不明'}の内部メモ更新textが不正です。`);
     }
-    if (turn.taskType === 'memo-consolidate' && !String(turn.parsedConsolidatedMemo ?? '').trim()) {
+    if (turn.taskType === 'memo-consolidate' && !String(turn.parsedFullMemo ?? '').trim()) {
       errors.push(`${label}: AIターン${turn.id ?? '不明'}の整理後内部メモがありません。`);
     }
-    if (turn.taskType === 'memo-consolidate-fallback' && String(turn.parsedConsolidatedMemo ?? '').trim()) {
+    if (turn.taskType === 'memo-consolidate-fallback' && String(turn.parsedFullMemo ?? '').trim()) {
       errors.push(`${label}: AIターン${turn.id ?? '不明'}の内部メモ整理スキップに整理本文を設定できません。`);
     }
     if (turn.taskType === 'result-impression') {

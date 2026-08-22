@@ -13,9 +13,7 @@
     "renderer/index.html",
     "renderer/css/**/*",
     "renderer/data/characters/**/*",
-    "renderer/generated/bundle.js",
-    "renderer/js/ai/**/*",
-    "renderer/js/automation/**/*"
+    "renderer/generated/bundle.js"
   ],
   "win": {
     "executableName": "AI人狼マネージャー",

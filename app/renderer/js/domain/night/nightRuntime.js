@@ -1,6 +1,6 @@
 /**
  * 責務: 墓場／共有者／人狼秘密会話、襲撃投票、夜行動、夜解決、夜明け公開を実行する。
- * 変更ルール: 秘密情報を公開状態へ混入させず、候補・行動解決・恐怖処理は専用ポリシーを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。
+ * 変更ルール: 秘密情報を公開状態へ混入させず、候補・行動解決・恐怖処理・機密会話の発言順は専用ポリシーを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。
  */
 
 import {
@@ -13,18 +13,21 @@ import {
 } from '../game/standardRules.js';
 import { buildNightPlan } from './nightPlanner.js';
 import {
+  canWolfConversationSpeakerTakeTurn,
   createWolfConversationProgress,
   consumeWolfConversationSpeech,
   getWolfConversationEligibleSpeakerIds,
   isWolfConversationComplete,
 } from './wolfConversationPolicy.js';
 import {
+  canMasonConversationSpeakerTakeTurn,
   createMasonConversationProgress,
   consumeMasonConversationSpeech,
   getMasonConversationEligibleSpeakerIds,
   isMasonConversationComplete,
 } from './masonConversationPolicy.js';
 import {
+  canGraveyardConversationSpeakerTakeTurn,
   createGraveyardConversationProgress,
   consumeGraveyardConversationSpeech,
   getGraveyardConversationEligibleSpeakerIds,
@@ -40,8 +43,8 @@ import {
 import { rebuildPublicDerivedState } from '../events/publicDerivation.js';
 import {
   applyInternalMemoryUpdate,
-  recordActionRationale,
-  voidActionRationalesForDay,
+  recordSelectionRationale,
+  voidSelectionRationalesForDay,
 } from '../memory/memoryLedger.js';
 import { createEmptyFactionStrategyState } from '../game/factionStrategyState.js';
 import {
@@ -62,7 +65,7 @@ import {
   setPhase,
   setHeartVoice,
   resolveDecisionUpdateForCommit,
-  cloneSharedStrategyUpdate,
+  cloneSharedStrategyPatch,
   recordAiTurn,
   freezeKnowledge,
 } from '../game/gameRuntimeShared.js';
@@ -82,7 +85,7 @@ export function createEmptyWolfSharedStrategy(purpose = 'attack-planning') {
   };
 }
 
-export function normalizeWolfSharedStrategyUpdate(update) {
+export function normalizeWolfSharedStrategyPatch(update) {
   if (!update) return null;
   const mode = String(update.mode ?? '');
   const changes = Object.fromEntries(
@@ -269,6 +272,7 @@ export function recordGraveyardMessage(state, {
   if (!speaker || speaker.alive) return result(false, '墓場会話は死亡者だけが参加できます。');
   if (!session.participantIds.includes(speakerId)) return result(false, 'このプレイヤーは今夜の墓場会話参加者ではありません。');
   if (!getGraveyardConversationEligibleSpeakerIds(session).includes(speakerId)) return result(false, 'このプレイヤーの墓場会話発言回数は残っていません。');
+  if (!canGraveyardConversationSpeakerTakeTurn(session, speakerId)) return result(false, '他に発言可能な死亡者がいるため、同じ死亡者は連続して発言できません。');
   const text = String(content ?? '').trim();
   if (!text) return result(false, '墓場会話の発言を入力してください。');
   const message = {
@@ -360,6 +364,7 @@ export function recordMasonMessage(state, {
   if (!session || session.status !== 'open') return result(false, '共有者共有会話は開かれていません。');
   if (!session.participantIds.includes(speakerId)) return result(false, 'このプレイヤーは共有者共有会話の参加者ではありません。');
   if (!getMasonConversationEligibleSpeakerIds(session).includes(speakerId)) return result(false, 'このプレイヤーの共有発言回数は残っていません。');
+  if (!canMasonConversationSpeakerTakeTurn(session, speakerId)) return result(false, '他に発言可能な共有者がいるため、同じ共有者は連続して発言できません。');
   const text = String(content ?? '').trim();
   if (!text) return result(false, '共有発言を入力してください。');
   const committedDecisionUpdate = resolveDecisionUpdateForCommit(state, speakerId, decisionUpdate, {
@@ -440,7 +445,7 @@ export function finishWolfConversationSession(state, session) {
 export function recordWolfMessage(state, {
   speakerId,
   content,
-  sharedStrategyUpdate = null,
+  sharedStrategyPatch = null,
   heartVoice = '',
   internalMemoUpdate = null,
   rawResponse = '',
@@ -457,9 +462,10 @@ export function recordWolfMessage(state, {
   if (!session || session.status !== 'open') return result(false, '人狼共有会話は開かれていません。');
   if (!session.participantIds.includes(speakerId)) return result(false, 'このプレイヤーは共有会話参加者ではありません。');
   if (!getWolfConversationEligibleSpeakerIds(session).includes(speakerId)) return result(false, 'このプレイヤーの共有発言回数は残っていません。');
+  if (!canWolfConversationSpeakerTakeTurn(session, speakerId)) return result(false, '他に発言可能な人狼がいるため、同じ人狼は連続して発言できません。');
   const text = String(content ?? '').trim();
   if (!text) return result(false, '共有発言を入力してください。');
-  const normalizedSharedStrategyUpdate = normalizeWolfSharedStrategyUpdate(sharedStrategyUpdate);
+  const normalizedSharedStrategyPatch = normalizeWolfSharedStrategyPatch(sharedStrategyPatch);
   const message = {
     id: createId('wolf-message'),
     sessionId: session.id,
@@ -473,7 +479,7 @@ export function recordWolfMessage(state, {
   };
   session.messages.push(message);
   consumeWolfConversationSpeech(session, speakerId);
-  mergeWolfSharedStrategy(session, normalizedSharedStrategyUpdate, speakerId);
+  mergeWolfSharedStrategy(session, normalizedSharedStrategyPatch, speakerId);
   setHeartVoice(state, speakerId, heartVoice);
   const event = createEvent(state, {
     type: 'wolf-conversation',
@@ -484,8 +490,8 @@ export function recordWolfMessage(state, {
       messageId: message.id,
       content: message.content,
       purpose: session.purpose,
-      sharedStrategyUpdate: normalizedSharedStrategyUpdate
-        ? { mode: normalizedSharedStrategyUpdate.mode, changes: { ...normalizedSharedStrategyUpdate.changes } }
+      sharedStrategyPatch: normalizedSharedStrategyPatch
+        ? { mode: normalizedSharedStrategyPatch.mode, changes: { ...normalizedSharedStrategyPatch.changes } }
         : null,
     },
   });
@@ -500,7 +506,7 @@ export function recordWolfMessage(state, {
       rawResponse,
       generationRun,
       parsedWolfConversationMessage: message.content,
-      parsedSharedStrategyUpdate: cloneSharedStrategyUpdate(normalizedSharedStrategyUpdate),
+      parsedSharedStrategyPatch: cloneSharedStrategyPatch(normalizedSharedStrategyPatch),
       parsedHeartVoice: heartVoice,
       parsedInternalMemoUpdate: internalMemoUpdate,
       warnings,
@@ -541,7 +547,7 @@ export function reopenWolfConversation(state) {
   session.closedAt = null;
   state.night.status = 'conversation';
   if (attack.status !== 'not-required') {
-    voidActionRationalesForDay(state, state.night.day, 'wolf-attack');
+    voidSelectionRationalesForDay(state, state.night.day, 'wolf-attack');
     attack.status = 'waiting-conversation';
     attack.finalTargetId = null;
     attack.voteByWolfId = Object.fromEntries(attack.voterWolfIds.map((id) => [id, null]));
@@ -599,7 +605,7 @@ export function recordWolfAttackVote(state, {
   targetId,
   heartVoice = '',
   internalMemoUpdate = null,
-  actionRationale = '',
+  selectionRationale = '',
   parsedAttackAssessment = null,
   resolvedAttackAssessment = null,
   rawResponse = '',
@@ -621,7 +627,7 @@ export function recordWolfAttackVote(state, {
   const actor = getPlayer(state, actorId);
   if (!actor?.alive || !countsAsWolf(state, actor)) return result(false, '生存人狼だけが襲撃先へ投票できます。');
   if (!getAttackCandidates(state).some((player) => player.id === targetId)) return result(false, '襲撃できない対象です。');
-  const rationale = String(actionRationale ?? '').trim();
+  const rationale = String(selectionRationale ?? '').trim();
   const willFinalizeAttack = attack.voterWolfIds.every((wolfId) => wolfId === actorId || Boolean(attack.voteByWolfId?.[wolfId]));
   if (willFinalizeAttack) requestMandatoryRestorePoint(state, RESTORE_POINT_TYPES.BEFORE_ATTACK_FINALIZE);
 
@@ -644,7 +650,7 @@ export function recordWolfAttackVote(state, {
       parsedHeartVoice: heartVoice,
       parsedInternalMemoUpdate: internalMemoUpdate,
       parsedActionAnswer: targetId,
-      parsedActionRationale: rationale,
+      parsedSelectionRationale: rationale,
       parsedAttackAssessment,
       resolvedAttackAssessment,
       warnings,
@@ -657,7 +663,7 @@ export function recordWolfAttackVote(state, {
     applyInternalMemoryUpdate(state, actorId, internalMemoUpdate);
   }
   if (rationale) {
-    recordActionRationale(state, actorId, {
+    recordSelectionRationale(state, actorId, {
       ...(sourceTurnId ? { id: `wolf-attack-rationale:${sourceTurnId}` } : {}),
       taskType: 'wolf-attack',
       day: state.night.day,
@@ -708,7 +714,7 @@ export function recordNightAction(state, {
   targetId,
   heartVoice = '',
   internalMemoUpdate = null,
-  actionRationale = '',
+  selectionRationale = '',
   rawResponse = '',
   generationRun = null,
   promptText = '',
@@ -726,7 +732,7 @@ export function recordNightAction(state, {
   if (!slot || slot.status !== 'pending' || slot.actorId !== actorId) return result(false, '対象の夜行動スロットがありません。');
   const candidates = getNightActionCandidates(state, slot.type, actorId);
   if (!candidates.some((player) => player.id === targetId)) return result(false, '選択できない対象です。');
-  const rationale = String(actionRationale ?? '').trim();
+  const rationale = String(selectionRationale ?? '').trim();
   slot.targetId = targetId;
   slot.status = override ? 'gm-override' : 'submitted';
   slot.override = override;
@@ -759,7 +765,7 @@ export function recordNightAction(state, {
       parsedHeartVoice: heartVoice,
       parsedInternalMemoUpdate: internalMemoUpdate,
       parsedActionAnswer: targetId,
-      parsedActionRationale: rationale,
+      parsedSelectionRationale: rationale,
       estimatedWerewolfIds,
       predictedAttackTargetIds,
       warnings,
@@ -774,7 +780,7 @@ export function recordNightAction(state, {
     applyInternalMemoryUpdate(state, actorId, internalMemoUpdate);
   }
   if (rationale) {
-    recordActionRationale(state, actorId, {
+    recordSelectionRationale(state, actorId, {
       id: `action-rationale:${event.id}`,
       taskType: slot.type,
       day: state.night.day,

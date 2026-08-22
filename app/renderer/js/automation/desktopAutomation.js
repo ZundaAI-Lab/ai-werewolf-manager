@@ -1,15 +1,31 @@
 /**
- * 責務: デスクトップ自動化の起動、正式依存の生成、各Coordinator／Controllerの接続だけを所有する。
- * 変更ルール: 自動進行、手動生成、人間入力、設定保存、AI管理、進行表示の処理本体はautomation配下の専用モジュールを正本とし、このFacadeへ戻さない。観戦画面から人狼卓を1手進める場合もAI管理ControllerのrunSingleAutomaticStepへ委譲する公開橋だけを提供し、進行規則をFacadeへ複製しない。初期設定読込後の進行卓表示方式もliveProgressControllerへ委譲し、executionModeと表示方式を同期する。循環する生成時依存だけを単一の遅延解決レジストリで接続し、個別APIごとの代理関数を追加しない。機密表示はAppUIの専用イベントから表示フラグだけを受け取り、完全状態の秘密情報をFacadeで加工しない。ゲーム準備の局所入力通知は自動保存と明示要求された装飾だけを処理し、割り当て整合・実況・全体ステータス再計算を起動しない。
+ * 責務: デスクトップ自動化の起動、ES Moduleとして静的に解決した正式依存の生成、各Coordinator／Controllerの接続だけを所有する。
+ * 変更ルール: 自動進行、手動生成、人間入力、設定保存、AI管理、進行表示の処理本体はautomation配下の専用モジュールを正本とし、このFacadeへ戻さない。観戦画面から人狼卓を1手進める場合もAI管理ControllerのrunSingleAutomaticStepへ委譲する公開橋だけを提供し、進行規則をFacadeへ複製しない。初期設定読込後の進行卓表示方式もliveProgressControllerへ委譲し、executionModeと表示方式を同期する。循環する生成時依存だけを単一の遅延解決レジストリで接続し、automation内部をwindowグローバル経由で参照しない。個別APIごとの代理関数を追加しない。機密表示はAppUIの専用イベントから表示フラグだけを受け取り、完全状態の秘密情報をFacadeで加工しない。ゲーム準備の局所入力通知は自動保存と明示要求された装飾だけを処理し、割り当て整合・実況・全体ステータス再計算を起動しない。
  */
 
 import { escapeHtml } from '../shared/utils.js';
+import * as runtimeAccess from './runtimeAccess.js';
+import * as automationRunControl from './automationRunControl.js';
+import * as automaticAiExecutorApi from './automaticAiExecutor.js';
+import { createDesktopAutomationConfig } from './desktopAutomationConfig.js';
+import { createManagementView } from './desktopAutomationManagementView.js';
+import { createAutomationStatusController } from './automationStatusController.js';
+import { createLiveProgressController } from './liveProgressController.js';
+import { createAutomaticRunCoordinator } from './automaticRunCoordinator.js';
+import { createSettingsPersistenceCoordinator } from './settingsPersistenceCoordinator.js';
+import { createHumanTaskCoordinator } from './humanTaskCoordinator.js';
+import { createManualTaskCoordinator } from './manualTaskCoordinator.js';
+import { createProfileEditorController } from './profileEditorController.js';
+import { createAiProfileTransferController } from './aiProfileTransferController.js';
+import { createAssignmentController } from './assignmentController.js';
+import { createGenerationTestController } from './generationTestController.js';
+import { createAiManagementController } from './aiManagementController.js';
+import { createSetupDecorationController } from './setupDecorationController.js';
+import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
 
 (function startDesktopAutomation() {
   'use strict';
 
-  const runtimeAccess = window.AiWerewolfRuntimeAccess;
-  if (!runtimeAccess) throw new Error('runtime接続モジュールを読み込めませんでした。');
   const apiRetryPolicy = window.AiWerewolfApiRetryPolicy;
   if (!apiRetryPolicy) throw new Error('API再試行ポリシーを読み込めませんでした。');
   const responseRetryPolicy = window.AiWerewolfResponseRetryPolicy;
@@ -24,10 +40,6 @@ import { escapeHtml } from '../shared/utils.js';
   if (!settingsSchema) throw new Error('AI設定schemaを読み込めませんでした。');
   const dataTransmissionPolicy = window.AiWerewolfDataTransmissionPolicy;
   if (!dataTransmissionPolicy) throw new Error('AIデータ送信Policyを読み込めませんでした。');
-  const automationRunControl = window.AiWerewolfAutomationRunControl;
-  if (!automationRunControl) throw new Error('自動実行停止制御を読み込めませんでした。');
-  const automaticAiExecutorApi = window.AiWerewolfAutomaticAiExecutor;
-  if (!automaticAiExecutorApi) throw new Error('AIタスク実行モジュールを読み込めませんでした。');
   const {
     DEFAULT_OLLAMA_THINKING_LEVEL,
     LOCAL_OPENAI_PROVIDER,
@@ -35,10 +47,8 @@ import { escapeHtml } from '../shared/utils.js';
     OLLAMA_THINKING_LEVELS,
   } = localLlmConfig;
 
-  const desktopAutomationConfigApi = window.AiWerewolfDesktopAutomationConfig;
-  if (!desktopAutomationConfigApi) throw new Error('デスクトップ自動化設定モジュールを読み込めませんでした。');
   let controller = null;
-  const desktopConfig = desktopAutomationConfigApi.createDesktopAutomationConfig({
+  const desktopConfig = createDesktopAutomationConfig({
     localLlmConfig,
     providerDefaults,
     settingsSchema,
@@ -188,9 +198,7 @@ import { escapeHtml } from '../shared/utils.js';
   const showPendingManualAiTask = lateControllerMethod('manualTaskCoordinator', 'showPendingManualAiTask');
   const handleManualAiCommitResult = lateControllerMethod('manualTaskCoordinator', 'handleManualAiCommitResult');
   const refreshVisibleUi = lateControllerMethod('setupDecorationController', 'refreshVisibleUi');
-  const managementViewApi = window.AiWerewolfDesktopAutomationManagementView;
-  if (!managementViewApi) throw new Error('AI管理画面モジュールを読み込めませんでした。');
-  const managementView = managementViewApi.createManagementView({
+  const managementView = createManagementView({
     controller,
     bridge,
     config: desktopConfig,
@@ -448,27 +456,25 @@ import { escapeHtml } from '../shared/utils.js';
     usesManualAiGeneration,
     waitForRevisionChange,
   };
-  const automationStatusController = automationModules.automationStatusController = window.AiWerewolfAutomationStatusController.createAutomationStatusController(controllerContext);
-  const liveProgressController = automationModules.liveProgressController = window.AiWerewolfLiveProgressController.createLiveProgressController(controllerContext);
-  const automaticRunCoordinator = automationModules.automaticRunCoordinator = window.AiWerewolfAutomaticRunCoordinator.createAutomaticRunCoordinator(controllerContext);
-  const settingsPersistenceCoordinator = automationModules.settingsPersistenceCoordinator = window.AiWerewolfSettingsPersistenceCoordinator.createSettingsPersistenceCoordinator(controllerContext);
-  const humanTaskCoordinator = automationModules.humanTaskCoordinator = window.AiWerewolfHumanTaskCoordinator.createHumanTaskCoordinator(controllerContext);
-  const manualTaskCoordinator = automationModules.manualTaskCoordinator = window.AiWerewolfManualTaskCoordinator.createManualTaskCoordinator(controllerContext);
-  const profileEditorController = automationModules.profileEditorController = window.AiWerewolfProfileEditorController.createProfileEditorController(controllerContext);
-  const aiProfileTransferController = automationModules.aiProfileTransferController = window.AiWerewolfAiProfileTransferController.createAiProfileTransferController(controllerContext);
-  const assignmentController = automationModules.assignmentController = window.AiWerewolfAssignmentController.createAssignmentController(controllerContext);
-  const generationTestController = automationModules.generationTestController = window.AiWerewolfGenerationTestController.createGenerationTestController(controllerContext);
-  const aiManagementController = automationModules.aiManagementController = window.AiWerewolfAiManagementController.createAiManagementController({
+  const automationStatusController = automationModules.automationStatusController = createAutomationStatusController(controllerContext);
+  const liveProgressController = automationModules.liveProgressController = createLiveProgressController(controllerContext);
+  const automaticRunCoordinator = automationModules.automaticRunCoordinator = createAutomaticRunCoordinator(controllerContext);
+  const settingsPersistenceCoordinator = automationModules.settingsPersistenceCoordinator = createSettingsPersistenceCoordinator(controllerContext);
+  const humanTaskCoordinator = automationModules.humanTaskCoordinator = createHumanTaskCoordinator(controllerContext);
+  const manualTaskCoordinator = automationModules.manualTaskCoordinator = createManualTaskCoordinator(controllerContext);
+  const profileEditorController = automationModules.profileEditorController = createProfileEditorController(controllerContext);
+  const aiProfileTransferController = automationModules.aiProfileTransferController = createAiProfileTransferController(controllerContext);
+  const assignmentController = automationModules.assignmentController = createAssignmentController(controllerContext);
+  const generationTestController = automationModules.generationTestController = createGenerationTestController(controllerContext);
+  const aiManagementController = automationModules.aiManagementController = createAiManagementController({
     ...controllerContext,
-    ...profileEditorController,
-    ...aiProfileTransferController,
-    ...assignmentController,
-    ...generationTestController,
+    profileEditorController,
+    aiProfileTransferController,
+    assignmentController,
+    generationTestController,
   });
-  const setupDecorationController = automationModules.setupDecorationController = window.AiWerewolfSetupDecorationController.createSetupDecorationController(controllerContext);
-  const postgameAnalysisApi = window.AiWerewolfPostgameAnalysisAdapter;
-  if (!postgameAnalysisApi) throw new Error('終了後AI分析adapterを読み込めませんでした。');
-  const postgameAnalysisAdapter = automationModules.postgameAnalysisAdapter = postgameAnalysisApi.createPostgameAnalysisAdapter({
+  const setupDecorationController = automationModules.setupDecorationController = createSetupDecorationController(controllerContext);
+  const postgameAnalysisAdapter = automationModules.postgameAnalysisAdapter = createPostgameAnalysisAdapter({
     bridge,
     controller,
     profileById,
@@ -541,7 +547,10 @@ import { escapeHtml } from '../shared/utils.js';
     if (bridge.isDesktop && typeof bridge.writeClipboard === 'function') {
       window.__AI_WEREWOLF_CLIPBOARD_WRITE__ = async (text) => {
         const result = await bridge.writeClipboard(text);
-        if (result?.ok !== true) throw new Error('デスクトップのクリップボードへ書き込めませんでした。');
+        if (result?.ok !== true) {
+          if (result?.code === 'CLIPBOARD_TEXT_TOO_LARGE') throw new Error('コピー対象が大きすぎるため、デスクトップのクリップボードへ書き込めません。');
+          throw new Error('デスクトップのクリップボードへ書き込めませんでした。');
+        }
       };
     } else {
       delete window.__AI_WEREWOLF_CLIPBOARD_WRITE__;

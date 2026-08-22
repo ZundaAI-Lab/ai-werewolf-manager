@@ -10,16 +10,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { esmSourceAsVmScript } = require('./esmTestSource.js');
 
 function loadAutomationModules() {
   const context = vm.createContext({ console, setTimeout, clearTimeout, AbortController, crypto: globalThis.crypto });
   for (const filename of ['automationRunControl.js', 'automaticAiExecutor.js']) {
-    const source = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation', filename), 'utf8').replace(/\nexport \{\};\s*$/u, '\n');
+    const source = esmSourceAsVmScript(fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation', filename), 'utf8'));
     vm.runInContext(source, context, { filename });
   }
   return {
-    runControl: context.AiWerewolfAutomationRunControl,
-    executorApi: context.AiWerewolfAutomaticAiExecutor,
+    runControl: vm.runInContext('({ createRunSession, isStopped, assertRunning, requestStop, beginRequest, endRequest, delayWithAbort, completeSession, waitForCompletion, isAutomationStoppedError })', context),
+    executorApi: vm.runInContext('({ createAutomaticAiExecutor, replaceTaskArtifact, buildFullCandidateStagePrompt })', context),
   };
 }
 

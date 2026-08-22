@@ -16,7 +16,7 @@ import {
 } from '../../domain/roles/roleAttributes.js';
 import {
   getFactionStrategyFields,
-  validateFactionStrategyUpdate,
+  validateFactionStrategyState,
 } from '../../domain/game/factionStrategyState.js';
 import { CALL_NAME_SNAPSHOT_SCHEMA_VERSION } from '../../characters/catalog/characterCatalog.js';
 import { CHARACTER_CARD_BY_ID } from '../../characters/cards/characterCards.js';
@@ -138,7 +138,7 @@ export function validatePlayerState(context) {
     if (!player.memoryLedger || typeof player.memoryLedger !== 'object') {
       errors.push(`${label}: ${name}のシステム記憶台帳がありません。`);
     } else {
-      ['privateFacts', 'publicCommitments', 'actionRationales', 'pendingDiscriminators'].forEach((key) => {
+      ['privateFacts', 'publicCommitments', 'selectionRationales', 'pendingDiscriminators'].forEach((key) => {
         if (!Array.isArray(player.memoryLedger[key])) errors.push(`${label}: ${name}の記憶台帳${key}が配列ではありません。`);
       });
       ['privateFacts', 'publicCommitments', 'pendingDiscriminators'].forEach((key) => {
@@ -148,7 +148,7 @@ export function validatePlayerState(context) {
           if (item?.sourceEventId && !(raw.events ?? []).some((event) => event.id === item.sourceEventId)) errors.push(`${label}: ${name}の記憶台帳${key}[${itemIndex}]が存在しないイベントを参照しています。`);
         });
       });
-      (player.memoryLedger.actionRationales ?? []).forEach((item, itemIndex) => {
+      (player.memoryLedger.selectionRationales ?? []).forEach((item, itemIndex) => {
         validateStoredEntityId(item?.id, `${label}: ${name}の行動理由[${itemIndex}].id`, errors);
         if (!item?.id || typeof item.rationale !== 'string' || !String(item.rationale).trim()) errors.push(`${label}: ${name}の行動理由[${itemIndex}]が不正です。`);
         checkId(item?.targetId, `${name}の行動理由対象`);
@@ -197,7 +197,7 @@ export function validatePlayerState(context) {
           if (strategy.sourceAiTurnId !== null) errors.push(`${label}: ${name}の未更新陣営戦略状態にAIターン参照があります。`);
         } else {
           if (typeof strategy.updatedAt !== 'string') errors.push(`${label}: ${name}の陣営戦略更新時刻が不正です。`);
-          validateFactionStrategyUpdate(strategy, strategyProfile, { allowPartial: true, requiredFields: [], requireSubstantive: false }).forEach((message) => errors.push(`${label}: ${name}: ${message}`));
+          validateFactionStrategyState(strategy, strategyProfile, { allowPartial: true, requiredFields: [], requireSubstantive: false }).forEach((message) => errors.push(`${label}: ${name}: ${message}`));
           if (!strategy.sourceAiTurnId || !(raw.aiTurns ?? []).some((turn) => turn.id === strategy.sourceAiTurnId)) {
             errors.push(`${label}: ${name}の陣営戦略が存在しないAIターンを参照しています。`);
           }

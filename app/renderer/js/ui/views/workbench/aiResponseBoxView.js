@@ -47,7 +47,7 @@ function renderParsedPreview({ state, taskType, parsed, parseErrors }) {
   const freezeWolfNames = parsed.estimatedWerewolfIds?.map((id) => getPlayerName(state, id)).join('、') || 'なし';
   const freezeAttackNames = parsed.predictedAttackTargetIds?.map((id) => getPlayerName(state, id)).join('、') || 'なし';
   const interaction = isNormalSpeechTask(taskType) && parsed.speechInteraction
-    ? `<span>質問先: ${escapeHtml(parsed.speechInteraction.questionTargetNames.join('、') || 'なし')} / 回答元: ${escapeHtml(parsed.speechInteraction.answerEventSequences.map((sequence) => `#${sequence}`).join('、') || 'なし')}</span>`
+    ? `<span>質問先: ${escapeHtml(parsed.speechInteraction.questionTargetNames.join('、') || 'なし')} / 回答元: ${escapeHtml(parsed.speechInteraction.answerToRefs.map((sequence) => `#${sequence}`).join('、') || 'なし')}</span>`
     : '';
   const coOperation = (isNormalSpeechTask(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.coOperation
     ? `<span>CO操作: ${escapeHtml(parsed.coOperation.action)}${parsed.coOperation.action === 'withdraw' ? '' : ` / ${escapeHtml(parsed.coOperation.roleId)}`} </span>`
@@ -59,7 +59,7 @@ function renderParsedPreview({ state, taskType, parsed, parseErrors }) {
     ? `<span>${escapeHtml(formatDecisionUpdatePreview(parsed.decisionUpdate))}</span>`
     : '';
   const attackAssessment = parsed.attackAssessment
-    ? `<span>襲撃判断: 狩人生存 ${escapeHtml(parsed.attackAssessment.hunterSurvivalLikelihood || 'なし')} / 護衛リスク ${escapeHtml(parsed.attackAssessment.selectedTargetGuardRisk || 'なし')}</span>`
+    ? `<span>襲撃判断: 狩人生存 ${escapeHtml(parsed.attackAssessment.hunterAliveChance || 'なし')} / 護衛リスク ${escapeHtml(parsed.attackAssessment.selectedTargetGuardRisk || 'なし')}</span>`
     : '';
   const freezePreview = taskType === 'freeze'
     ? `<span>雪女戦術: 人狼候補 ${escapeHtml(freezeWolfNames)} / 予想襲撃先 ${escapeHtml(freezeAttackNames)}</span>`
@@ -74,9 +74,9 @@ function renderParsedPreview({ state, taskType, parsed, parseErrors }) {
   return `<div class="parse-preview ${parseErrors.length ? 'has-error' : ''}">
     <strong>解析結果</strong>
     ${speechPreview ? `<span>${speechLabel}: ${escapeHtml(speechPreview)}</span>` : ''}
-    ${parsed.actionRationale ? `<span>選択理由: ${escapeHtml(parsed.actionRationale)}</span>` : ''}
+    ${parsed.selectionRationale ? `<span>選択理由: ${escapeHtml(parsed.selectionRationale)}</span>` : ''}
     <span>心の声: ${parsed.heartVoice ? 'あり' : 'なし'}</span>
-    <span>内部メモ更新: ${parsed.internalMemoUpdate ? '追記' : parsed.consolidatedMemo ? '整理' : 'なし'}</span>
+    <span>内部メモ更新: ${parsed.internalMemoUpdate ? '追記' : parsed.fullMemo ? '整理' : 'なし'}</span>
     ${interaction}
     ${coOperation}
     ${abilityClaims}
@@ -84,7 +84,7 @@ function renderParsedPreview({ state, taskType, parsed, parseErrors }) {
     ${attackAssessment}
     ${freezePreview}
     ${discussionControl}
-    ${parsed.sharedStrategyUpdate ? '<span>共有作戦更新: あり</span>' : ''}
+    ${parsed.sharedStrategyPatch ? '<span>共有作戦更新: あり</span>' : ''}
     ${parsed.actionAnswer ? `<span>行動回答: ${escapeHtml(parsed.actionAnswer)}</span>` : ''}
     ${parseErrors.map((error) => `<em>${escapeHtml(error)}</em>`).join('')}
   </div>`;

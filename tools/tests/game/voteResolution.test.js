@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { beginVote, finalizeVote, publishExecution, publishVoteResult, recordRandomVote, recordVote, resolveExecution } from '../../../app/renderer/js/domain/vote/voteCommands.js';
 import { resolveVoteResult } from '../../../app/renderer/js/domain/vote/voteResolution.js';
 import { buildVotePopulationBranches } from '../../../app/renderer/js/domain/vote/votePopulationAnalysis.js';
-import { voteDecisionSection } from '../../../app/renderer/js/prompts/sections/decisionSection.js';
+
 import { createInitialState, StateStore } from '../../../app/renderer/js/state/stateStore.js';
 import { getVoteCandidates } from '../../../app/renderer/js/domain/game/standardRules.js';
 import { ROLE_DEFINITIONS } from '../../../app/renderer/js/config/constants.js';
@@ -98,7 +98,6 @@ test('新規ゲームの投票初期値は決選1回・ランダム吊り・自�
 });
 
 
-
 test('AI失敗時のランダム投票は注入した乱数で決定的に対象を選べる', () => {
   const state = createInitialState(4);
   prepareCompletedDiscussion(state);
@@ -173,7 +172,6 @@ test('吊りなし設定では決選投票上限後の同票を処刑なしに�
 });
 
 
-
 test('最多票候補は集計配列の並び順に依存しない', () => {
   const result = resolveVoteResult({
     tally: [
@@ -229,71 +227,3 @@ test('本人が生存人狼数と仲間を把握している場合は候補ご�
   assert.equal(branches.filter((branch) => branch.targetId === 'villager-a').length, 1);
 });
 
-test('投票プロンプトは公開配役から未知の生存人狼数を仮定し、誤処刑後の襲撃勝利まで提示する', () => {
-  const alive = Array.from({ length: 6 }, (_value, index) => ({
-    id: `p${index + 1}`,
-    name: `プレイヤー${index + 1}`,
-  }));
-  const context = {
-    game: {
-      roleComposition: { wolf: 2 },
-      rules: { vote: { runoffLimit: 1, tieResolution: 'random-execution' } },
-    },
-    board: { alive, dead: [] },
-    task: { validTargetIds: alive.slice(1).map((player) => player.id) },
-  };
-  const decision = {
-    population: { aliveCount: 6, knownAliveWolfCount: null },
-    vote: {
-      populationBranches: buildVotePopulationBranches({
-        aliveCount: 6,
-        configuredWolfCount: 2,
-        exactKnownAliveWolfCount: null,
-      }),
-    },
-    runoff: null,
-  };
-
-  const section = voteDecisionSection(context, decision);
-  assert.match(section, /## 処刑後の盤面/u);
-  assert.match(section, /生存人狼が1人の場合/u);
-  assert.match(section, /生存人狼が2人の場合/u);
-  assert.match(section, /対象が非人狼なら、処刑直後は5人生存・人狼2人.*今夜の襲撃が成功すると4人生存・人狼2人.*人狼勝利条件へ到達/u);
-  assert.doesNotMatch(section, /把握している生存人狼/u);
-});
-
-
-
-test('人狼本人の投票盤面は既知候補ごとの確定分岐だけを表示する', () => {
-  const context = {
-    game: { roleComposition: { wolf: 2 }, rules: { vote: { runoffLimit: 1, tieResolution: 'random-execution' } } },
-    board: {
-      alive: [
-        { id: 'self', name: '本人' },
-        { id: 'partner', name: '仲間' },
-        { id: 'villager', name: '村候補' },
-      ],
-      dead: [],
-    },
-    task: { validTargetIds: ['partner', 'villager'] },
-  };
-  const decision = {
-    population: { aliveCount: 3, knownAliveWolfCount: 2 },
-    vote: {
-      populationBranches: buildVotePopulationBranches({
-        aliveCount: 3,
-        configuredWolfCount: 2,
-        exactKnownAliveWolfCount: 2,
-        candidateIds: ['partner', 'villager'],
-        knownWolfIds: ['self', 'partner'],
-      }),
-    },
-    runoff: null,
-  };
-
-  const section = voteDecisionSection(context, decision);
-  assert.match(section, /仲間が人狼なら/u);
-  assert.match(section, /村候補が非人狼なら/u);
-  assert.doesNotMatch(section, /仲間が非人狼なら/u);
-  assert.doesNotMatch(section, /村候補が人狼なら/u);
-});

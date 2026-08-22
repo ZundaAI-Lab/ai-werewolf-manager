@@ -1,6 +1,6 @@
 /**
  * 責務: 人狼・狂人・妖狐系プロフィール本人だけに可視な陣営戦略状態を正規化・生成し、局面ポリシーに従う差分適用・現在ポリシーへの補正・完成状態検証を一元実行する。
- * 変更ルール: 公開判断状態へ混在させない。公開イベントへ派生させない。人狼仲間以外へ人狼用戦略を公開せず、狂人へ実際の人狼IDを追加しない。陣営戦略更新は思考品質向上用の任意入力とし、省略時は現在値を変更しない。保存済み戦略がない状態でkeepが届いた場合も無変更として受理し、空の戦略状態を新規作成しない。AI応答の差分と保存直前の完成状態は必ず本ファイルの同じ正規化規則を通し、検証器と状態更新層で列挙値補正を重複実装しない。更新契機の判定はfactionStrategyUpdatePolicy.jsへ委譲する。
+ * 変更ルール: 公開判断状態へ混在させない。公開イベントへ派生させない。人狼仲間以外へ人狼用戦略を公開せず、狂人へ実際の人狼IDを追加しない。陣営戦略更新は思考品質向上用の任意入力とし、省略時は現在値を変更しない。保存済み戦略がない状態でkeepが届いた場合も無変更として受理し、空の戦略状態を新規作成しない。AI応答の差分と保存直前の完成状態は必ず本ファイルの同じ正規化規則を通し、検証器と状態更新層で列挙値補正を重複実装しない。更新契機の判定はfactionStrategyPolicy.jsへ委譲する。
  */
 
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
@@ -78,7 +78,7 @@ export function createEmptyFactionStrategyState(roleId) {
   };
 }
 
-export function normalizeFactionStrategyUpdate(update, roleId) {
+export function normalizeFactionStrategyState(update, roleId) {
   const normalizedProfile = resolveStrategyProfile(roleId);
   if (!normalizedProfile || !update) return null;
   return {
@@ -95,7 +95,7 @@ export function normalizeFactionStrategyUpdate(update, roleId) {
 export function normalizeFactionStrategyForPolicy(update, roleId, {
   partnerDispositionPolicy = null,
 } = {}) {
-  const normalized = normalizeFactionStrategyUpdate(update, roleId);
+  const normalized = normalizeFactionStrategyState(update, roleId);
   if (!normalized) return null;
   if (normalized.profile === 'wolf' && partnerDispositionPolicy?.requiredValue) {
     normalized.partnerDisposition = String(partnerDispositionPolicy.requiredValue).trim().toLowerCase();
@@ -103,7 +103,7 @@ export function normalizeFactionStrategyForPolicy(update, roleId, {
   return normalized;
 }
 
-export function validateFactionStrategyUpdate(update, roleId, {
+export function validateFactionStrategyState(update, roleId, {
   partnerDispositionPolicy = null,
   requiredFields = null,
   allowPartial = true,
@@ -112,12 +112,12 @@ export function validateFactionStrategyUpdate(update, roleId, {
   const errors = [];
   const normalizedProfile = resolveStrategyProfile(roleId);
   if (!normalizedProfile) {
-    if (update) errors.push('村人陣営の役職など、陣営戦略対象外の役職はfactionStrategyUpdateを出力できません。');
+    if (update) errors.push('村人陣営の役職など、陣営戦略対象外の役職は陣営戦略状態を使用できません。');
     return errors;
   }
   const required = new Set(requiredFields ?? (allowPartial ? [] : getFactionStrategyFields(normalizedProfile)));
   if (!update) {
-    if (required.size) errors.push('完全性監査ではfactionStrategyUpdateの指定が必要です。AI応答では項目自体を省略できます。');
+    if (required.size) errors.push('完全性監査では陣営戦略状態の指定が必要です。');
     return errors;
   }
   if (String(update.profile ?? normalizedProfile) !== normalizedProfile) {
@@ -183,11 +183,11 @@ export function applyFactionStrategyPatch(previousState, patch, roleId) {
   const normalizedPatch = normalizeFactionStrategyPatch(patch, normalizedProfile);
   if (!normalizedPatch) return null;
   const base = previousState?.profile === normalizedProfile
-    ? normalizeFactionStrategyUpdate(previousState, normalizedProfile)
+    ? normalizeFactionStrategyState(previousState, normalizedProfile)
     : createEmptyFactionStrategyState(normalizedProfile);
-  if (normalizedPatch.mode === 'keep') return normalizeFactionStrategyUpdate(base, normalizedProfile);
+  if (normalizedPatch.mode === 'keep') return normalizeFactionStrategyState(base, normalizedProfile);
   if (normalizedPatch.mode !== 'patch') return null;
-  return normalizeFactionStrategyUpdate({ ...base, ...normalizedPatch.changes }, normalizedProfile);
+  return normalizeFactionStrategyState({ ...base, ...normalizedPatch.changes }, normalizedProfile);
 }
 
 export function validateFactionStrategyPatch(previousState, patch, roleId, {
@@ -198,7 +198,7 @@ export function validateFactionStrategyPatch(previousState, patch, roleId, {
   const warnings = [];
   const normalizedProfile = resolveStrategyProfile(roleId);
   if (!normalizedProfile) {
-    if (patch) errors.push('陣営戦略対象外の役職はfactionStrategyUpdateを出力できません。');
+    if (patch) errors.push('陣営戦略対象外の役職はfactionStrategyPatchを出力できません。');
     return { errors, warnings, resolvedUpdate: null };
   }
 
@@ -220,24 +220,24 @@ export function validateFactionStrategyPatch(previousState, patch, roleId, {
 
   const rawChanges = patch?.changes;
   if (!rawChanges || typeof rawChanges !== 'object' || Array.isArray(rawChanges)) {
-    errors.push('factionStrategyUpdate.changesはオブジェクトで指定してください。');
+    errors.push('factionStrategyPatch.changesはオブジェクトで指定してください。');
   }
   const allowedFields = new Set(getFactionStrategyFields(normalizedProfile)
     .filter((key) => key !== 'partnerDisposition' || isWolfPartnerDispositionApplicable(partnerDispositionPolicy)));
   Object.keys(rawChanges ?? {}).forEach((key) => {
     if (FACTION_STRATEGY_FIELDS.includes(key) && !allowedFields.has(key)) {
-      errors.push(`factionStrategyUpdate.changes.${key}は${normalizedProfile}では使用できません。本人役職の現行項目だけを記載してください。`);
+      errors.push(`factionStrategyPatch.changes.${key}は${normalizedProfile}では使用できません。本人役職の現行項目だけを記載してください。`);
     }
   });
 
   const normalizedPatch = normalizeFactionStrategyPatch(patch, normalizedProfile);
-  if (!normalizedPatch) return { errors: [...errors, 'factionStrategyUpdateを解析できません。'], warnings, resolvedUpdate: null };
+  if (!normalizedPatch) return { errors: [...errors, 'factionStrategyPatchを解析できません。'], warnings, resolvedUpdate: null };
   if (!['keep', 'patch'].includes(normalizedPatch.mode)) {
-    errors.push('factionStrategyUpdate.modeはkeepまたはpatchで指定してください。');
+    errors.push('factionStrategyPatch.modeはkeepまたはpatchで指定してください。');
   }
   if (normalizedPatch.mode === 'keep') {
     if (Object.keys(normalizedPatch.changes).length) {
-      errors.push('factionStrategyUpdate.modeがkeepの場合、changesは空オブジェクトにしてください。');
+      errors.push('factionStrategyPatch.modeがkeepの場合、changesは空オブジェクトにしてください。');
     }
     // 保存済み戦略がないkeepは意味上の無操作として扱う。
     // 応答全文の再生成を要求せず、状態も新規作成しない。
@@ -255,11 +255,11 @@ export function validateFactionStrategyPatch(previousState, patch, roleId, {
   if (normalizedPatch.mode === 'patch'
     && !Object.keys(normalizedPatch.changes).length
     && (!rawChanges || Object.keys(rawChanges).length === 0)) {
-    errors.push('factionStrategyUpdate.modeがpatchの場合、changesへ変更項目を1件以上指定してください。');
+    errors.push('factionStrategyPatch.modeがpatchの場合、changesへ変更項目を1件以上指定してください。');
   }
 
   // 今回送信した差分と保存済み完成状態を分け、過去状態を無関係な差分検証で再拒否しない。
-  errors.push(...validateFactionStrategyUpdate(normalizedPatch.changes, normalizedProfile, {
+  errors.push(...validateFactionStrategyState(normalizedPatch.changes, normalizedProfile, {
     partnerDispositionPolicy,
     requiredFields: [],
     allowPartial: true,
@@ -267,14 +267,14 @@ export function validateFactionStrategyPatch(previousState, patch, roleId, {
   }));
   Object.entries(normalizedPatch.changes).forEach(([key, value]) => {
     if (key !== 'partnerDisposition' && !isSubstantiveFactionStrategyText(value)) {
-      warnings.push(`factionStrategyUpdate.changes.${key}は任意ですが、出力する場合は具体的な戦略を記載すると後続AIの判断品質が上がります。`);
+      warnings.push(`factionStrategyPatch.changes.${key}は任意ですが、出力する場合は具体的な戦略を記載すると後続AIの判断品質が上がります。`);
     }
   });
 
   let resolvedUpdate = applyFactionStrategyPatch(normalizedPrevious, normalizedPatch, normalizedProfile);
   resolvedUpdate = normalizeFactionStrategyForPolicy(resolvedUpdate, normalizedProfile, { partnerDispositionPolicy });
   if (resolvedUpdate) {
-    errors.push(...validateFactionStrategyUpdate(resolvedUpdate, normalizedProfile, {
+    errors.push(...validateFactionStrategyState(resolvedUpdate, normalizedProfile, {
       partnerDispositionPolicy,
       requiredFields: [],
       allowPartial: true,
@@ -299,7 +299,7 @@ export function createFactionStrategyState(roleId, update, {
   updatedAt = null,
   sourceAiTurnId = null,
 } = {}) {
-  const normalized = normalizeFactionStrategyUpdate(update, roleId);
+  const normalized = normalizeFactionStrategyState(update, roleId);
   if (!normalized) return createEmptyFactionStrategyState(roleId);
   return {
     ...normalized,

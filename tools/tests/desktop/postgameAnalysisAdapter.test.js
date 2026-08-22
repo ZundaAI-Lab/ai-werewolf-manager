@@ -10,14 +10,14 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { esmSourceAsVmScript } = require('./esmTestSource.js');
 
 function loadApi() {
-  const source = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/postgameAnalysisAdapter.js'), 'utf8')
-    .replace(/\nexport \{\};\s*$/u, '\n');
+  const source = esmSourceAsVmScript(fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/postgameAnalysisAdapter.js'), 'utf8'));
   const context = vm.createContext({ window: {}, structuredClone, console, setTimeout, clearTimeout });
   context.window.window = context.window;
   vm.runInContext(source, context, { filename: 'postgameAnalysisAdapter.js' });
-  return context.window.AiWerewolfPostgameAnalysisAdapter;
+  return { createPostgameAnalysisAdapter: vm.runInContext('createPostgameAnalysisAdapter', context) };
 }
 
 function sampleTurn(executionMode = 'automatic') {
@@ -36,10 +36,10 @@ function sampleTurn(executionMode = 'automatic') {
     parsedMasonConversationMessage: '',
     parsedGraveyardConversationMessage: '',
     parsedActionAnswer: '',
-    parsedActionRationale: 'Aの発言が一貫していたため',
+    parsedSelectionRationale: 'Aの発言が一貫していたため',
     parsedHeartVoice: 'まだ断定はしない',
     parsedInternalMemoUpdate: null,
-    parsedConsolidatedMemo: '',
+    parsedFullMemo: '',
     generationRun: {
       executionMode,
       depth: 3,

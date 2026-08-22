@@ -8,7 +8,7 @@ export function stringifyResponse(value) {
 }
 
 export function decisionUpdate({
-  suspicionCandidates = [],
+  suspects = [],
   executionCandidates = [],
   intendedVote = undefined,
   assessmentLevel = 'unresolved',
@@ -19,17 +19,17 @@ export function decisionUpdate({
   nextDiscriminatingInformation = null,
   decisionReason = '現在の公開情報では候補を絞れないため',
   compact = false,
-  correctedSpeechSequences = [],
-  evidenceEventSequences = [],
+  correctedSpeechRefs = [],
+  evidenceRefs = [],
 } = {}) {
-  const patch = { suspicionCandidates, executionCandidates, assessmentLevel };
+  const patch = { suspects, executionCandidates, assessmentLevel };
   if (intendedVote !== undefined) patch.intendedVote = intendedVote;
   if (uncertainty !== null) patch.uncertainty = uncertainty;
   if (!compact) Object.assign(patch, { leaveAliveBenefit, misexecutionCost, selectionDifference });
   if (nextDiscriminatingInformation !== null) patch.nextDiscriminatingInformation = nextDiscriminatingInformation;
   if (decisionReason) patch.reason = decisionReason;
-  if (correctedSpeechSequences.length) patch.correctedSpeechSequences = correctedSpeechSequences;
-  if (evidenceEventSequences.length) patch.evidenceEventSequences = evidenceEventSequences;
+  if (correctedSpeechRefs.length) patch.correctedSpeechRefs = correctedSpeechRefs;
+  if (evidenceRefs.length) patch.evidenceRefs = evidenceRefs;
   return patch;
 }
 
@@ -67,11 +67,11 @@ export function factionStrategyPatch(roleId = 'wolf', overrides = {}, { mode = '
 }
 
 export function speechResponse(text, {
-  speechInteraction = { questionTargets: [], answerEventSequences: [] },
+  speechInteraction = { questionTargets: [], answerToRefs: [] },
   coOperation,
   abilityClaims,
   decision = decisionUpdate({ compact: true }),
-  factionStrategyUpdate,
+  factionStrategy,
   heartVoice = '少し緊張するのだ。',
   memoAdd,
   internalMemoUpdate,
@@ -84,7 +84,7 @@ export function speechResponse(text, {
   };
   if (coOperation !== undefined) payload.coOperation = coOperation;
   if (abilityClaims !== undefined) payload.abilityClaims = abilityClaims;
-  if (factionStrategyUpdate !== undefined) payload.factionStrategyUpdate = factionStrategyUpdate;
+  if (factionStrategy !== undefined) payload.factionStrategy = factionStrategy;
   const memo = memoAdd ?? internalMemoUpdate?.text;
   if (memo !== undefined) payload.memoAdd = memo;
   return stringifyResponse(payload);
@@ -92,32 +92,32 @@ export function speechResponse(text, {
 
 export function voteResponse(actionAnswer, {
   decision = decisionUpdate({
-    suspicionCandidates: [actionAnswer],
+    suspects: [actionAnswer],
     executionCandidates: [actionAnswer],
     decisionReason: '',
   }),
-  actionRationale = '公開情報と候補比較から、この相手の処刑価値が最も高いと判断したためです。',
-  factionStrategyUpdate,
+  rationale = '公開情報と候補比較から、この相手の処刑価値が最も高いと判断したためです。',
+  factionStrategy,
   memoAdd,
   internalMemoUpdate,
 } = {}) {
-  const payload = { actionAnswer, actionRationale, decisionPatch: decision };
-  if (factionStrategyUpdate !== undefined) payload.factionStrategyUpdate = factionStrategyUpdate;
+  const payload = { actionAnswer, rationale, decisionPatch: decision };
+  if (factionStrategy !== undefined) payload.factionStrategy = factionStrategy;
   const memo = memoAdd ?? internalMemoUpdate?.text;
   if (memo !== undefined) payload.memoAdd = memo;
   return stringifyResponse(payload);
 }
 
 export function nightActionResponse(actionAnswer, {
-  actionRationale = '結果判明前の公開情報を比較し、他候補より価値が高いと判断したためです。',
+  rationale = '結果判明前の公開情報を比較し、他候補より価値が高いと判断したためです。',
 } = {}) {
-  return stringifyResponse({ actionAnswer, actionRationale });
+  return stringifyResponse({ actionAnswer, rationale });
 }
 
 export function freezeActionResponse(actionAnswer, {
   estimatedWerewolfIds,
   predictedAttackTargetIds,
-  actionRationale = '推定人狼と予想襲撃先を避け、翌日に残る中で発言と投票への影響が最も大きい対象を選びました。',
+  rationale = '推定人狼と予想襲撃先を避け、翌日に残る中で発言と投票への影響が最も大きい対象を選びました。',
 } = {}) {
   return stringifyResponse({
     estimate: {
@@ -125,7 +125,7 @@ export function freezeActionResponse(actionAnswer, {
       predictedAttackTargetIds,
     },
     actionAnswer,
-    actionRationale,
+    rationale,
   });
 }
 
@@ -133,15 +133,15 @@ export function attackResponse(actionAnswer, attackAssessment, options = {}) {
   return stringifyResponse({
     actionAnswer,
     attackAssessment,
-    actionRationale: options.actionRationale ?? '成功見込みと翌日の票数を比較して選びました。',
+    rationale: options.rationale ?? '成功見込みと翌日の票数を比較して選びました。',
   });
 }
 
-export function wolfConversationResponse(wolfMessage, sharedStrategyUpdate, options = {}) {
-  const normalized = sharedStrategyUpdate?.mode
-    ? sharedStrategyUpdate
-    : { mode: 'patch', changes: { ...(sharedStrategyUpdate ?? {}) } };
-  const payload = { wolfMessage, sharedStrategyUpdate: normalized };
+export function wolfConversationResponse(wolfMessage, sharedStrategy, options = {}) {
+  const normalized = sharedStrategy?.mode
+    ? sharedStrategy
+    : { mode: 'patch', changes: { ...(sharedStrategy ?? {}) } };
+  const payload = { wolfMessage, sharedStrategy: normalized };
   const memo = options.memoAdd ?? options.internalMemoUpdate?.text;
   if (memo !== undefined) payload.memoAdd = memo;
   return stringifyResponse(payload);

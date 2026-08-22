@@ -19,21 +19,21 @@ import { RUNTIME_REQUIRED_METHODS } from '../../app/renderer/js/app/runtimeFacad
 
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS.speech.allowedTopLevelKeys], [
   'publicSpeech', 'speechInteraction', 'coOperation', 'abilityClaims',
-  'decisionPatch', 'factionStrategyUpdate', 'heartVoice', 'memoAdd',
+  'decisionPatch', 'factionStrategy', 'heartVoice', 'memoAdd',
 ]);
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS.speech.requiredTopLevelKeys], ['publicSpeech']);
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS['speech-designated'].allowedTopLevelKeys], [
   'publicSpeech', 'speechInteraction', 'coOperation', 'abilityClaims',
-  'decisionPatch', 'factionStrategyUpdate', 'heartVoice', 'memoAdd', 'nextSpeakerPreference',
+  'decisionPatch', 'factionStrategy', 'heartVoice', 'memoAdd', 'nextSpeakerPreference',
 ]);
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS['speech-free'].allowedTopLevelKeys], [
   'publicSpeech', 'speechInteraction', 'coOperation', 'abilityClaims',
-  'decisionPatch', 'factionStrategyUpdate', 'heartVoice', 'memoAdd', 'discussionPreference',
+  'decisionPatch', 'factionStrategy', 'heartVoice', 'memoAdd', 'discussionPreference',
 ]);
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS['discussion-opening-preference'].allowedTopLevelKeys], ['openingPreference']);
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS['priority-answer'].allowedTopLevelKeys], [
   'publicSpeech', 'coOperation', 'abilityClaims', 'decisionPatch',
-  'factionStrategyUpdate', 'heartVoice', 'memoAdd',
+  'factionStrategy', 'heartVoice', 'memoAdd',
 ]);
 assert.deepEqual([...RESPONSE_MODE_DEFINITIONS['priority-answer'].requiredTopLevelKeys], ['publicSpeech']);
 assert.equal(Object.hasOwn(buildResponseContractExample({ mode: 'speech' }), 'heartVoice'), true);

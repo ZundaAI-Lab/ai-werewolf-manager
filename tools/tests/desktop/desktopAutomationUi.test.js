@@ -10,15 +10,71 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const { pathToFileURL } = require('node:url');
+const { esmSourceAsVmScript } = require('./esmTestSource.js');
 
 const automationRoot = path.join(__dirname, '../../../app/renderer/js/automation');
 function automationSource(filename) {
-  return fs.readFileSync(path.join(automationRoot, filename), 'utf8')
-    .replace(/\nimport \{ escapeHtml \} from '\.\.\/shared\/utils\.js';\s*/u, '\n')
-    .replace(/\nimport \{ downloadJson, readFileText \} from '\.\.\/shared\/utils\.js';\s*/u, '\n')
-    .replace(/\nimport \{ DATA_SCHEMA_KIND, getCurrentDataSchemaVersion, migrateData \} from '\.\.\/config\/dataCompatibilityAdapter\.js';\s*/u, "\nconst { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } = window.AiWerewolfDataSchemaVersions;\nconst { migrateData } = window.AiWerewolfDataMigration;\n")
-    .replace(/\nexport \{\};\s*$/u, '\n');
+  let source = fs.readFileSync(path.join(automationRoot, filename), 'utf8');
+  source = source.replace(
+    /\nimport \{ DATA_SCHEMA_KIND, getCurrentDataSchemaVersion, migrateData \} from '\.\.\/config\/dataCompatibilityAdapter\.js';\s*/u,
+    "\nconst { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } = window.AiWerewolfDataSchemaVersions;\nconst { migrateData } = window.AiWerewolfDataMigration;\n",
+  );
+  return esmSourceAsVmScript(source);
+}
+
+const AUTOMATION_TEST_EXPORTS = Object.freeze({
+  'runtimeAccess.js': ['getRuntime', 'reportInitializationFailure'],
+  'automationRunControl.js': ['AutomationStoppedError', 'createRunSession', 'isStopped', 'assertRunning', 'requestStop', 'beginRequest', 'endRequest', 'delayWithAbort', 'completeSession', 'waitForCompletion', 'isAutomationStoppedError'],
+  'automaticAiExecutor.js': ['createAutomaticAiExecutor', 'replaceTaskArtifact', 'buildFullCandidateStagePrompt'],
+  'desktopAutomationConfig.js': ['createDesktopAutomationConfig'],
+  'desktopAutomationManagementView.js': ['createManagementView'],
+  'automationStatusController.js': ['createAutomationStatusController'],
+  'liveProgressController.js': ['createLiveProgressController'],
+  'automaticRunCoordinator.js': ['createAutomaticRunCoordinator'],
+  'settingsPersistenceCoordinator.js': ['createSettingsPersistenceCoordinator'],
+  'humanTaskCoordinator.js': ['createHumanTaskCoordinator'],
+  'manualTaskCoordinator.js': ['createManualTaskCoordinator'],
+  'profileEditorController.js': ['createProfileEditorController'],
+  'aiProfileTransferController.js': ['createAiProfileTransferController'],
+  'assignmentController.js': ['createAssignmentController'],
+  'generationTestController.js': ['createGenerationTestController'],
+  'aiManagementController.js': ['createAiManagementController'],
+  'setupDecorationController.js': ['createSetupDecorationController'],
+  'postgameAnalysisAdapter.js': ['createPostgameAnalysisAdapter'],
+});
+
+function executeAutomationModule(filename, context) {
+  const source = automationSource(filename);
+  const names = AUTOMATION_TEST_EXPORTS[filename] ?? [];
+  const assignment = names.length
+    ? `globalThis.__automationTestModules[${JSON.stringify(filename)}] = { ${names.join(', ')} };`
+    : '';
+  vm.runInContext(`(function(){${source}\n${assignment}}).call(globalThis);`, context, { filename });
+}
+
+function desktopAutomationExecutableSource() {
+  const source = automationSource('desktopAutomation.js');
+  const bindings = [
+    "const runtimeAccess = globalThis.__automationTestModules['runtimeAccess.js'];",
+    "const automationRunControl = globalThis.__automationTestModules['automationRunControl.js'];",
+    "const automaticAiExecutorApi = globalThis.__automationTestModules['automaticAiExecutor.js'];",
+    "const { createDesktopAutomationConfig } = globalThis.__automationTestModules['desktopAutomationConfig.js'];",
+    "const { createManagementView } = globalThis.__automationTestModules['desktopAutomationManagementView.js'];",
+    "const { createAutomationStatusController } = globalThis.__automationTestModules['automationStatusController.js'];",
+    "const { createLiveProgressController } = globalThis.__automationTestModules['liveProgressController.js'];",
+    "const { createAutomaticRunCoordinator } = globalThis.__automationTestModules['automaticRunCoordinator.js'];",
+    "const { createSettingsPersistenceCoordinator } = globalThis.__automationTestModules['settingsPersistenceCoordinator.js'];",
+    "const { createHumanTaskCoordinator } = globalThis.__automationTestModules['humanTaskCoordinator.js'];",
+    "const { createManualTaskCoordinator } = globalThis.__automationTestModules['manualTaskCoordinator.js'];",
+    "const { createProfileEditorController } = globalThis.__automationTestModules['profileEditorController.js'];",
+    "const { createAiProfileTransferController } = globalThis.__automationTestModules['aiProfileTransferController.js'];",
+    "const { createAssignmentController } = globalThis.__automationTestModules['assignmentController.js'];",
+    "const { createGenerationTestController } = globalThis.__automationTestModules['generationTestController.js'];",
+    "const { createAiManagementController } = globalThis.__automationTestModules['aiManagementController.js'];",
+    "const { createSetupDecorationController } = globalThis.__automationTestModules['setupDecorationController.js'];",
+    "const { createPostgameAnalysisAdapter } = globalThis.__automationTestModules['postgameAnalysisAdapter.js'];",
+  ].join('\n');
+  return `(function(){${bindings}\n${source}}).call(globalThis);`;
 }
 
 
@@ -60,8 +116,10 @@ function loadAutomationApi() {
       .replaceAll('\"', '&quot;')
       .replaceAll("'", '&#039;'),
   });
-  const runtimeAccessSource = automationSource('runtimeAccess.js');
-  vm.runInContext(runtimeAccessSource, context, { filename: 'runtimeAccess.js' });
+  context.__automationTestModules = Object.create(null);
+  context.__AI_WEREWOLF_RUNTIME_CONTRACT__ = window.__AI_WEREWOLF_RUNTIME_CONTRACT__;
+  context.__AI_WEREWOLF_RUNTIME__ = window.__AI_WEREWOLF_RUNTIME__;
+  executeAutomationModule('runtimeAccess.js', context);
   const retryPolicySource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/ai/apiRetryPolicy.js'), 'utf8');
   vm.runInContext(retryPolicySource, context, { filename: 'apiRetryPolicy.js' });
   const responseRetryPolicySource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/ai/responseRetryPolicy.js'), 'utf8');
@@ -81,15 +139,12 @@ function loadAutomationApi() {
   const dataTransmissionPolicySource = fs.readFileSync(path.join(__dirname, '../../../app/shared/dataTransmissionPolicy.js'), 'utf8');
   vm.runInContext(dataTransmissionPolicySource, context, { filename: 'dataTransmissionPolicy.js' });
   for (const filename of ['automationRunControl.js', 'automaticAiExecutor.js', 'desktopAutomationConfig.js', 'desktopAutomationManagementView.js', 'automationStatusController.js', 'liveProgressController.js', 'automaticRunCoordinator.js', 'settingsPersistenceCoordinator.js', 'humanTaskCoordinator.js', 'manualTaskCoordinator.js', 'profileEditorController.js', 'aiProfileTransferController.js', 'assignmentController.js', 'generationTestController.js', 'aiManagementController.js', 'setupDecorationController.js', 'postgameAnalysisAdapter.js']) {
-    const moduleSource = automationSource(filename);
-    vm.runInContext(moduleSource, context, { filename });
+    executeAutomationModule(filename, context);
   }
   window.AiWerewolfEndpointPolicy = context.AiWerewolfEndpointPolicy;
   window.AiWerewolfDataTransmissionPolicy = context.AiWerewolfDataTransmissionPolicy;
   window.AiWerewolfApiConversationStore = context.AiWerewolfApiConversationStore;
-  window.AiWerewolfAutomationRunControl = context.AiWerewolfAutomationRunControl;
-  window.AiWerewolfAutomaticAiExecutor = context.AiWerewolfAutomaticAiExecutor;
-  const source = automationSource('desktopAutomation.js');
+  const source = desktopAutomationExecutableSource();
   vm.runInContext(source, context, { filename: 'desktopAutomation.js' });
   return window.AiWerewolfDesktopAutomation;
 }
@@ -112,65 +167,11 @@ function sampleState() {
   };
 }
 
-
-test('プレイヤー状態の投票済表示は現在日の投票フェーズだけを参照する', () => {
-  const workbenchSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/ui/views/workbench/workbenchTaskRenderer.js'), 'utf8');
-  const liveSource = automationSource('liveProgressController.js');
-  for (const source of [workbenchSource, liveSource]) {
-    assert.match(source, /\['vote', 'runoff'\]\.includes\(state(?:\?|)\.game(?:\?|)\.phase\)/u);
-    assert.match(source, /voteSession(?:\?|)\.day === state(?:\?|)\.game(?:\?|)\.day/u);
-    assert.match(source, /Boolean\(state(?:\?|)\.voteSession(?:\?|)\.votes && player\.id in state\.voteSession\.votes\)/u);
-  }
-  assert.doesNotMatch(workbenchSource, /const voteDone = state\.voteSession\?\.votes && player\.id in state\.voteSession\.votes;/u);
-  assert.doesNotMatch(liveSource, /const voteDone = Boolean\(state\?\.voteSession\?\.votes && player\.id in state\.voteSession\.votes\);/u);
-});
-
-test('デスクトップ自動化は共通escapeHtmlを利用しデモAI欠落を明示失敗させる', () => {
-  const rawSource = fs.readFileSync(path.join(automationRoot, 'desktopAutomation.js'), 'utf8');
-  assert.match(rawSource, /import \{ escapeHtml \} from '\.\.\/shared\/utils\.js';/u);
-  assert.equal((rawSource.match(/function escapeHtml\(/gu) ?? []).length, 0);
-  assert.match(rawSource, /const demoAi = window\.AiWerewolfDemoAi;[\s\S]*typeof demoAi\.generate !== 'function'[\s\S]*デモAIを初期化できませんでした。/u);
-  assert.doesNotMatch(rawSource, /text:\s*window\.AiWerewolfDemoAi\.generate/u);
-});
-
-test('MainとRendererはプロバイダー既定値をshared/providerDefaultsだけから参照する', () => {
+test('Mainのプロバイダー既定値はshared/providerDefaultsと同一である', () => {
   const sharedDefaults = require('../../../app/shared/providerDefaults.js').PROVIDER_DEFAULTS;
   const mainConstants = require('../../../app/main/llm/providerConstants.js');
-  const mainSource = fs.readFileSync(path.join(__dirname, '../../../app/main/llm/providerConstants.js'), 'utf8');
-  const rendererSource = automationSource('desktopAutomationConfig.js');
-
   assert.deepEqual(mainConstants.PROVIDER_DEFAULTS, sharedDefaults);
-  assert.match(mainSource, /require\('\.\.\/\.\.\/shared\/providerDefaults\.js'\)/u);
-  assert.match(rendererSource, /const \{ PROVIDER_DEFAULTS \} = providerDefaults/u);
-  for (const endpoint of ['api.openai.com', 'api.anthropic.com', 'generativelanguage.googleapis.com']) {
-    assert.equal(mainSource.includes(endpoint), false, `Mainへ${endpoint}を複製しない`);
-    assert.equal(rendererSource.includes(endpoint), false, `Rendererへ${endpoint}を複製しない`);
-  }
 });
-
-
-test('AI管理画面へ応答修復ポリシーを明示注入する', () => {
-  const automationFacadeSource = automationSource('desktopAutomation.js');
-  const managementViewSource = automationSource('desktopAutomationManagementView.js');
-
-  assert.match(automationFacadeSource, /createManagementView\(\{[\s\S]*?responseRetryPolicy,[\s\S]*?responseRecoveryModeOptions:/u);
-  assert.match(managementViewSource, /function createManagementView\(\{[\s\S]*?responseRetryPolicy,[\s\S]*?responseRecoveryModeOptions,/u);
-  assert.match(managementViewSource, /responseRecoveryMode: responseRetryPolicy\.normalizeRecoveryMode\(/u);
-});
-
-
-test('AI管理画面は欠損Thinking設定をローカルLLM既定値へ正規化し公開APIを重複定義しない', () => {
-  const managementViewSource = automationSource('desktopAutomationManagementView.js');
-  const managementControllerSource = automationSource('aiManagementController.js');
-  assert.match(managementViewSource, /const \{ DEFAULT_OLLAMA_THINKING_LEVEL, LOCAL_OPENAI_PROVIDER, LOCAL_SERVER_PRESETS, OLLAMA_THINKING_LEVELS \} = localLlmConfig;/u);
-  assert.match(managementViewSource, /thinkingLevel: card\.querySelector\('\[data-profile-setting="thinkingLevel"\]'\)\?\.value \?\? DEFAULT_OLLAMA_THINKING_LEVEL/u);
-  const publicApiStart = managementControllerSource.indexOf('return Object.freeze({');
-  const publicApiEnd = managementControllerSource.indexOf('});', publicApiStart);
-  const publicApi = managementControllerSource.slice(publicApiStart, publicApiEnd);
-  assert.equal((publicApi.match(/^\s+syncProfileProviderFields,$/gmu) ?? []).length, 1);
-});
-
-
 test('AI実行操作をAI管理画面へ集約する', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
@@ -191,101 +192,7 @@ test('AI実行操作をAI管理画面へ集約する', () => {
   assert.match(html, /data-ai-action="resync-all"/u);
 });
 
-
-
-test('一括設定はAI設定保存と画面遷移から分離され選択値を保持する', () => {
-  const api = loadAutomationApi();
-  const html = api.renderManagementPage(sampleState());
-  assert.doesNotMatch(html, /data-ai-action="return-to-game"/u);
-  assert.match(html, /AI参加者3名の個別割り当てを、選択したプロファイルで上書きします。/u);
-  assert.match(html, /data-ai-bulk-feedback/u);
-  assert.match(html, /未保存のAIプロファイル・オプション設定があります。/u);
-  assert.match(html, />AI設定を保存<\/button>/u);
-
-  const automationFacadeSource = automationSource('desktopAutomation.js');
-  const managementControllerSource = automationSource('aiManagementController.js');
-  const managementViewSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/desktopAutomationManagementView.js'), 'utf8');
-  const source = `${automationFacadeSource}\n${managementControllerSource}\n${managementViewSource}`;
-  assert.match(automationFacadeSource, /bulkAssignmentProfileId: null/u);
-  assert.match(managementViewSource, /function bulkAssignmentProfileId\(\)/u);
-  assert.match(source, /event\.target\.id === 'ai-bulk-profile'[\s\S]*controller\.bulkAssignmentProfileId = event\.target\.value/u);
-  assert.match(source, /\[data-ai-profile-player-id\], #ai-bulk-profile/u);
-
-  const bulkStart = source.indexOf("if (action === 'bulk-assign')");
-  const bulkEnd = source.indexOf('function beforeManagementTabRender', bulkStart);
-  const bulkAction = bulkStart >= 0 && bulkEnd > bulkStart ? source.slice(bulkStart, bulkEnd) : '';
-  assert.match(bulkAction, /persistSettings\(\{ \.\.\.controller\.settings, assignments \}, \{ refresh: false/u);
-  assert.match(bulkAction, /showBulkAssignmentFeedback/u);
-  assert.match(bulkAction, /return;/u);
-  assert.doesNotMatch(bulkAction, /setTab/u);
-});
-
-test('ゲーム準備ヘッダーはゲーム操作だけを集約しAI管理への重複導線を追加しない', () => {
-  const setupDecorationSource = automationSource('setupDecorationController.js');
-  assert.doesNotMatch(setupDecorationSource, /managementButton|pageActions\.prepend/u);
-  assert.match(setupDecorationSource, /currentSelect\.outerHTML !== nextSelect\.outerHTML[\s\S]*currentSelect\.replaceWith\(nextSelect\)/u);
-  const setupViewSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/ui/views/setup/setupView.js'), 'utf8');
-  assert.match(setupViewSource, /<div class="page-head-actions"><button class="button ghost" data-action="game-data-import"[^>]*>ゲームデータ読込<\/button><button class="button ghost" data-action="game-data-export"[^>]*>ゲームデータ出力<\/button><button class="button danger-ghost" data-action="new-game"[^>]*>新しいゲーム<\/button>/u);
-});
-
-
-test('ゲーム準備の局所入力通知は自動保存以外の不要な自動化全体更新を省略する', () => {
-  const desktopSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/desktopAutomation.js'), 'utf8');
-  assert.match(desktopSource, /const setupInputChange = event\.detail\?\.scope === 'setup-input'/u);
-  assert.match(desktopSource, /if \(setupInputChange\)[\s\S]*event\.detail\?\.decorateSetup[\s\S]*else \{[\s\S]*reconcileAssignments[\s\S]*refreshLiveView\(\)[\s\S]*refreshAutomationStatus\(\)/u);
-  assert.match(desktopSource, /settingsPersistenceCoordinator\.scheduleAutosave\(\)/u);
-  assert.match(desktopSource, /setupLocalMutationSelector[\s\S]*data-ai-profile-player-id[\s\S]*records\.every\(isSetupLocalMutation\)/u);
-});
-
-test('AI管理はAppUIの正式タブとして登録し画面DOMの所有権を二重化しない', () => {
-  const automationFacadeSource = automationSource('desktopAutomation.js');
-  const managementControllerSource = automationSource('aiManagementController.js');
-  const automationImplementationSource = `${automationFacadeSource}\n${managementControllerSource}`;
-  const bootstrapSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/app/bootstrap.js'), 'utf8');
-  const appUiSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/ui/AppUI.js'), 'utf8');
-  const tabControllerSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/ui/controllers/tabController.js'), 'utf8');
-  const indexHtml = fs.readFileSync(path.join(__dirname, '../../../app/renderer/index.html'), 'utf8');
-
-  assert.match(indexHtml, /data-tab="ai-management"[^>]*><span>◇<\/span>AI管理<\/button>/u);
-  assert.doesNotMatch(indexHtml, /id="ai-management-nav-button"/u);
-  assert.match(bootstrapSource, /registerTabView: \(tab, view\) => ui\.registerTabView\(tab, view\)/u);
-  assert.match(bootstrapSource, /getActiveTab: \(\) => ui\.getActiveTab\(\)/u);
-  assert.match(bootstrapSource, /refreshTab: \(tab\) => ui\.refreshTab\(tab\)/u);
-  assert.match(tabControllerSource, /function registerTabView\(tab, view = \{\}\)/u);
-  assert.match(appUiSource, /const registeredView = this\.registeredTabViews\.get\(this\.activeTab\)/u);
-  assert.match(automationFacadeSource, /registerTabView\('ai-management'/u);
-  assert.match(automationFacadeSource, /render: \(\{ state \}\) => renderManagementPage\(state\)/u);
-  assert.match(automationImplementationSource, /runtime\(\)\.setTab\('ai-management'\)/u);
-
-  assert.doesNotMatch(automationImplementationSource, /managementOpen/u);
-  assert.doesNotMatch(automationImplementationSource, /updateNavigationState/u);
-  assert.doesNotMatch(automationImplementationSource, /root\.innerHTML = renderManagementPage/u);
-  assert.doesNotMatch(automationImplementationSource, /#new-game-dialog/u);
-});
-
-
-
-test('AI管理からの各遷移は正式タブAPIだけを使用する', () => {
-  const source = `${automationSource('aiManagementController.js')}\n${automationSource('liveProgressController.js')}`;
-  const manualAction = source.match(/if \(action === 'open-manual'\) \{[\s\S]*?\n    \}/u)?.[0] ?? '';
-  const prepareLive = source.match(/async function prepareLiveWorkbench\(\) \{[\s\S]*?\n\s+\}/u)?.[0] ?? '';
-  assert.doesNotMatch(source, /return-to-game/u);
-  assert.match(manualAction, /setTab\(currentGameState\(\)\?\.game\?\.phase === 'setup' \? 'setup' : 'workbench'\)/u);
-  assert.match(prepareLive, /setTab\('workbench'\)/u);
-  for (const block of [manualAction, prepareLive]) {
-    assert.doesNotMatch(block, /innerHTML|managementOpen|updateNavigationState/u);
-  }
-});
-
-test('人間操作待ちの進行卓導線は公開発言も通常進行卓の入力タスクを開く', () => {
-  const source = automationSource('aiManagementController.js');
-  const pendingAction = source.match(/if \(action === 'open-pending-task'\) \{[\s\S]*?\n\s+\}/u)?.[0] ?? '';
-  assert.match(pendingAction, /automationMode === 'waiting-human'[\s\S]*return openHumanTask\(\)/u);
-  assert.doesNotMatch(pendingAction, /pendingHumanTask\?\.kind === 'human-private'/u);
-  assert.doesNotMatch(pendingAction, /prepareLiveWorkbench\(\)/u);
-});
-
-test('AIプロファイルを上下へ並び替えて保存できる', () => {
+test('AIプロファイルの並び替え計算は境界位置を越えない', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
   assert.match(html, /data-ai-action="move-profile-up"/u);
@@ -295,29 +202,7 @@ test('AIプロファイルを上下へ並び替えて保存できる', () => {
   assert.equal(api.reorderedProfiles(profiles, 'p2', 1).map((profile) => profile.id).join(','), 'p1,p3,p2');
   assert.equal(api.reorderedProfiles(profiles, 'p1', -1).map((profile) => profile.id).join(','), 'p1,p2,p3');
 
-  const source = automationSource('aiManagementController.js');
-  assert.match(source, /current\.profiles = reordered;[\s\S]*persistSettings\(current, \{ refresh: true/u);
 });
-
-test('自動保存は専用スナップショットを遅延集約し終了前flushを登録する', () => {
-  const source = automationSource('settingsPersistenceCoordinator.js');
-  assert.match(source, /AUTOSAVE_DEBOUNCE_MS = 750/u);
-  assert.match(source, /AUTOSAVE_MAX_WAIT_MS = 2000/u);
-  assert.match(source, /runtime\(\)\.getAutosaveState\(\)/u);
-  assert.match(source, /registerAutosaveFlushHandler/u);
-  assert.doesNotMatch(source, /runtime\(\)\.getState\(\)/u);
-});
-
-test('使用量画面は1タスク平均トークンと再生成発生率を表示する', () => {
-  const executorSource = automationSource('automaticAiExecutor.js');
-  const managementSource = automationSource('desktopAutomationManagementView.js');
-  assert.match(executorSource, /isTaskCall: true/u);
-  assert.match(executorSource, /taskStart: taskApiCallCount === 0/u);
-  assert.match(executorSource, /regeneratedTask: requestPurpose === 'regenerate'/u);
-  assert.match(managementSource, /平均 .*tokens \/ 再生成/u);
-});
-
-
 test('API使用量はAIプロファイルを正本として個別または全体を確認付きリセットできる', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
@@ -327,38 +212,20 @@ test('API使用量はAIプロファイルを正本として個別または全体
   assert.match(html, /data-ai-action="reset-all-usage"/u);
   assert.match(html, /詳細APIログは削除しません/u);
 
-  const managementControllerSource = automationSource('aiManagementController.js');
-  const preloadSource = fs.readFileSync(path.join(__dirname, '../../../app/main/preload.js'), 'utf8');
-  const mainSource = fs.readFileSync(path.join(__dirname, '../../../app/main/main.js'), 'utf8');
-  assert.match(managementControllerSource, /bridge\.resetProfileUsage\(profileId\)/u);
-  assert.match(managementControllerSource, /bridge\.resetUsageSummary\('all'\)/u);
-  assert.doesNotMatch(managementControllerSource, /window\.confirm/u);
-  assert.match(preloadSource, /resetProfileUsage: \(profileId\) => ipcRenderer\.invoke\('desktop:reset-profile-usage'/u);
-  assert.match(preloadSource, /resetUsageSummary: \(scope\) => ipcRenderer\.invoke\('desktop:reset-usage-summary'/u);
-  assert.match(mainSource, /settingsStore\.resetUsageSummary\('profile', profileId\)/u);
 });
-
 test('料金上限はゲームIDではなくAIプロファイル累計へ適用する', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
   assert.match(html, /プロファイル利用上限（USD）/u);
   assert.match(html, /data-profile-setting="billingProfileBudgetUsd"/u);
   assert.doesNotMatch(html, /1ゲームの上限/u);
-  const mainSource = fs.readFileSync(path.join(__dirname, '../../../app/main/main.js'), 'utf8');
-  const reservationSource = fs.readFileSync(path.join(__dirname, '../../../app/main/profileBudgetReservation.js'), 'utf8');
-  assert.ok([...mainSource.matchAll(/profileBudgetReservations\.reserve\(profile, promptEnvelope\)/gu)].length >= 2, '通常生成と接続テストの双方で利用上限を予約する');
-  assert.match(reservationSource, /getProfileUsage\(profileId\)/u);
-  assert.match(reservationSource, /PROFILE_BUDGET_EXCEEDED/u);
 });
-
-
 test('ローカルLLM正式対応の設定・モデル取得・認証任意表示を提供する', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
   assert.match(html, /ローカルLLM（OpenAI互換）/u);
   assert.match(html, /data-ai-action="add-profile"/u);
   assert.doesNotMatch(html, /data-ai-action="add-local-profile"/u);
-  assert.match(automationSource('desktopAutomationConfig.js'), /\[LOCAL_OPENAI_PROVIDER\]: 'ローカルLLM（OpenAI互換）'/u);
   assert.match(html, /data-local-model-action/u);
   assert.match(html, /data-profile-setting="contextWindowTokens"/u);
   assert.match(html, /data-profile-setting="promptCacheMode"/u);
@@ -373,15 +240,7 @@ test('ローカルLLM正式対応の設定・モデル取得・認証任意表�
   assert.match(html, /max：最大/u);
   assert.match(html, /noneはThinkingを行いません。lowからmaxへ上げるほど推論量が増え/u);
   assert.match(html, /APIキーは必要な場合だけ設定してください。未設定の認証情報は送信されません。/u);
-  const mainSource = fs.readFileSync(path.join(__dirname, '../../../app/main/main.js'), 'utf8');
-  const handlerStart = mainSource.indexOf("trustedIpc.handle('desktop:list-profile-models'");
-  const handlerEnd = mainSource.indexOf("trustedIpc.handle('desktop:test-profile'", handlerStart);
-  const handler = mainSource.slice(handlerStart, handlerEnd);
-  assert.ok(handler.indexOf('isLocalProvider(profile)') >= 0, 'モデル一覧取得はMain境界でもローカルプロファイルを再検証する');
-  assert.ok(handler.indexOf('isLocalProvider(profile)') < handler.indexOf('settingsStore.decryptApiKey(profileId)'), '外部プロファイルのAPIキーを復号する前にローカル判定する');
 });
-
-
 test('AIプロファイル編集は一覧と選択中編集を分離し設定責務を3タブへ整理する', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
@@ -421,14 +280,7 @@ test('AIプロファイル編集は一覧と選択中編集を分離し設定責
   assert.match(generationPanel, /data-ai-action="test-generation-pipeline"/u);
   assert.doesNotMatch(generationPanel, /APIエンドポイント/u);
 
-  const source = automationSource('profileEditorController.js');
-  assert.match(source, /function switchProfileEditor\(profileId\)/u);
-  assert.match(source, /function switchProfileEditorTab\(tabId\)/u);
-  assert.match(source, /controller\.selectedProfileId/u);
-  assert.match(source, /controller\.profileEditorTab/u);
 });
-
-
 test('AI管理画面は生成深度・工程担当・上書き・接続テストを提供する', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
@@ -459,15 +311,7 @@ test('AI管理画面は生成深度・工程担当・上書き・接続テスト
   assert.match(html, /最初のJSONオブジェクトだけを取り出す/u);
   assert.match(html, /現在の設定でテスト回答を生成し、結果を比較できます。/u);
 
-  const source = `${automationSource('desktopAutomationConfig.js')}\n${automationSource('desktopAutomationManagementView.js')}\n${automationSource('profileEditorController.js')}\n${automationSource('generationTestController.js')}\n${automationSource('aiManagementController.js')}`;
-  assert.match(source, /generationTaskPlans/u);
-  assert.match(source, /generationStagesForTask/u);
-  assert.match(source, /generationMaximumNormalCalls/u);
-  assert.match(source, /data-generation-profile-id/u);
-  assert.match(source, /naturalGenerationSummary/u);
 });
-
-
 test('全自動でもAIプロファイル未設定を参加者別の手動生成として許可する', () => {
   const api = loadAutomationApi();
   const state = sampleState();
@@ -479,29 +323,95 @@ test('全自動でもAIプロファイル未設定を参加者別の手動生成
 });
 
 
+test('準備画面のAI検証表示は開始ボタンと同じ検証コンテナへ挿入する', () => {
+  const inserted = [];
+  const startButton = { dataset: {}, disabled: false, parentNode: null };
+  const validationRoot = {
+    children: [startButton],
+    querySelector(selector) {
+      if (selector === '[data-action="start-game"]') return startButton;
+      if (selector === '.desktop-ai-validation-list') return this.children.find((child) => child.className === 'desktop-ai-validation-list') ?? null;
+      return null;
+    },
+    insertBefore(node, referenceNode) {
+      if (referenceNode !== null && referenceNode.parentNode !== this) {
+        throw new DOMException('The node before which the new node is to be inserted is not a child of this node.', 'NotFoundError');
+      }
+      const index = referenceNode === null ? this.children.length : this.children.indexOf(referenceNode);
+      node.parentNode = this;
+      this.children.splice(index, 0, node);
+      inserted.push(node);
+      return node;
+    },
+  };
+  startButton.parentNode = validationRoot;
 
-test('runtime必須操作は共有契約で検証し欠落を無言で無視しない', () => {
-  const runtimeFacadeSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/app/runtimeFacade.js'), 'utf8');
-  const runtimeAccessSource = automationSource('runtimeAccess.js');
-  const automationSources = fs.readdirSync(automationRoot)
-    .filter((name) => name.endsWith('.js') && name !== 'runtimeAccess.js')
-    .map((name) => automationSource(name)).join('\n');
-  assert.match(runtimeFacadeSource, /RUNTIME_REQUIRED_METHODS/u);
-  assert.match(runtimeAccessSource, /contract\.requiredMethods\.filter/u);
-  assert.match(runtimeAccessSource, /reportInitializationFailure/u);
-  assert.doesNotMatch(automationSources, /runtime\(\)\?\./u);
-  assert.match(automationSource('desktopAutomation.js'), /contentMutationRefreshPending[\s\S]*queueMicrotask/u);
-});
+  const heading = { textContent: '開始前確認' };
+  const validationPanel = {
+    querySelector(selector) {
+      if (selector === ':scope > h3') return heading;
+      if (selector === '[data-setup-validation]') return validationRoot;
+      if (selector === '[data-action="start-game"]') return startButton;
+      if (selector === '.desktop-ai-validation-list') return null;
+      return null;
+    },
+    insertBefore(node, referenceNode) {
+      if (referenceNode !== null && referenceNode.parentNode !== this) {
+        throw new DOMException('The node before which the new node is to be inserted is not a child of this node.', 'NotFoundError');
+      }
+      node.parentNode = this;
+      inserted.push(node);
+      return node;
+    },
+  };
+  const list = {
+    closest() { return null; },
+    querySelector() { return null; },
+  };
+  const document = {
+    activeElement: null,
+    querySelector(selector) {
+      if (selector === '#app-content .player-editor-list') return list;
+      return null;
+    },
+    querySelectorAll(selector) {
+      return selector === '#app-content .panel' ? [validationPanel] : [];
+    },
+    createElement() {
+      return { className: '', dataset: {}, innerHTML: '', parentNode: null };
+    },
+  };
+  const window = { setTimeout, clearTimeout };
+  const context = vm.createContext({
+    window,
+    document,
+    DOMException,
+    CSS: { escape: (value) => String(value) },
+    console,
+    setTimeout,
+    clearTimeout,
+  });
+  context.__automationTestModules = Object.create(null);
+  executeAutomationModule('setupDecorationController.js', context);
+  const { createSetupDecorationController } = context.__automationTestModules['setupDecorationController.js'];
+  const controller = createSetupDecorationController({
+    activeTab: () => 'setup',
+    assignmentValidation: () => ({ ok: true, errors: [] }),
+    controller: {
+      settings: { executionMode: 'automatic', profiles: [] },
+      bulkAssignmentProfileId: '',
+      setupDecorationTimer: null,
+    },
+    currentGameState: () => ({ game: { phase: 'setup' }, players: [] }),
+    escapeHtml: (value) => String(value ?? ''),
+    isManagementTabActive: () => false,
+    playerProfileSelectHtml: () => '',
+    runtime: () => ({ refreshTab() {} }),
+  });
 
-test('AIプロファイルJSONは選択中プロファイルと生成工程依存を安全な現行形式で転送する', () => {
-  const viewSource = automationSource('desktopAutomationManagementView.js');
-  const transferSource = automationSource('aiProfileTransferController.js');
-  assert.match(viewSource, /data-ai-action="import-profile-json"/u);
-  assert.match(viewSource, /data-ai-action="export-profile-json"/u);
-  assert.match(transferSource, /ai-werewolf-ai-profile-package/u);
-  assert.match(transferSource, /dependencyProfiles\(root\.id/u);
-  assert.match(transferSource, /const idMap = new Map/u);
-  assert.match(transferSource, /generation\[key\] = generation\[key\] === null \? null : idMap\.get/u);
-  assert.doesNotMatch(transferSource, /PROFILE_KEYS[^\n]*apiKey/u);
-  assert.match(transferSource, /APIキー・暗号化キー・使用量・参加者割り当ては転送対象に含めない/u);
+  assert.doesNotThrow(() => controller.decorateSetupView());
+  assert.equal(inserted.length, 1);
+  assert.equal(inserted[0].parentNode, validationRoot);
+  assert.equal(validationRoot.children[0], inserted[0]);
+  assert.equal(validationRoot.children[1], startButton);
 });

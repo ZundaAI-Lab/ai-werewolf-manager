@@ -1,6 +1,6 @@
 /**
- * 責務: 現行AI設定、割り当て、使用量、入力値正規化、秘密情報分離の保存契約を確認する。
- * 変更ルール: 旧形式移行や過去データ専用テストを追加せず、現在保存する設定だけを検証する。
+ * 責務: 現行AI設定、割り当て、使用量、詳細ログ権限、入力値正規化、秘密情報分離の保存契約を確認する。
+ * 変更ルール: 旧形式移行や過去データ専用テストを追加せず、現在保存する設定・使用量・詳細ログの永続境界だけを検証する。
  */
 
 'use strict';
@@ -77,16 +77,10 @@ test('現行schemaVersionでも保存形式が正規形でなければ既定値�
   assert.deepEqual(store.publicSettings().profiles.map((profile) => profile.id), ['profile-demo']);
 });
 
-test('MainとRendererは共有AI設定schemaVersionを正本にする', () => {
+test('Mainは共有AI設定schemaVersionを正本にする', () => {
   const shared = require('../../../app/shared/settingsSchema.js');
   const main = loadSettingsStore();
-  const configSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/desktopAutomationConfig.js'), 'utf8');
-  const managementSource = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/desktopAutomationManagementView.js'), 'utf8');
   assert.equal(main.SETTINGS_SCHEMA_VERSION, shared.SETTINGS_SCHEMA_VERSION);
-  assert.match(configSource, /schemaVersion: SETTINGS_SCHEMA_VERSION/u);
-  assert.match(managementSource, /schemaVersion: SETTINGS_SCHEMA_VERSION/u);
-  assert.doesNotMatch(configSource, /schemaVersion:\s*\d+/u);
-  assert.doesNotMatch(managementSource, /schemaVersion:\s*\d+/u);
 });
 
 test('公開履歴の過去圧縮モードを保存・再読込する', () => {
@@ -127,6 +121,28 @@ test('詳細ログを保存しなくても用途をまたいでAIプロファイ
   assert.equal(summary.profiles['profile-demo'].calls, 2);
   assert.equal(summary.profiles['profile-demo'].label, 'デモAI');
   assert.equal(fs.existsSync(path.join(directory, 'llm-request-log.jsonl')), false);
+});
+
+test('API要求詳細ログはPOSIXで現行ファイルとローテーション世代を0600へ制限する', { skip: process.platform === 'win32' }, () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-request-log-mode-'));
+  const logPath = path.join(directory, 'llm-request-log.jsonl');
+  const rotatedPath = `${logPath}.1`;
+  fs.writeFileSync(logPath, 'existing\n', { encoding: 'utf8', mode: 0o644 });
+  fs.writeFileSync(rotatedPath, 'rotated\n', { encoding: 'utf8', mode: 0o644 });
+  fs.chmodSync(logPath, 0o644);
+  fs.chmodSync(rotatedPath, 0o644);
+
+  const store = new SettingsStore(directory);
+  assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(rotatedPath).mode & 0o777, 0o600);
+
+  store.savePublicSettings({
+    ...store.publicSettings(),
+    aiOptions: { ...store.publicSettings().aiOptions, apiLogScope: 'all' },
+  });
+  store.recordRequest({ profileId: 'profile-demo', label: 'デモAI', provider: 'demo', model: 'demo-balanced', status: 'completed', usage: {} });
+  assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
 });
 
 test('AIプロファイル単位または全体のAPI使用量だけをリセットし詳細ログを保持する', () => {

@@ -1,8 +1,8 @@
 /*
- * 責務: 公開表示スナップショットのレイアウト・話者表示・投票内訳・公開結果、および単体公開HTMLに必要な外観トークンを一元管理する。
+ * 責務: 公開表示スナップショットのレイアウト・話者表示・投票内訳・公開結果、進行卓と共有する公開発言の心の声スタイル、および単体公開HTMLに必要な外観トークンを一元管理する。
  * 変更ルール:
- * - 公開表示DOMの視覚表現はこのファイルだけを正本とし、styles.cssやpublicHtmlExport.jsへ同じセレクタを複製しない。
- * - 機密情報の表示可否は判断せず、publicView.jsから渡されたDOMの見た目だけを担当する。
+ * - 公開表示DOMの視覚表現と公開発言に付随する心の声スタイルはこのファイルだけを正本とし、styles.cssやpublicHtmlExport.jsへ同じセレクタを複製しない。
+ * - 機密情報の表示可否は判断せず、publicView.js／liveProgressController.jsから渡されたDOMの見た目だけを担当する。
  * - 単体公開HTML専用のページ全体設定はdata-public-document="true"配下へ限定し、通常アプリの外観トークンを上書きしない。
  */
 
@@ -42,7 +42,7 @@
 .public-quote-ref:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 3px; }
 .public-speaker-name { font-size: 15px; }
 .public-speaker-role { font-size: 13px; line-height: 1.5; color: #b66a24; font-style: italic; }
-.public-log article .public-heart-voice { margin: 5px 0 0; font-size: 13px; line-height: 1.5; color: #b66a24; font-style: italic; white-space: pre-wrap; }
+.public-heart-voice { margin: 5px 0 0; font-size: 13px; line-height: 1.5; color: #b66a24; font-style: italic; white-space: pre-wrap; }
 
 /* 公開専用ウィンドウ: 通常画面のhtml/body固定スクロール契約だけを解除する。 */
 html.standalone-public-document {

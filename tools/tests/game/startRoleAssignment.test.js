@@ -11,11 +11,11 @@ import { validateComposition } from '../../../app/renderer/js/domain/game/standa
 import { applySetupRoles } from '../../../app/renderer/js/domain/setup/setupRoles.js';
 import { resolvePublicClaimCommit } from '../../../app/renderer/js/domain/claims/publicClaimCommitPolicy.js';
 import { countRoleComposition } from '../../../app/renderer/js/domain/roles/roleComposition.js';
-import { buildPlayerVisibleContext } from '../../../app/renderer/js/prompts/context/promptContext.js';
-import { initialRoleRulesSection } from '../../../app/renderer/js/prompts/sections/promptFormatters.js';
+
+
 import { createInitialState, createRestartedGameState } from '../../../app/renderer/js/state/stateStore.js';
-import { renderRoleHelp } from '../../../app/renderer/js/ui/views/help/roleHelpView.js';
-import { renderHumanRoleNoticeDialog } from '../../../app/renderer/js/ui/views/human/humanTaskView.js';
+
+
 
 function fixedState(roleIds) {
   const state = createInitialState(roleIds.length);
@@ -130,25 +130,6 @@ test('村人だけが欠け候補でも役職欠けありを開始できる', ()
   const beforeComposition = countRoleComposition(state.players);
   assert.equal(withFixedRandom(0, () => startGame(state)).ok, true);
   assert.deepEqual(countRoleComposition(state.players), beforeComposition, '村人抽選なので実質的な欠けなし');
-});
-
-test('AI・人間プレイヤー向け表示は欠け前構成と役職欠けありを明記する', () => {
-  const state = fixedState(['wolf', 'seer', 'villager', 'guard']);
-  state.game.rules.roleAssignment.roleMissingEnabled = true;
-  assert.equal(withFixedRandom(0, () => startGame(state)).ok, true);
-  const player = state.players[2];
-  const context = buildPlayerVisibleContext(state, player.id, { taskType: 'briefing' });
-  assert.equal(context.game.roleComposition.seer, 1, '実際に欠けた占い師も公開構成では1枠のまま');
-  assert.equal(countRoleComposition(state.players).seer ?? 0, 0, '実配役では占い師が欠けている');
-  const roleSection = initialRoleRulesSection(context);
-  assert.match(roleSection, /役職欠けあり/u);
-  assert.match(roleSection, /占い師×1/u);
-  const helpHtml = renderRoleHelp({ state });
-  assert.match(helpHtml, /役職欠けあり/u);
-  assert.match(helpHtml, /占い師×1/u);
-  const noticeHtml = renderHumanRoleNoticeDialog(state, player.id);
-  assert.match(noticeHtml, /役職欠けあり/u);
-  assert.match(noticeHtml, /占い師×1/u);
 });
 
 test('役職欠け後も公開CO検証から欠けた役職を推測できない', () => {

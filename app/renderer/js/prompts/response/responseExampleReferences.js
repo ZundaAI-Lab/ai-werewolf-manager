@@ -1,9 +1,10 @@
 /**
- * 責務: AI本人へ可視な公開コンテキストと質問解決状態から、応答契約例で実在参照として使用できる公開イベント番号を決定的に抽出する。
- * 変更ルール: 状態を書き換えず、非公開イベントを参照しない。回答例には現在Dayの未回答・未スキップ質問だけを使用し、例示には最新の有効番号を最大1件だけ渡す。有効番号がなければ空配列を返す。
+ * 責務: AI本人へ可視な公開コンテキスト・質問解決状態・本人限定の正式能力記録から、応答契約例で実在参照として使用できる番号を決定的に抽出する。
+ * 変更ルール: 状態を書き換えず、公開参照は公開イベントだけ、truthful能力参照は本人可視の正式P#記録だけを使用する。回答例には現在Dayの未回答・未スキップ質問だけを使用し、各例示には最新の有効番号を最大1件だけ渡す。有効番号がなければ空配列を返す。
  */
 
 import { getUnresolvedPublicQuestionsForPlayer } from '../../domain/discussion/publicQuestionResolution.js';
+import { listAiTruthfulAbilityClaimSources } from '../../domain/claims/aiAbilityClaimGroundingPolicy.js';
 
 const DECISION_EVIDENCE_EVENT_TYPES = new Set(['public-speech', 'vote-finalized', 'execution', 'dawn']);
 
@@ -30,7 +31,7 @@ function latestSequence(events) {
 }
 
 function abilityEvidenceSequences(context, resultDay) {
-  const refs = context?.board?.abilityEvidenceCutoffs?.[resultDay]?.eligibleEvidenceEventSequences ?? [];
+  const refs = context?.board?.abilityEvidenceCutoffs?.[resultDay]?.eligibleEvidenceRefs ?? [];
   const normalized = [...new Set(refs
     .map(Number)
     .filter((sequence) => Number.isInteger(sequence) && sequence > 0))]
@@ -60,11 +61,15 @@ export function buildResponseExampleReferences(stateOrContext, maybeContext) {
   const visibleSequences = new Set(publicEvents.map((event) => Number(event.sequence)));
   const publicSpeeches = publicEvents.filter((event) => event.type === 'public-speech');
   const pendingQuestionSequences = unansweredQuestionSequences(state, context, visibleSequences);
+  const truthfulSources = state && playerId
+    ? listAiTruthfulAbilityClaimSources(state, playerId)
+    : [];
   return {
-    answerEventSequences: pendingQuestionSequences.length ? [pendingQuestionSequences.at(-1)] : [],
-    correctedSpeechSequences: latestSequence(publicSpeeches.filter((event) => String(event?.actorId ?? '') === playerId)),
-    decisionEvidenceEventSequences: latestSequence(publicEvents.filter((event) => DECISION_EVIDENCE_EVENT_TYPES.has(event?.type))),
-    abilityEvidenceEventSequences: abilityEvidenceSequences(context, resultDay),
+    truthfulAbilitySourceRefs: truthfulSources.length ? [truthfulSources.at(-1).sourceRef] : [],
+    answerToRefs: pendingQuestionSequences.length ? [pendingQuestionSequences.at(-1)] : [],
+    correctedSpeechRefs: latestSequence(publicSpeeches.filter((event) => String(event?.actorId ?? '') === playerId)),
+    decisionEvidenceRefs: latestSequence(publicEvents.filter((event) => DECISION_EVIDENCE_EVENT_TYPES.has(event?.type))),
+    abilityEvidenceRefs: abilityEvidenceSequences(context, resultDay),
     abilityResultDay: resultDay,
   };
 }

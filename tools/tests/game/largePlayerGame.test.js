@@ -77,7 +77,7 @@ function finishNight(state, attackTargetId = null) {
       slotId: ownerSlot.id,
       actorId: ownerSlot.actorId,
       targetId: owner.id,
-      actionRationale: '統合テストの固定家主',
+      selectionRationale: '統合テストの固定家主',
     }), '家主選択');
     assert.equal(state.night.plan.ownerSelectionRequired, false);
   }
@@ -91,7 +91,7 @@ function finishNight(state, attackTargetId = null) {
       assertOk(recordWolfAttackVote(state, {
         actorId: wolfId,
         targetId: attackTargetId,
-        actionRationale: '大人数進行テストの固定襲撃票',
+        selectionRationale: '大人数進行テストの固定襲撃票',
         random: () => 0,
   }), '人狼襲撃投票');
     });
@@ -108,7 +108,7 @@ function finishNight(state, attackTargetId = null) {
       slotId: slot.id,
       actorId: slot.actorId,
       targetId: target.id,
-      actionRationale: '統合テストの固定能力対象',
+      selectionRationale: '統合テストの固定能力対象',
     }), `${slot.type}登録`);
   });
 

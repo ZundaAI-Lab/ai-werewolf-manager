@@ -29,7 +29,7 @@ import { normalizeCoOperation } from '../claims/claimRolePolicy.js';
 import {
   createEmptyInternalMemory,
   createEmptyMemoryLedger,
-  voidActionRationalesForDay,
+  voidSelectionRationalesForDay,
 } from '../memory/memoryLedger.js';
 import { createEmptyDecisionState } from '../game/decisionState.js';
 import { createEmptyFactionStrategyState } from '../game/factionStrategyState.js';

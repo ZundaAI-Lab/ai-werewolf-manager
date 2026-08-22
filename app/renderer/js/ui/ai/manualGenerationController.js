@@ -1,6 +1,6 @@
 /**
- * 責務: 手動多段AI生成の計画解決、セッション署名、工程プロンプト、工程ごとのsystem指示、textPatch共通検証、工程監査、画面表示を管理する。
- * 変更ルール: 中間工程でゲーム状態を更新せず、最終候補だけをAppUIの登録処理へ返す。発言化・校正は専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
+ * 責務: 手動多段AI生成の計画解決、セッション署名、工程プロンプト、工程ごとのsystem指示、textPatch共通検証、工程監査、画面表示、回答検証から最終登録までの手動生成ワークフローを管理する。
+ * 変更ルール: 中間工程でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ工程状態遷移を戻さない。発言化・校正は専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
  */
 
 import { resolveGenerationPlan } from '../../services/generationDepthPolicy.js';
@@ -12,7 +12,8 @@ import {
 } from '../../prompts/stages/generationStagePromptBuilder.js';
 import { autoRepairIssues } from '../../prompts/response/responseAutoRepair.js';
 import { validateAndMergeGenerationTextPatch } from '../../services/generationTextPatchService.js';
-import { escapeHtml } from '../../shared/utils.js';
+import { copyText, escapeHtml } from '../../shared/utils.js';
+import { composeManualAiPrompt } from '../../services/aiTaskService.js';
 
 
 
@@ -191,6 +192,162 @@ export class ManualGenerationController {
     });
     rows.push(`<div class="ai-manual-stage"><strong>${plan.stages.length + 1}. 最終登録</strong><span>${session.stageIndex >= plan.stages.length ? '回答待ち' : '未開始'}</span></div>`);
     return rows.join('');
+  }
+
+  sessionContext(button) {
+    const state = this.host.getState();
+    const playerId = String(button?.dataset?.playerId ?? '');
+    const taskType = String(button?.dataset?.taskType ?? '');
+    const slotId = String(button?.dataset?.slotId ?? '');
+    const plan = this.manualPlan(playerId, taskType);
+    if (!plan || plan.depth <= 1) throw new Error('このタスクは複数工程の手動生成対象ではありません。');
+    const artifact = this.host.prepareAiTask({ playerId, taskType, slotId });
+    const key = this.host.promptKey(state, taskType, playerId, slotId);
+    const existing = this.host.manualGenerationSessions().get(key);
+    const signature = this.manualTaskSignature(state, artifact, plan);
+    if (existing && (existing.taskInstanceId !== signature || existing.promptFingerprint !== artifact.fingerprint)) {
+      this.host.manualGenerationSessions().delete(key);
+      throw new Error('ゲーム状態またはAI設定が変わったため、古い手動生成セッションを破棄しました。最初の工程からやり直してください。');
+    }
+    this.host.promptCache().set(key, artifact);
+    const session = this.ensureManualSession(state, artifact, plan);
+    this.advanceManualSkippedStages(session, artifact, plan);
+    return { state, playerId, taskType, slotId, key, artifact, plan, session };
+  }
+
+  copyStagePrompt(button) {
+    try {
+      const { artifact, plan, session } = this.sessionContext(button);
+      const stage = plan.stages[session.stageIndex];
+      if (!stage) throw new Error('現在コピーできる生成工程はありません。');
+      const prompt = this.manualStagePrompt(session, artifact, stage);
+      if (!prompt) throw new Error('対象文章がない工程のため、プロンプト送信は不要です。');
+      const manualPrompt = composeManualAiPrompt({
+        systemInstruction: manualStageSystemInstruction(artifact, stage.stageId),
+        text: prompt,
+      });
+      copyText(manualPrompt)
+        .then(() => this.host.toast(`${MANUAL_STAGE_LABELS[stage.stageId]}プロンプトをコピーしました。`, 'success', { key: 'manual-stage-copy' }))
+        .catch((error) => this.host.toast(error.message, 'error'));
+    } catch (error) {
+      this.host.toast(error.message, 'error');
+      this.host.render();
+    }
+  }
+
+  advanceStage(button) {
+    try {
+      const { artifact, plan, session, key } = this.sessionContext(button);
+      const stage = plan.stages[session.stageIndex];
+      if (!stage) throw new Error('すべての生成工程は完了しています。');
+      const rawResponse = String(this.host.drafts().get(`manual-stage-response:${key}:${stage.stageId}`) ?? '').trim();
+      if (!rawResponse) throw new Error(`${MANUAL_STAGE_LABELS[stage.stageId]}の回答JSONを貼り付けてください。`);
+      if (stage.stageId === 'direct' || stage.stageId === 'draft') {
+        const evaluation = this.host.evaluateAiTaskCandidate({ taskArtifact: artifact, rawResponse });
+        if (!evaluation.ok) {
+          this.host.showValidation(evaluation.validation.errors, evaluation.warnings);
+          return;
+        }
+        session.candidateObject = structuredClone(evaluation.candidateObject);
+        session.candidateRawResponse = evaluation.effectiveRawResponse ?? rawResponse;
+        session.presentTopLevelKeys = [...evaluation.presentTopLevelKeys];
+        session.evaluation = evaluation;
+        session.generationRun.finalStageId = stage.stageId;
+        session.generationRun.stages.push(manualStageAudit(stage, {
+          status: 'accepted',
+          rawResponse,
+          issues: autoRepairIssues(evaluation.autoRepair),
+        }));
+        session.stageIndex += 1;
+        session.pendingFallback = null;
+        this.advanceManualSkippedStages(session, artifact, plan);
+        this.host.render();
+        return;
+      }
+      const patchResult = this.validateManualTextStagePatch(session, artifact, stage, rawResponse);
+      const policy = patchResult.policy;
+      if (!patchResult.ok) {
+        session.pendingFallback = { rawResponse, issues: patchResult.issues ?? [] };
+        this.host.render();
+        return;
+      }
+      const mergedRawResponse = JSON.stringify(patchResult.candidateObject);
+      const evaluation = this.host.evaluateAiTaskCandidate({ taskArtifact: artifact, rawResponse: mergedRawResponse });
+      if (!evaluation.ok) {
+        session.pendingFallback = {
+          rawResponse,
+          issues: [{ code: 'MERGED_CANDIDATE_INVALID', message: evaluation.issues.map((item) => item.message).join('\n') || '工程回答の適用後に最終候補が現行検証を通過しませんでした。' }],
+        };
+        this.host.render();
+        return;
+      }
+      session.candidateObject = structuredClone(evaluation.candidateObject);
+      session.candidateRawResponse = evaluation.effectiveRawResponse ?? mergedRawResponse;
+      session.presentTopLevelKeys = [...evaluation.presentTopLevelKeys];
+      session.evaluation = evaluation;
+      session.generationRun.finalStageId = stage.stageId;
+      session.generationRun.stages.push(manualStageAudit(stage, {
+        status: 'applied',
+        targetTextFields: policy.targetTextFields,
+        rawResponse,
+        issues: autoRepairIssues(evaluation.autoRepair),
+      }));
+      session.stageIndex += 1;
+      session.pendingFallback = null;
+      this.advanceManualSkippedStages(session, artifact, plan);
+      this.host.render();
+    } catch (error) {
+      this.host.toast(error.message, 'error');
+      this.host.render();
+    }
+  }
+
+  useStageFallback(button) {
+    try {
+      const { artifact, plan, session } = this.sessionContext(button);
+      const stage = plan.stages[session.stageIndex];
+      if (!stage || !session.pendingFallback) throw new Error('フォールバック対象の工程回答がありません。');
+      const policy = this.manualStagePolicy(session, artifact, stage.stageId);
+      session.generationRun.stages.push(manualStageAudit(stage, {
+        status: 'fallback',
+        targetTextFields: policy?.targetTextFields ?? [],
+        rawResponse: session.pendingFallback.rawResponse,
+        fallbackUsed: true,
+        issues: session.pendingFallback.issues,
+      }));
+      session.stageIndex += 1;
+      session.pendingFallback = null;
+      this.advanceManualSkippedStages(session, artifact, plan);
+      this.host.render();
+    } catch (error) {
+      this.host.toast(error.message, 'error');
+      this.host.render();
+    }
+  }
+
+  commitGeneration(button) {
+    try {
+      const { artifact, plan, session, key } = this.sessionContext(button);
+      if (session.stageIndex < plan.stages.length || !session.candidateRawResponse) throw new Error('生成工程が完了していません。');
+      const result = this.host.commitAiTaskCandidate({
+        taskArtifact: artifact,
+        rawResponse: session.candidateRawResponse,
+        evaluation: session.evaluation,
+        generationRun: structuredClone(session.generationRun),
+        interactive: true,
+      });
+      if (result?.ok) {
+        this.host.manualGenerationSessions().delete(key);
+        [...this.host.drafts().keys()]
+          .filter((draftKey) => draftKey.startsWith(`manual-stage-response:${key}:`))
+          .forEach((draftKey) => this.host.drafts().delete(draftKey));
+      }
+      return result;
+    } catch (error) {
+      this.host.toast(error.message, 'error');
+      this.host.render();
+      return { ok: false, message: error.message };
+    }
   }
 
   renderManualGenerationBox(state, player, taskType, slotId, key, taskArtifact, plan) {

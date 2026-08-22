@@ -3,5 +3,5 @@
  * 変更ルール: 手動編集しない。tools/build/buildBundle.jsだけが更新する。BUNDLE_SHA256はbundle内の同値をプレースホルダーへ正規化した決定的SHA-256を表し、自己参照によるハッシュ循環を作らない。
  */
 
-export const BUILD_ID = '5570016b73f5421ab0788165763f50d1445f7b5382719aa157baf7a0ab7140cb';
-export const BUNDLE_SHA256 = 'f872209d1ea8ec7785547b4409dc36b4756a301b214db988885d700514825f0e';
+export const BUILD_ID = '281a91bffa1a677803633414b8fab13579f86cca653d721fa25622aa3dce2df6';
+export const BUNDLE_SHA256 = '3cadbf7ba596e63de31f7d90a8f43172fc434e8458e5cd498de2b981ddadeb96';

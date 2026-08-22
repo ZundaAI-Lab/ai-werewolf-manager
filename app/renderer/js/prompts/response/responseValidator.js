@@ -1,6 +1,6 @@
 /**
  * 責務: 解析済みAI応答を現在タスク・候補・公開権限・明示構造化CO・判断差分・陣営戦略差分・襲撃価値・雪女の戦術候補と照合し、エラーと警告を返す。
- * 変更ルール: 状態を書き換えない。通常発言はpublicSpeech必須だけを構造で検証し、publicSpeechの人物・疑い・CO・能力結果・禁止表現を本文から推定しない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は省略可能とし、出力された欄だけを構造化人物名・対象可否・公開根拠参照・権限・フェーズ・明示構造同士の整合へ厳密に照合する。任意項目の劣化判定へ渡すissue.pathはトップレベル責務を失わないよう構造名へ正規化する。対象失効で利用不能になった前回判断はkeepを許可せず、現在候補への再評価を要求する。
+ * 変更ルール: 状態を書き換えない。通常発言はpublicSpeech必須だけを構造で検証し、publicSpeechの人物・疑い・CO・能力結果・禁止表現を本文から推定しない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は省略可能とし、出力された欄だけを構造化人物名・対象可否・公開根拠参照・権限・フェーズ・明示構造同士の整合へ厳密に照合する。任意項目の劣化判定へ渡すissue.pathはトップレベル責務を失わないよう構造名へ正規化する。対象失効で利用不能になった前回判断はkeepを許可せず、現在候補への再評価を要求する。heartVoiceの長さ検証は文字数上限だけを正本とし、文数は制約・警告に使用しない。
  */
 
 import {
@@ -13,13 +13,14 @@ import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 import { normalizeFreeDiscussionPreference } from '../../domain/discussion/freeDiscussionPolicy.js';
 import { normalizeName } from '../../shared/utils.js';
 import { buildClaimRolePolicy, isAbilityClaimRoleAllowed, validateCoOperationTransition } from '../../domain/claims/claimRolePolicy.js';
+import { resolveAiTruthfulAbilityClaimSource } from '../../domain/claims/aiAbilityClaimGroundingPolicy.js';
 import { getPlayer } from '../../domain/game/standardRules.js';
 import { countsAsWolf, getFactionStrategyProfile } from '../../domain/roles/roleAttributes.js';
 import { getPublicAbilityClaimDefinition, normalizePublicAbilityResult, resolvePublicAbilityClaimRequirements, validatePublicAbilityClaim } from '../../domain/policies/publicAbilityClaimPolicy.js';
 import { resolveAbilityEvidenceRefs } from '../../domain/policies/abilityClaimTimelinePolicy.js';
 import { applyDecisionPatch, compareDecisionStates, deriveDecisionTransition, isSubstantiveDecisionReason } from '../../domain/game/decisionState.js';
 import { validateFactionStrategyPatch } from '../../domain/game/factionStrategyState.js';
-import { resolveFactionStrategyUpdatePolicy } from '../../domain/game/factionStrategyUpdatePolicy.js';
+import { resolveFactionStrategyPolicy } from '../../domain/game/factionStrategyPolicy.js';
 import { getPublishedPublicEvents } from '../../domain/events/eventStore.js';
 import { buildDecisionTargetPolicy, getCurrentDecisionProjection } from '../../domain/game/decisionTargetPolicy.js';
 import { resolveWolfPartnerDispositionPolicy } from '../../domain/game/wolfPartnerDispositionPolicy.js';
@@ -93,9 +94,9 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
   const submitted = parsed.abilityClaims;
   if (!submitted) {
     errors.push('abilityClaimsを解析できません。');
-    return [];
+    return { resolvedClaims: [], normalizedParsedAbilityClaims: null };
   }
-  if (submitted.action !== 'publish') return [];
+  if (submitted.action !== 'publish') return { resolvedClaims: [], normalizedParsedAbilityClaims: null };
 
   const activeBefore = state.claims.find((item) => item.actorId === playerId && item.status === 'active')?.roleId ?? null;
   let activeAfter = activeBefore;
@@ -103,42 +104,73 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
   if (parsed.coOperation?.action === 'withdraw') activeAfter = null;
 
   const resolvedClaims = [];
+  const canonicalClaims = [];
   submitted.claims.forEach((claim, index) => {
     const label = `能力履歴${index + 1}`;
-    if (!isAbilityClaimRoleAllowed(claimRolePolicy, claim.roleId)) {
+    let roleId = '';
+    let target = null;
+    let resultDay = null;
+    let result = '';
+
+    if (claim.intent === 'truthful') {
+      const grounded = resolveAiTruthfulAbilityClaimSource(state, {
+        actorId: playerId,
+        sourceRef: claim.sourceRef,
+      });
+      if (!grounded.ok || !grounded.source) {
+        errors.push(...grounded.errors.map((message) => `${label}: ${message}`));
+        return;
+      }
+      roleId = grounded.source.roleId;
+      target = getPlayer(state, grounded.source.targetId);
+      resultDay = grounded.source.observedDay;
+      result = grounded.source.result;
+      if (!target) {
+        errors.push(`${label}: truthful参照の対象が現在のゲーム状態に存在しません。`);
+        return;
+      }
+    } else {
+      roleId = claim.roleId;
+      const resolvedTarget = resolvePlayerName(state, claim.targetName, state.players.map((player) => player.id));
+      if (!resolvedTarget.player) {
+        errors.push(`${label}の対象を一意に特定できません。`);
+        return;
+      }
+      if (resolvedTarget.certainty !== 'exact') warnings.push(`${label}の「${claim.targetName}」を${resolvedTarget.player.name}として解釈しました。`);
+      target = resolvedTarget.player;
+      resultDay = Number(claim.resultDay);
+      result = normalizePublicAbilityResult(claim.result);
+    }
+
+    if (!isAbilityClaimRoleAllowed(claimRolePolicy, roleId)) {
       const allowed = claimRolePolicy.abilityClaimRoleIds.length
         ? claimRolePolicy.abilityClaimRoleIds.join(' / ')
         : 'なし';
       errors.push(`${label}のroleIdは今回の配役で構造化公開できる役職（${allowed}）から指定してください。`);
       return;
     }
-    const target = resolvePlayerName(state, claim.targetName, state.players.map((player) => player.id));
-    if (!target.player) {
-      errors.push(`${label}の対象を一意に特定できません。`);
-      return;
-    }
-    if (target.certainty !== 'exact') warnings.push(`${label}の「${claim.targetName}」を${target.player.name}として解釈しました。`);
+
     const forced = resolvePublicAbilityClaimRequirements(state, {
-      roleId: claim.roleId,
-      observedDay: claim.resultDay,
-      targetId: target.player.id,
+      roleId,
+      observedDay: resultDay,
+      targetId: target.id,
     });
-    const evidence = claim.roleId === 'medium'
+    const evidence = roleId === 'medium'
       ? { errors: [], resolved: forced.requiredEvidenceEventIds.map((eventId) => state.events.find((event) => event.id === eventId)).filter(Boolean) }
-      : resolveAbilityEvidenceRefs(state, claim.evidenceRefs, claim.resultDay);
+      : resolveAbilityEvidenceRefs(state, claim.evidenceRefs, resultDay);
     errors.push(...evidence.errors.map((message) => `${label}: ${message}`));
 
     const resolved = {
       action: 'publish',
       actorId: playerId,
-      claimedRoleId: claim.roleId,
-      actionType: getPublicAbilityClaimDefinition(claim.roleId)?.actionType ?? null,
-      targetId: target.player.id,
-      result: normalizePublicAbilityResult(claim.result),
-      observedDay: Number(claim.resultDay),
-      selectionBasis: claim.roleId === 'medium' ? forced.selectionBasis : claim.selectionBasis,
+      claimedRoleId: roleId,
+      actionType: getPublicAbilityClaimDefinition(roleId)?.actionType ?? null,
+      targetId: target.id,
+      result,
+      observedDay: resultDay,
+      selectionBasis: roleId === 'medium' ? forced.selectionBasis : claim.selectionBasis,
       evidenceEventIds: evidence.resolved.map((event) => event.id),
-      selectionReasonAtTime: claim.roleId === 'medium' ? forced.selectionReasonAtTime : claim.selectionReasonAtTime,
+      selectionReasonAtTime: roleId === 'medium' ? forced.selectionReasonAtTime : claim.selectionReasonAtTime,
     };
     errors.push(...validatePublicAbilityClaim(state, {
       actorId: playerId,
@@ -148,10 +180,24 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
       additionalClaims: resolvedClaims,
     }).map((message) => `${label}: ${message}`));
     resolvedClaims.push(resolved);
+    canonicalClaims.push({
+      roleId,
+      resultDay,
+      targetName: target.name,
+      result,
+      selectionBasis: roleId === 'medium' ? '' : claim.selectionBasis,
+      evidenceRefs: roleId === 'medium' ? [] : [...(claim.evidenceRefs ?? [])],
+      selectionReasonAtTime: roleId === 'medium' ? '' : String(claim.selectionReasonAtTime ?? ''),
+    });
   });
-  return resolvedClaims;
-}
 
+  return {
+    resolvedClaims,
+    normalizedParsedAbilityClaims: canonicalClaims.length
+      ? { action: 'publish', count: canonicalClaims.length, claims: canonicalClaims }
+      : null,
+  };
+}
 function resolvePublicEventRefs(state, refs, label, errors, {
   allowedTypes = [],
 } = {}) {
@@ -199,28 +245,28 @@ function validateSpeechInteraction(state, playerId, parsed, errors) {
   });
   const answerEvents = resolvePublicEventRefs(
     state,
-    submitted.answerEventSequences,
-    'speechInteraction.answerEventSequences',
+    submitted.answerToRefs,
+    'speechInteraction.answerToRefs',
     errors,
     { allowedTypes: ['public-speech'] },
   );
   const answersEventIds = [];
   answerEvents.forEach((event) => {
     if (event.actorId === playerId) {
-      errors.push(`speechInteraction.answerEventSequencesの#${event.sequence}は本人自身の発言です。`);
+      errors.push(`speechInteraction.answerToRefsの#${event.sequence}は本人自身の発言です。`);
       return;
     }
     const targetIds = event.payload?.structured?.interaction?.questionTargetIds ?? [];
     if (!targetIds.includes(playerId)) {
-      errors.push(`speechInteraction.answerEventSequencesの#${event.sequence}は本人への明示質問ではありません。`);
+      errors.push(`speechInteraction.answerToRefsの#${event.sequence}は本人への明示質問ではありません。`);
       return;
     }
     if (isPublicQuestionAnswered(state, event, playerId)) {
-      errors.push(`speechInteraction.answerEventSequencesの#${event.sequence}は本人がすでに回答済みの質問です。`);
+      errors.push(`speechInteraction.answerToRefsの#${event.sequence}は本人がすでに回答済みの質問です。`);
       return;
     }
     if (isPublicQuestionSkipped(state, event, playerId)) {
-      errors.push(`speechInteraction.answerEventSequencesの#${event.sequence}はすでにスキップ済みの質問です。`);
+      errors.push(`speechInteraction.answerToRefsの#${event.sequence}はすでにスキップ済みの質問です。`);
       return;
     }
     answersEventIds.push(event.id);
@@ -327,29 +373,29 @@ function validateDecisionUpdate(state, player, parsed, taskType, action, candida
   });
 
   const groundingFields = getDecisionGroundingReferenceFields();
-  const correctedSequences = update.grounding?.correctedSpeechSequences ?? [];
-  const evidenceSequences = update.grounding?.evidenceEventSequences ?? [];
+  const correctedSequences = update.grounding?.correctedSpeechRefs ?? [];
+  const evidenceSequences = update.grounding?.evidenceRefs ?? [];
   const correctedEvents = resolvePublicEventRefs(
     state,
     correctedSequences,
-    'decisionPatch.correctedSpeechSequences',
+    'decisionPatch.correctedSpeechRefs',
     errors,
-    { allowedTypes: groundingFields.correctedSpeechSequences.allowedEventTypes },
+    { allowedTypes: groundingFields.correctedSpeechRefs.allowedEventTypes },
   );
   const evidenceEvents = resolvePublicEventRefs(
     state,
     evidenceSequences,
-    'decisionPatch.evidenceEventSequences',
+    'decisionPatch.evidenceRefs',
     errors,
-    { allowedTypes: groundingFields.evidenceEventSequences.allowedEventTypes },
+    { allowedTypes: groundingFields.evidenceRefs.allowedEventTypes },
   );
   const groundingCause = deriveDecisionRevisionCause(taskType, parsed, correctedSequences, evidenceSequences);
   if (groundingCause === 'self-correction' && !correctedEvents.length) {
-    errors.push('自己訂正ではdecisionPatch.correctedSpeechSequencesへ訂正対象の公開発言番号を1件以上指定してください。');
+    errors.push('自己訂正ではdecisionPatch.correctedSpeechRefsへ訂正対象の公開発言番号を1件以上指定してください。');
   }
 
   const evidenceEventIds = evidenceEvents.map((event) => event.id);
-  const submittedReason = String(taskType === 'vote' ? parsed.actionRationale : update.decisionReason ?? '').trim();
+  const submittedReason = String(taskType === 'vote' ? parsed.selectionRationale : update.decisionReason ?? '').trim();
   const nextDecision = applyDecisionPatch(previous, {
     mode: update.mode,
     changes,
@@ -369,7 +415,7 @@ function validateDecisionUpdate(state, player, parsed, taskType, action, candida
     const correctedSet = new Set(correctedSequences.map(Number));
     const independentEvidence = evidenceSequences.some((sequence) => !correctedSet.has(Number(sequence)));
     if (!independentEvidence) {
-      errors.push('誤読訂正と同じ回答で新しい疑い先・処刑候補・投票予定へ移る場合、訂正対象とは別の公開根拠をdecisionPatch.evidenceEventSequencesへ指定してください。候補を撤回して保留するだけなら新候補は不要です。');
+      errors.push('誤読訂正と同じ回答で新しい疑い先・処刑候補・投票予定へ移る場合、訂正対象とは別の公開根拠をdecisionPatch.evidenceRefsへ指定してください。候補を撤回して保留するだけなら新候補は不要です。');
     }
   }
 
@@ -389,15 +435,15 @@ function wolfPartnerPolicy(state, player) {
 function validateFactionStrategy(state, player, parsed, taskType, errors, warnings) {
   if (!player || !['speech', 'priority-answer', 'vote'].includes(taskType)) return null;
   // 陣営戦略差分は全タスクで任意。省略は現在値維持であり、暗黙補完や必須契機判定を行わない。
-  if (!parsed.factionStrategyUpdate) return null;
-  const updatePolicy = resolveFactionStrategyUpdatePolicy(state, {
+  if (!parsed.factionStrategyPatch) return null;
+  const updatePolicy = resolveFactionStrategyPolicy(state, {
     playerId: player.id,
     taskType,
     coOperation: parsed.coOperation,
   });
   const validation = validateFactionStrategyPatch(
     player.factionStrategyState,
-    parsed.factionStrategyUpdate,
+    parsed.factionStrategyPatch,
     getFactionStrategyProfile(state, player),
     {
       partnerDispositionPolicy: wolfPartnerPolicy(state, player),
@@ -414,36 +460,36 @@ function validateAttackAssessment(state, parsed, action, candidateIds, errors, w
   if (!assessment) return null;
   const guardRiskLevels = new Set(['low', 'medium', 'high']);
   const expectedTargetId = action?.id ?? null;
-  const alternativeTarget = assessment.alternativeTargetName
-    ? resolveExactPlayerName(state, assessment.alternativeTargetName, candidateIds)
+  const otherTarget = assessment.otherTargetName
+    ? resolveExactPlayerName(state, assessment.otherTargetName, candidateIds)
     : null;
-  if (assessment.alternativeTargetName && !alternativeTarget) {
-    errors.push('襲撃判断のalternativeTargetは有効な襲撃候補の正式表示名だけを指定してください。');
+  if (assessment.otherTargetName && !otherTarget) {
+    errors.push('襲撃判断のotherTargetは有効な襲撃候補の正式表示名だけを指定してください。');
   }
-  if (alternativeTarget && expectedTargetId && alternativeTarget.id === expectedTargetId) {
-    errors.push('襲撃判断のalternativeTargetは実際の襲撃対象と異なる候補にしてください。');
+  if (otherTarget && expectedTargetId && otherTarget.id === expectedTargetId) {
+    errors.push('襲撃判断のotherTargetは実際の襲撃対象と異なる候補にしてください。');
   }
-  if (assessment.hunterSurvivalLikelihood && !guardRiskLevels.has(assessment.hunterSurvivalLikelihood)) {
-    errors.push('襲撃判断のhunterSurvivalLikelihoodはlow / medium / highで指定してください。');
+  if (assessment.hunterAliveChance && !guardRiskLevels.has(assessment.hunterAliveChance)) {
+    errors.push('襲撃判断のhunterAliveChanceはlow / medium / highで指定してください。');
   }
   if (assessment.selectedTargetGuardRisk && !guardRiskLevels.has(assessment.selectedTargetGuardRisk)) {
     errors.push('襲撃判断のguardRiskはlow / medium / highで指定してください。');
   }
-  if (assessment.alternativeTargetGuardRisk && !guardRiskLevels.has(assessment.alternativeTargetGuardRisk)) {
-    errors.push('襲撃判断のalternativeGuardRiskはlow / medium / highで指定してください。');
+  if (assessment.otherTargetGuardRisk && !guardRiskLevels.has(assessment.otherTargetGuardRisk)) {
+    errors.push('襲撃判断のotherGuardRiskはlow / medium / highで指定してください。');
   }
-  if (!assessment.alternativeTargetName && (assessment.alternativeTargetGuardRisk)) {
-    warnings.push('alternativeGuardRiskを出力する場合は、alternativeTargetの正式表示名も併記すると襲撃判断の監査品質が上がります。');
+  if (!assessment.otherTargetName && (assessment.otherTargetGuardRisk)) {
+    warnings.push('otherGuardRiskを出力する場合は、otherTargetの正式表示名も併記すると襲撃判断の監査品質が上がります。');
   }
   return {
-    hunterSurvivalLikelihood: assessment.hunterSurvivalLikelihood,
+    hunterAliveChance: assessment.hunterAliveChance,
     hunterSurvivalReason: assessment.hunterSurvivalReason,
     selectedTargetGuardRisk: assessment.selectedTargetGuardRisk,
     selectedTargetValue: assessment.selectedTargetValue,
     selectedTargetFailureCost: assessment.selectedTargetFailureCost,
-    alternativeTargetId: alternativeTarget?.id ?? null,
-    alternativeTargetGuardRisk: assessment.alternativeTargetGuardRisk,
-    alternativeTargetValue: assessment.alternativeTargetValue,
+    otherTargetId: otherTarget?.id ?? null,
+    otherTargetGuardRisk: assessment.otherTargetGuardRisk,
+    otherTargetValue: assessment.otherTargetValue,
     selectionDifference: assessment.selectionDifference,
   };
 }
@@ -486,9 +532,9 @@ function validationIssuePath(message) {
   if (explicit) return explicit;
   if (/行動回答/u.test(text)) return 'actionAnswer';
   if (/公開発言|publicSpeech/u.test(text)) return 'publicSpeech';
-  if (/陣営戦略|factionStrategyUpdate|partnerDisposition/u.test(text)) return 'factionStrategyUpdate';
-  if (/共有戦略|sharedStrategyUpdate/u.test(text)) return 'sharedStrategyUpdate';
-  if (/整理後内部メモ/u.test(text)) return 'consolidatedMemo';
+  if (/陣営戦略|factionStrategy|partnerDisposition/u.test(text)) return 'factionStrategy';
+  if (/共有戦略|sharedStrategy/u.test(text)) return 'sharedStrategy';
+  if (/整理後内部メモ/u.test(text)) return 'fullMemo';
   return '';
 }
 
@@ -565,6 +611,7 @@ export function validateAiResponse(state, {
   let resolvedAction = null;
   let resolvedSpeechInteraction = null;
   let resolvedAbilityClaims = [];
+  let normalizedParsedAbilityClaims = parsed.abilityClaims ?? null;
   const claimRolePolicy = buildClaimRolePolicy(
     state.players.reduce((counts, item) => {
       counts[item.roleId] = Number(counts[item.roleId] ?? 0) + 1;
@@ -579,7 +626,9 @@ export function validateAiResponse(state, {
       validateCoOperation(state, playerId, parsed.coOperation, claimRolePolicy, errors);
     }
     if (parsed.abilityClaims) {
-      resolvedAbilityClaims = validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors, warnings);
+      const abilityValidation = validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors, warnings);
+      resolvedAbilityClaims = abilityValidation.resolvedClaims;
+      normalizedParsedAbilityClaims = abilityValidation.normalizedParsedAbilityClaims;
     }
   }
   if (taskType === 'vote' || taskType === 'wolf-attack' || isPersonalNightActionTask(taskType)) {
@@ -597,18 +646,18 @@ export function validateAiResponse(state, {
     }
   }
   if (isPersonalNightActionTask(taskType) || taskType === 'wolf-attack') {
-    const rationale = String(parsed.actionRationale ?? '').trim();
+    const rationale = String(parsed.selectionRationale ?? '').trim();
     if (rationale) {
       const sentenceLimit = taskType === 'freeze' ? 3 : 2;
       const rationaleLimit = taskType === 'freeze'
         ? MAX_FREEZE_ACTION_RATIONALE_LENGTH
         : MAX_NIGHT_ACTION_RATIONALE_LENGTH;
       if (rationale.length > rationaleLimit) {
-        errors.push(`actionRationaleは${rationaleLimit}文字以内で記載してください。`);
+        errors.push(`rationaleは${rationaleLimit}文字以内で記載してください。`);
       }
       const rationaleSentences = rationale.split(/[。！？!?]+/u).map((item) => item.trim()).filter(Boolean);
       if (rationaleSentences.length > sentenceLimit) {
-        warnings.push(`actionRationaleは1～${sentenceLimit}文へ短くまとめてください。`);
+        warnings.push(`rationaleは1～${sentenceLimit}文へ短くまとめてください。`);
       }
     }
   }
@@ -643,7 +692,7 @@ export function validateAiResponse(state, {
     );
   }
 
-  const resolvedFactionStrategyUpdate = validateFactionStrategy(state, player, parsed, semanticTaskType, errors, warnings);
+  const resolvedFactionStrategyState = validateFactionStrategy(state, player, parsed, semanticTaskType, errors, warnings);
 
   let resolvedNextSpeakerPreferenceId = null;
   let resolvedDiscussionPreference = null;
@@ -671,8 +720,8 @@ export function validateAiResponse(state, {
   }
 
   if (taskType === 'memo-consolidate') {
-    if (!parsed.consolidatedMemo?.trim()) errors.push('整理後内部メモがありません。');
-    if (parsed.consolidatedMemo.length > (state.game.rules.ai.maxInternalMemoLength ?? 3000)) {
+    if (!parsed.fullMemo?.trim()) errors.push('整理後内部メモがありません。');
+    if (parsed.fullMemo.length > (state.game.rules.ai.maxInternalMemoLength ?? 3000)) {
       warnings.push(`整理後内部メモが文字数上限${state.game.rules.ai.maxInternalMemoLength ?? 3000}文字を超えています。`);
     }
   }
@@ -691,12 +740,12 @@ export function validateAiResponse(state, {
   }
   if (taskType === 'wolf-conversation') {
     const purpose = state.night?.plan?.wolfConversationPurpose ?? null;
-    if (parsed.sharedStrategyUpdate) {
-      if (purpose === 'opening-strategy' && parsed.sharedStrategyUpdate.mode !== 'patch') {
-        errors.push('初夜の共有作戦でsharedStrategyUpdateを出力する場合はmodeをpatchにし、今回決める作戦をchangesへ記載してください。');
+    if (parsed.sharedStrategyPatch) {
+      if (purpose === 'opening-strategy' && parsed.sharedStrategyPatch.mode !== 'patch') {
+        errors.push('初夜の共有作戦でsharedStrategyを出力する場合はmodeをpatchにし、今回決める作戦をchangesへ記載してください。');
       }
-      if (purpose === 'opening-strategy' && Object.hasOwn(parsed.sharedStrategyUpdate.changes ?? {}, 'attackPlan')) {
-        errors.push('Day 0のattackPlanはシステムがnoneへ固定するため、sharedStrategyUpdate.changesへ出力しないでください。');
+      if (purpose === 'opening-strategy' && Object.hasOwn(parsed.sharedStrategyPatch.changes ?? {}, 'attackPlan')) {
+        errors.push('Day 0のattackPlanはシステムがnoneへ固定するため、sharedStrategy.changesへ出力しないでください。');
       }
     }
     if (purpose === 'opening-strategy' && /(?:襲撃|噛み)(?:対象|候補|先)|護衛(?:対象|候補|先)/u.test(parsed.wolfMessage)) {
@@ -714,10 +763,6 @@ export function validateAiResponse(state, {
   }
   if (parsed.heartVoice.length > (state.game.rules.ai.maxHeartVoiceLength ?? 120)) {
     warnings.push(`心の声が文字数上限${state.game.rules.ai.maxHeartVoiceLength ?? 120}文字を超えています。`);
-  }
-  const heartVoiceSentences = parsed.heartVoice.split(/[。！？!?]+/u).map((item) => item.trim()).filter(Boolean);
-  if (heartVoiceSentences.length > 2) {
-    warnings.push('心の声は1～2文の短い本心にしてください。');
   }
   if (taskType === 'mason-conversation' && !parsed.masonMessage.trim()) warnings.push('共有者会話が空です。');
   if (taskType === 'wolf-conversation' && !parsed.wolfMessage.trim()) warnings.push('人狼共有発言が空です。');
@@ -744,8 +789,9 @@ export function validateAiResponse(state, {
     resolvedAction,
     resolvedDecisionUpdate,
     resolvedSpeechInteraction,
-    resolvedFactionStrategyUpdate,
+    resolvedFactionStrategyState,
     resolvedAbilityClaims,
+    normalizedParsedAbilityClaims,
     resolvedAttackAssessment,
     resolvedFreezeEstimates,
     resolvedNextSpeakerPreferenceId,

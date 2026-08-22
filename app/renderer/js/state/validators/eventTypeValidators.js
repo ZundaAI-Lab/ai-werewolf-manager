@@ -19,7 +19,7 @@ import {
 function validateWolfConversationEvent(event, context) {
   const { label, errors, index } = context;
     validateWolfSharedStrategyPatch(
-      event.payload?.sharedStrategyUpdate,
+      event.payload?.sharedStrategyPatch,
       `${label}: イベント${event.id ?? index}の共有作戦更新`,
       errors,
       { openingStrategy: event.payload?.purpose === 'opening-strategy' },

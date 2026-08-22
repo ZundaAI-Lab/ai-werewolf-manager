@@ -1,5 +1,5 @@
 /**
- * 責務: 副作用の小さい汎用処理を提供する。
+ * 責務: 副作用の小さい汎用処理と、出力ファイル名部品のOS非依存な正規化を提供する。
  * 変更ルール: ゲーム固有の規則やDOM画面構成を持ち込まない。
  */
 
@@ -70,6 +70,20 @@ export function normalizeName(value) {
     .trim()
     .replace(/[「」『』【】（）()\s]/g, '')
     .replace(/(さん|くん|君|ちゃん|様|殿)$/u, '');
+}
+
+export function sanitizeFilenamePart(value, { fallback = 'file', whitespaceReplacement = ' ', maxLength = 120 } = {}) {
+  const invalidCharacters = /[\\/:*?"<>|\u0000-\u001f]/gu;
+  const safeWhitespace = String(whitespaceReplacement ?? ' ').replace(invalidCharacters, '_') || ' ';
+  const normalize = (input) => String(input ?? '')
+    .trim()
+    .replace(invalidCharacters, '_')
+    .replace(/\s+/gu, safeWhitespace)
+    .replace(/[. ]+$/gu, '');
+  const limit = Number.isInteger(maxLength) && maxLength > 0 ? maxLength : 120;
+  const normalized = normalize(value).slice(0, limit).replace(/[. ]+$/gu, '');
+  const normalizedFallback = normalize(fallback).slice(0, limit).replace(/[. ]+$/gu, '');
+  return normalized || normalizedFallback || 'file';
 }
 
 export function downloadText(filename, text, mime = 'text/plain;charset=utf-8') {

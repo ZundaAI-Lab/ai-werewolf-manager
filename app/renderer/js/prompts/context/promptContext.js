@@ -269,7 +269,7 @@ function latestOwnFreezeJudgment(state, player) {
   return {
     nightDay: Number(turn.day ?? 0),
     targetId: turn.parsedActionAnswer ?? null,
-    actionRationale: String(turn.parsedActionRationale ?? ''),
+    selectionRationale: String(turn.parsedSelectionRationale ?? ''),
   };
 }
 
@@ -362,7 +362,7 @@ export function buildPlayerVisibleContext(state, playerId, { taskType = 'speech'
       memoryLedger: {
         privateFacts: [...(player.memoryLedger?.privateFacts ?? [])].map((item) => ({ ...item })),
         publicCommitments: [...(player.memoryLedger?.publicCommitments ?? [])].map((item) => ({ ...item })),
-        actionRationales: [...(player.memoryLedger?.actionRationales ?? [])].map((item) => ({ ...item })),
+        selectionRationales: [...(player.memoryLedger?.selectionRationales ?? [])].map((item) => ({ ...item })),
         pendingDiscriminators: [...(player.memoryLedger?.pendingDiscriminators ?? [])].map((item) => ({ ...item })),
         updatedAt: player.memoryLedger?.updatedAt ?? null,
       },
@@ -450,7 +450,7 @@ export function buildPlayerVisibleContext(state, playerId, { taskType = 'speech'
           ...claim,
           evidenceEventIds: [...(claim.evidenceEventIds ?? [])],
         })),
-      actionRationales: [...(player.memoryLedger?.actionRationales ?? [])]
+      selectionRationales: [...(player.memoryLedger?.selectionRationales ?? [])]
         .filter((item) => item.active !== false)
         .map((item) => ({ ...item })),
       latestFreezeJudgment: latestOwnFreezeJudgment(state, player),

@@ -19,23 +19,18 @@ const COMPLETE_RESPONSE_REFERENCE = Object.freeze({
   publicSpeech: '公開される完成発言',
   speechInteraction: {
     questionTargets: ['今回質問する相手の正式表示名'],
-    answerEventSequences: [],
+    answerToRefs: [],
   },
   coOperation: {
     action: 'declare',
     roleId: 'seer',
   },
   abilityClaims: [{
-    roleId: 'seer',
-    resultDay: 1,
-    target: '能力対象の正式表示名',
-    result: 'not-wolf',
-    selectionBasis: 'public-evidence',
-    evidenceEventSequences: [],
-    selectionReasonAtTime: '対象を選んだ時点での具体的な理由',
+    intent: 'truthful',
+    sourceRef: 1,
   }],
   decisionPatch: {
-    suspicionCandidates: ['疑っている相手の正式表示名'],
+    suspects: ['疑っている相手の正式表示名'],
     executionCandidates: ['処刑候補の正式表示名'],
     intendedVote: '投票予定先の正式表示名',
     assessmentLevel: 'moderate',
@@ -45,10 +40,10 @@ const COMPLETE_RESPONSE_REFERENCE = Object.freeze({
     uncertainty: '残っている不確実性',
     nextDiscriminatingInformation: '次に判断を分ける情報',
     reason: '現在の判断を支える具体的根拠',
-    correctedSpeechSequences: [],
-    evidenceEventSequences: [],
+    correctedSpeechRefs: [],
+    evidenceRefs: [],
   },
-  factionStrategyUpdate: {
+  factionStrategy: {
     mode: 'patch',
     changes: Object.fromEntries(ALL_FACTION_STRATEGY_FIELDS.map((field) => [field, `${field}の現在方針`])),
   },
@@ -58,25 +53,25 @@ const COMPLETE_RESPONSE_REFERENCE = Object.freeze({
   discussionPreference: '発言希望制の次巡発言希望',
   openingPreference: '発言希望制の1巡目開始時発言順希望',
   actionAnswer: '今回確定する行動回答',
-  actionRationale: '結果判明前の具体的な選択理由',
+  rationale: '結果判明前の具体的な選択理由',
   attackAssessment: {
-    hunterSurvivalLikelihood: 'medium',
+    hunterAliveChance: 'medium',
     guardRisk: 'medium',
-    alternativeTarget: '最有力の別候補の正式表示名',
-    alternativeGuardRisk: 'low',
+    otherTarget: '最有力の別候補の正式表示名',
+    otherGuardRisk: 'low',
   },
   estimate: {
     wolfCandidateIds: ['人狼候補のプレイヤーID'],
     predictedAttackTargetIds: ['予想襲撃先のプレイヤーID'],
   },
   wolfMessage: '人狼仲間だけに見せる秘密会話',
-  sharedStrategyUpdate: {
+  sharedStrategy: {
     mode: 'patch',
     changes: Object.fromEntries(getSharedStrategyFields().map((field) => [field, `${field}の共有方針`])),
   },
   masonMessage: '共有者相方だけに見せる秘密会話',
   graveyardMessage: '死亡者だけに見せる墓場会話',
-  consolidatedMemo: '整理後の本人限定内部メモ全文',
+  fullMemo: '整理後の本人限定内部メモ全文',
 });
 
 const CONTRACT_VALIDATION_MODES = Object.freeze([
@@ -129,7 +124,7 @@ export const BRIEFING_AI_SYSTEM_INSTRUCTION = renderBriefingAiSystemInstruction(
 export function validateResponseContractCatalogCoverage() {
   const expectedTopLevelKeys = [...getAllResponseTopLevelKeys()].sort();
   const catalogTopLevelKeys = getResponseContractCatalogTopLevelKeys().sort();
-  const expectedDecisionKeys = [...getAllDecisionChangeKeys(), 'reason', 'correctedSpeechSequences', 'evidenceEventSequences'].sort();
+  const expectedDecisionKeys = [...getAllDecisionChangeKeys(), 'reason', 'correctedSpeechRefs', 'evidenceRefs'].sort();
   const catalogDecisionKeys = Object.keys(COMPLETE_RESPONSE_REFERENCE.decisionPatch).sort();
   const modeExamplesWithinContract = CONTRACT_VALIDATION_MODES.every((mode) => (
     getResponseTopLevelKeys(mode).every((key) => expectedTopLevelKeys.includes(key))

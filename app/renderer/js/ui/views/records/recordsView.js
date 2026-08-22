@@ -1,6 +1,6 @@
 /**
- * 責務: 訂正・復元と、リアルタイム／日終了履歴を切り替えられるプレイヤー相関図、イベント、AI監査、操作通知履歴、心の声、内部メモ、共有会話、公開内容の訂正、進行結果の復元再進行、復元ポイントの管理画面を描画する。
- * 変更ルール: 状態更新やゲームデータ出力処理を行わず、機密情報は表示許可時だけDOMへ生成する。記録・管理ヘッダーには現在ゲームの保存導線としてゲームデータ出力だけを置き、読込はゲーム準備へ集約する。操作通知履歴はUI層から受け取った現行セッション分だけを表示し、ゲーム状態へ混在させない。復元・進行結果訂正・公開内容訂正は単一ワークスペース内のタブで分離し、一覧は選択、詳細ペインは影響確認と実行だけを担当する。利用者向けの訂正モード開始操作は置かず、訂正・復元時の自動開始と明示終了だけを表示する。共有会話と監査情報は補助領域として折りたたみ、状態由来の識別子をHTML属性へ出力する場合は必ずエスケープする。
+ * 責務: 訂正・復元と、リアルタイム／日終了履歴を切り替えられるプレイヤー相関図、イベント、発言番号付きAI監査、操作通知履歴、心の声、内部メモ、共有会話、公開内容の訂正、進行結果の復元再進行、復元ポイントの管理画面を描画する。
+ * 変更ルール: 状態更新やゲームデータ出力処理を行わず、機密情報は表示許可時だけDOMへ生成する。AI応答の発言番号はaiTurn.committedEntityIdsと公開イベントsequenceの対応から描画時に導出し、監査stateへ重複保存しない。記録・管理ヘッダーには現在ゲームの保存導線としてゲームデータ出力だけを置き、読込はゲーム準備へ集約する。操作通知履歴はUI層から受け取った現行セッション分だけを表示し、ゲーム状態へ混在させない。復元・進行結果訂正・公開内容訂正は単一ワークスペース内のタブで分離し、一覧は選択、詳細ペインは影響確認と実行だけを担当する。利用者向けの訂正モード開始操作は置かず、訂正・復元時の自動開始と明示終了だけを表示する。共有会話と監査情報は補助領域として折りたたみ、状態由来の識別子をHTML属性へ出力する場合は必ずエスケープする。
  */
 
 import { AUDIENCE_LABELS, EVENT_TYPE_LABELS, PHASE_LABELS, ROLE_DEFINITIONS, TASK_LABELS } from '../../../config/constants.js';
@@ -40,6 +40,20 @@ function formatAuditData(turn) {
   return `<details class="optional-box"><summary>応答データの詳細</summary><pre>${escapeHtml(JSON.stringify(data, null, 2))}</pre></details>`;
 }
 
+function aiTurnPublicSpeechSequenceLabel(state, turn) {
+  const committedIds = new Set((turn?.committedEntityIds ?? []).map(String));
+  if (!committedIds.size) return '';
+  const sequences = (state?.events ?? [])
+    .filter((event) => committedIds.has(String(event?.id ?? ''))
+      && event?.status === 'published'
+      && event?.audience?.type === 'public'
+      && ['public-speech', 'result-impression'].includes(event?.type))
+    .map((event) => Number(event.sequence))
+    .filter((sequence) => Number.isInteger(sequence) && sequence > 0)
+    .sort((left, right) => left - right);
+  return sequences.length ? sequences.map((sequence) => `#${sequence}`).join('・') : '';
+}
+
 const POSTGAME_INFLUENCE_LABELS = Object.freeze({ high: '高', medium: '中', low: '低' });
 
 function renderPostgameAnalysis(turn, analysis = null) {
@@ -60,7 +74,7 @@ function renderPostgameAnalysis(turn, analysis = null) {
   const form = analysis.available
     ? `<label class="field"><span>GMからの質問</span><textarea data-draft="postgame-analysis-question:${escapeHtml(turn.id)}" placeholder="例: この発言は生成時プロンプトのどの部分に強く引っ張られた可能性がありますか？">${escapeHtml(analysis.draftQuestion ?? '')}</textarea></label><div class="button-row"><button class="button primary" data-action="postgame-analysis-ask" data-turn-id="${escapeHtml(turn.id)}" type="button" ${analysis.pending ? 'disabled' : ''}>${analysis.pending ? '分析中…' : 'GMから質問する'}</button>${exchanges.length ? `<button class="button ghost" data-action="postgame-analysis-clear" data-turn-id="${escapeHtml(turn.id)}" type="button" ${analysis.pending ? 'disabled' : ''}>質問履歴を消去</button>` : ''}</div>`
     : '';
-  return `<details class="optional-box postgame-analysis-box"><summary>ゲーム終了後のGM向けAI分析</summary><p class="help">保存済みのAI生成記録をもとに分析します。分析内容はゲーム進行には影響しません。AIの内部思考を表示する機能ではありません。</p>${history}${error}${unavailable}${form}</details>`;
+  return `<details class="optional-box postgame-analysis-box" data-postgame-analysis-turn-id="${escapeHtml(turn.id)}"><summary>ゲーム終了後のGM向けAI分析</summary><p class="help">保存済みのAI生成記録をもとに分析します。分析内容はゲーム進行には影響しません。AIの内部思考を表示する機能ではありません。</p>${history}${error}${unavailable}${form}</details>`;
 }
 
 
@@ -316,14 +330,17 @@ function renderAuditSupport({
 }) {
   return `<details class="records-support-section" id="records-audit-support"><summary><span><strong>詳細・補助情報</strong><small>イベント ${state.events.length}件 / AIターン ${state.aiTurns.length}件 / 通知 ${notifications.length}件</small></span><span class="records-support-chevron">›</span></summary><div class="records-support-body"><div class="records-grid">
       <div class="panel records-inner-panel"><h3>イベント</h3><div class="timeline">${events.length ? events.map((event) => `<div class="timeline-row ${event.audience?.type === 'public' ? '' : 'private-event'} ${event.status === 'voided' ? 'voided-event' : ''}"><span class="timeline-seq">#${event.sequence}</span><div><strong>${escapeHtml(EVENT_TYPE_LABELS[event.type] ?? event.type)}</strong><small>Day ${event.day} / ${escapeHtml(AUDIENCE_LABELS[event.audience?.type] ?? event.audience?.type)} / ${escapeHtml(event.status)}</small><p>${escapeHtml(formatRecordEventText(event))}</p>${canEditPrivateEvent(state, event) ? `<button class="button small ghost" data-action="edit-private-event" data-event-id="${escapeHtml(event.id)}" type="button">登録内容だけ修正</button>` : ''}</div></div>`).join('') : '<div class="empty-inline">イベントはまだありません。</div>'}</div></div>
-      <div class="panel records-inner-panel"><h3>AI応答の詳細</h3><div class="audit-list">${state.aiTurns.length ? [...state.aiTurns].reverse().map((turn) => `<details><summary>Day ${turn.day} ${escapeHtml(getPlayerName(turn.playerId))} / ${escapeHtml(TASK_LABELS[turn.taskType] ?? turn.taskType)}</summary><p>時刻: ${escapeHtml(formatDateTime(turn.timestamp))}</p>${turn.warnings?.length ? `<ul>${turn.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}${formatGenerationRun(turn.generationRun, getAiProfileLabel)}${formatAuditData(turn)}<textarea readonly>${escapeHtml(turn.rawResponse)}</textarea>${renderPostgameAnalysis(turn, postgameAnalysis?.byTurnId?.[turn.id] ?? null)}</details>`).join('') : '<div class="empty-inline">AI応答履歴はありません。</div>'}</div></div>
+      <div class="panel records-inner-panel"><h3>AI応答の詳細</h3><div class="audit-list">${state.aiTurns.length ? [...state.aiTurns].reverse().map((turn) => {
+        const speechSequence = aiTurnPublicSpeechSequenceLabel(state, turn);
+        return `<details data-ai-turn-id="${escapeHtml(turn.id)}"><summary>Day ${turn.day}${speechSequence ? ` / ${escapeHtml(speechSequence)}` : ''} ${escapeHtml(getPlayerName(turn.playerId))} / ${escapeHtml(TASK_LABELS[turn.taskType] ?? turn.taskType)}</summary><p>時刻: ${escapeHtml(formatDateTime(turn.timestamp))}</p>${turn.warnings?.length ? `<ul>${turn.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join('')}</ul>` : ''}${formatGenerationRun(turn.generationRun, getAiProfileLabel)}${formatAuditData(turn)}<textarea readonly>${escapeHtml(turn.rawResponse)}</textarea>${renderPostgameAnalysis(turn, postgameAnalysis?.byTurnId?.[turn.id] ?? null)}</details>`;
+      }).join('') : '<div class="empty-inline">AI応答履歴はありません。</div>'}</div></div>
       <div class="panel records-inner-panel"><h3>操作通知履歴</h3><div class="notification-history">${notifications.length ? notifications.map((item) => `<div class="notification-history-row ${escapeHtml(item.type)}"><div><strong>${escapeHtml(item.message)}</strong><small>${escapeHtml(formatDateTime(item.timestamp))} / ${item.displayed ? '画面表示' : '履歴のみ'}</small></div></div>`).join('') : '<div class="empty-inline">操作通知はまだありません。</div>'}</div></div>
       <div class="panel records-inner-panel"><h3>心の声・記憶</h3>${state.players.map((player) => {
         const ledger = player.memoryLedger ?? {};
         const ledgerRows = [
           ['秘密の確定情報', ledger.privateFacts ?? []],
           ['自分が公開済みの立場・行動', ledger.publicCommitments ?? []],
-          ['結果判明前の行動理由', ledger.actionRationales ?? []],
+          ['結果判明前の行動理由', ledger.selectionRationales ?? []],
           ['次に区別したい情報', ledger.pendingDiscriminators ?? []],
         ].map(([label, items]) => `<h5>${escapeHtml(label)}</h5>${items.length ? `<ul>${items.map((item) => `<li>${escapeHtml(item.text || item.rationale || '')}</li>`).join('')}</ul>` : '<p>なし</p>'}`).join('');
         const freeMemo = formatInternalMemoryText(player) || 'なし';

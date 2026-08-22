@@ -40,7 +40,7 @@ export function skipAiMemoConsolidation(state, {
     publicSequenceAtGeneration,
     rawResponse,
     generationRun,
-    parsedConsolidatedMemo: '',
+    parsedFullMemo: '',
     warnings: [...warnings, `内部メモ整理スキップ: ${normalizedReason}`],
     committedEntityIds: [],
   });
@@ -74,7 +74,7 @@ export function consolidatePlayerInternalMemory(state, {
       publicSequenceAtGeneration,
       rawResponse,
       generationRun,
-      parsedConsolidatedMemo: String(summary ?? '').trim(),
+      parsedFullMemo: String(summary ?? '').trim(),
       warnings,
       committedEntityIds: [],
     });

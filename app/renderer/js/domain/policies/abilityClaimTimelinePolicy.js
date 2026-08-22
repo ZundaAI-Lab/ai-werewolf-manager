@@ -31,7 +31,7 @@ export function getAbilityEvidenceCutoffs(state) {
   const cutoffs = {};
   for (let day = 1; day <= currentDay; day += 1) {
     cutoffs[day] = {
-      eligibleEvidenceEventSequences: getAbilityEvidenceWindow(state, day)
+      eligibleEvidenceRefs: getAbilityEvidenceWindow(state, day)
         .map((event) => Number(event.sequence)),
     };
   }
@@ -48,8 +48,8 @@ export function extractPublicEventSequences(value) {
   return sequences;
 }
 
-export function getUnlistedAbilityReasonSequences(selectionReasonAtTime, evidenceEventSequences) {
-  const allowed = new Set((evidenceEventSequences ?? []).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0));
+export function getUnlistedAbilityReasonSequences(selectionReasonAtTime, evidenceRefs) {
+  const allowed = new Set((evidenceRefs ?? []).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0));
   return extractPublicEventSequences(selectionReasonAtTime).filter((sequence) => !allowed.has(sequence));
 }
 

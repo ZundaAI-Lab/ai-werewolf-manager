@@ -35,7 +35,36 @@ function repairAbilityClaims(state, payload, operations) {
   }
   payload.abilityClaims = payload.abilityClaims.filter(isPlainObject).map((claim, index) => {
     const path = `abilityClaims[${index}]`;
-    repairExactKeys(claim, path, ['roleId', 'resultDay', 'target', 'result', 'selectionBasis', 'evidenceEventSequences', 'selectionReasonAtTime'], operations);
+    normalizeEnumField(claim, 'intent', path, operations);
+    if (!['truthful', 'deception'].includes(claim.intent)) {
+      operation(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}.intentがtruthful/deceptionではないため省略しました。`);
+      return null;
+    }
+
+    if (claim.intent === 'truthful') {
+      repairExactKeys(claim, path, ['intent', 'sourceRef', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
+      if (typeof claim.sourceRef === 'string' && /^\d+$/u.test(claim.sourceRef.trim())) {
+        claim.sourceRef = Number(claim.sourceRef);
+        operation(operations, 'NUMBER_STRING_NORMALIZED', `${path}.sourceRef`, `${path}.sourceRefを整数へ変換しました。`);
+      }
+      if (!Number.isInteger(claim.sourceRef) || claim.sourceRef < 1) {
+        operation(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}.sourceRefが有効なP#番号ではないため省略しました。`);
+        return null;
+      }
+      normalizeEnumField(claim, 'selectionBasis', path, operations);
+      normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations);
+      if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceRefs?.length)) {
+        claim.selectionBasis = 'no-public-information';
+        operation(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
+      }
+      if (claim.selectionBasis === 'no-public-information' && claim.evidenceRefs?.length) {
+        claim.selectionBasis = 'public-evidence';
+        operation(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照があるためselectionBasisをpublic-evidenceへ修正しました。');
+      }
+      return claim;
+    }
+
+    repairExactKeys(claim, path, ['intent', 'roleId', 'resultDay', 'target', 'result', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
     removeNullOptionalFields(claim, ['roleId', 'resultDay', 'target', 'result'], path, operations);
     normalizeEnumField(claim, 'roleId', path, operations);
     normalizeEnumField(claim, 'result', path, operations);
@@ -51,10 +80,10 @@ function repairAbilityClaims(state, payload, operations) {
         operation(operations, 'PLAYER_REFERENCE_CANONICALIZED', `${path}.target`, `${path}.targetを正式表示名へ修正しました。`);
       }
     }
-    normalizePositiveIntegerRefs(claim, 'evidenceEventSequences', path, operations);
+    normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations);
     const requiredKeys = ['roleId', 'resultDay', 'target', 'result'];
     if (requiredKeys.some((key) => !Object.hasOwn(claim, key) || claim[key] === null || claim[key] === '')) {
-      operation(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は能力結果を確定できないため省略しました。`);
+      operation(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は騙り能力結果を確定できないため省略しました。`);
       return null;
     }
     if (claim.roleId === 'medium' && Number.isInteger(claim.resultDay) && typeof claim.target === 'string') {
@@ -64,32 +93,32 @@ function repairAbilityClaims(state, payload, operations) {
       }) : null;
       if (requirements?.requiredEvidenceRefs?.length) {
         claim.selectionBasis = 'rule-forced';
-        claim.evidenceEventSequences = [...requirements.requiredEvidenceRefs];
+        claim.evidenceRefs = [...requirements.requiredEvidenceRefs];
         delete claim.selectionReasonAtTime;
         operation(operations, 'MEDIUM_TIMELINE_NORMALIZED', path, '霊能結果の選定根拠を対応する処刑履歴へ固定しました。');
       }
     } else {
       const allowedRefs = new Set(getAbilityEvidenceWindow(state, claim.resultDay).map((event) => Number(event.sequence)));
-      if (Array.isArray(claim.evidenceEventSequences)) {
-        const validRefs = claim.evidenceEventSequences.filter((ref) => allowedRefs.has(Number(ref)));
-        if (!deepEqual(validRefs, claim.evidenceEventSequences)) {
-          claim.evidenceEventSequences = validRefs;
-          operation(operations, 'INVALID_ABILITY_EVENT_SEQUENCES_REMOVED', `${path}.evidenceEventSequences`, '能力決定時点で利用できない公開参照を除外しました。');
+      if (Array.isArray(claim.evidenceRefs)) {
+        const validRefs = claim.evidenceRefs.filter((ref) => allowedRefs.has(Number(ref)));
+        if (!deepEqual(validRefs, claim.evidenceRefs)) {
+          claim.evidenceRefs = validRefs;
+          operation(operations, 'INVALID_ABILITY_EVENT_SEQUENCES_REMOVED', `${path}.evidenceRefs`, '能力決定時点で利用できない公開参照を除外しました。');
         }
       }
       if (['guard', 'namahage', 'snowWoman'].includes(claim.roleId) && claim.result !== 'unknown') {
         claim.result = 'unknown';
         operation(operations, 'UNOBSERVABLE_RESULT_NORMALIZED', `${path}.result`, '個別成否が通知されない役職のresultをunknownへ固定しました。');
       }
-      if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceEventSequences?.length)) {
+      if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceRefs?.length)) {
         claim.selectionBasis = 'no-public-information';
         operation(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
       }
-      if (claim.selectionBasis === 'no-public-information' && claim.evidenceEventSequences?.length) {
+      if (claim.selectionBasis === 'no-public-information' && claim.evidenceRefs?.length) {
         claim.selectionBasis = 'public-evidence';
         operation(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照があるためselectionBasisをpublic-evidenceへ修正しました。');
       }
-      const unlistedReasonSequences = getUnlistedAbilityReasonSequences(claim.selectionReasonAtTime, claim.evidenceEventSequences);
+      const unlistedReasonSequences = getUnlistedAbilityReasonSequences(claim.selectionReasonAtTime, claim.evidenceRefs);
       if (unlistedReasonSequences.length) {
         delete claim.selectionReasonAtTime;
         operation(operations, 'INVALID_ABILITY_REASON_REFERENCES_REMOVED', `${path}.selectionReasonAtTime`, `構造化根拠にない公開番号（${unlistedReasonSequences.map((sequence) => `#${sequence}`).join('、')}）を含む選定理由を未入力化しました。`);

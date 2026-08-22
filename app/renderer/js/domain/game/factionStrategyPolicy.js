@@ -128,7 +128,7 @@ function requiredFieldsForTriggers(profile, triggers) {
   return desiredFields(profile, desired);
 }
 
-export function resolveFactionStrategyUpdatePolicy(state, {
+export function resolveFactionStrategyPolicy(state, {
   playerId,
   taskType,
   coOperation = null,

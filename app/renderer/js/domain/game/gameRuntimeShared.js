@@ -22,7 +22,7 @@ import {
   createFactionStrategyState,
   getFactionStrategyFields,
   normalizeFactionStrategyForPolicy,
-  validateFactionStrategyUpdate,
+  validateFactionStrategyState,
 } from './factionStrategyState.js';
 import { resolveWolfPartnerDispositionPolicy } from './wolfPartnerDispositionPolicy.js';
 import {
@@ -131,7 +131,7 @@ export function cloneDecisionUpdate(decisionUpdate) {
   };
 }
 
-export function cloneFactionStrategyUpdate(update) {
+export function cloneFactionStrategyState(update) {
   if (!update) return null;
   const profile = String(update.profile ?? '');
   return {
@@ -151,7 +151,7 @@ export function cloneInternalReasoningDirective(directive) {
   };
 }
 
-export function cloneSharedStrategyUpdate(update) {
+export function cloneSharedStrategyPatch(update) {
   if (!update) return null;
   return {
     mode: String(update.mode ?? ''),
@@ -173,14 +173,14 @@ export function cloneParsedAttackAssessment(assessment) {
   if (!assessment) return null;
   // 責務境界: 応答パーサーの診断情報はUI確認用であり、永続状態には現行Schemaの監査項目だけを保存する。
   return {
-    hunterSurvivalLikelihood: String(assessment.hunterSurvivalLikelihood ?? ''),
+    hunterAliveChance: String(assessment.hunterAliveChance ?? ''),
     hunterSurvivalReason: String(assessment.hunterSurvivalReason ?? ''),
     selectedTargetGuardRisk: String(assessment.selectedTargetGuardRisk ?? ''),
     selectedTargetValue: String(assessment.selectedTargetValue ?? ''),
     selectedTargetFailureCost: String(assessment.selectedTargetFailureCost ?? ''),
-    alternativeTargetName: String(assessment.alternativeTargetName ?? ''),
-    alternativeTargetGuardRisk: String(assessment.alternativeTargetGuardRisk ?? ''),
-    alternativeTargetValue: String(assessment.alternativeTargetValue ?? ''),
+    otherTargetName: String(assessment.otherTargetName ?? ''),
+    otherTargetGuardRisk: String(assessment.otherTargetGuardRisk ?? ''),
+    otherTargetValue: String(assessment.otherTargetValue ?? ''),
     selectionDifference: String(assessment.selectionDifference ?? ''),
   };
 }
@@ -198,7 +198,7 @@ export function resolveFactionStrategyForCommit(state, playerId, update) {
     : null;
   const profile = getFactionStrategyProfile(state, player);
   const normalized = normalizeFactionStrategyForPolicy(update, profile, { partnerDispositionPolicy });
-  const errors = validateFactionStrategyUpdate(normalized, profile, { partnerDispositionPolicy, allowPartial: true, requiredFields: [], requireSubstantive: false });
+  const errors = validateFactionStrategyState(normalized, profile, { partnerDispositionPolicy, allowPartial: true, requiredFields: [], requireSubstantive: false });
   return {
     ok: errors.length === 0,
     errors: [...new Set(errors)],
@@ -267,7 +267,7 @@ export function recordAiTurn(state, payload) {
     parsedPublicSpeech: payload.parsedPublicSpeech ?? '',
     parsedSpeechInteraction: payload.parsedSpeechInteraction ? {
       questionTargetNames: [...(payload.parsedSpeechInteraction.questionTargetNames ?? [])],
-      answerEventSequences: [...(payload.parsedSpeechInteraction.answerEventSequences ?? [])],
+      answerToRefs: [...(payload.parsedSpeechInteraction.answerToRefs ?? [])],
     } : null,
     resolvedSpeechInteraction: payload.resolvedSpeechInteraction ? {
       questionTargetIds: [...(payload.resolvedSpeechInteraction.questionTargetIds ?? [])],
@@ -276,19 +276,19 @@ export function recordAiTurn(state, payload) {
     parsedWolfConversationMessage: payload.parsedWolfConversationMessage ?? '',
     parsedMasonConversationMessage: payload.parsedMasonConversationMessage ?? '',
     parsedGraveyardConversationMessage: payload.parsedGraveyardConversationMessage ?? '',
-    parsedSharedStrategyUpdate: cloneSharedStrategyUpdate(payload.parsedSharedStrategyUpdate),
+    parsedSharedStrategyPatch: cloneSharedStrategyPatch(payload.parsedSharedStrategyPatch),
     parsedHeartVoice: payload.parsedHeartVoice ?? '',
     parsedInternalMemoUpdate: payload.parsedInternalMemoUpdate ?? null,
-    parsedConsolidatedMemo: payload.parsedConsolidatedMemo ?? '',
+    parsedFullMemo: payload.parsedFullMemo ?? '',
     parsedActionAnswer: payload.parsedActionAnswer ?? '',
-    parsedActionRationale: payload.parsedActionRationale ?? '',
+    parsedSelectionRationale: payload.parsedSelectionRationale ?? '',
     parsedCoOperation: payload.parsedCoOperation ?? null,
     parsedAbilityClaims: payload.parsedAbilityClaims ?? null,
     resolvedAbilityClaims: (payload.resolvedAbilityClaims ?? []).map((claim) => ({ ...claim, evidenceEventIds: [...(claim.evidenceEventIds ?? [])] })),
     parsedDecisionUpdate: payload.parsedDecisionUpdate ?? null,
     resolvedDecisionUpdate: cloneDecisionUpdate(payload.resolvedDecisionUpdate),
-    parsedFactionStrategyUpdate: cloneFactionStrategyPatch(payload.parsedFactionStrategyUpdate),
-    resolvedFactionStrategyUpdate: cloneFactionStrategyUpdate(payload.resolvedFactionStrategyUpdate),
+    parsedFactionStrategyPatch: cloneFactionStrategyPatch(payload.parsedFactionStrategyPatch),
+    resolvedFactionStrategyState: cloneFactionStrategyState(payload.resolvedFactionStrategyState),
     parsedAttackAssessment: cloneParsedAttackAssessment(payload.parsedAttackAssessment),
     resolvedAttackAssessment: payload.resolvedAttackAssessment ?? null,
     estimatedWerewolfIds: [...(payload.estimatedWerewolfIds ?? [])],

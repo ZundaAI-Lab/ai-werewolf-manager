@@ -24,8 +24,8 @@ import { rebuildPublicDerivedState } from '../events/publicDerivation.js';
 import { getCurrentPriorityAnswerTask } from '../discussion/priorityAnswerPolicy.js';
 import {
   applyInternalMemoryUpdate,
-  recordActionRationale,
-  voidActionRationalesForEvent,
+  recordSelectionRationale,
+  voidSelectionRationalesForEvent,
 } from '../memory/memoryLedger.js';
 import { getVoteEligiblePlayerIds } from '../game/playerStatus.js';
 import {
@@ -88,7 +88,7 @@ export function recordVote(state, {
   targetId,
   heartVoice = '',
   internalMemoUpdate = null,
-  actionRationale = '',
+  selectionRationale = '',
   rawResponse = '',
   generationRun = null,
   promptText = '',
@@ -99,8 +99,8 @@ export function recordVote(state, {
   override = null,
   decisionUpdate = null,
   parsedDecisionUpdate = null,
-  factionStrategyUpdate = null,
-  parsedFactionStrategyUpdate = null,
+  factionStrategyPatch = null,
+  parsedFactionStrategyPatch = null,
 }) {
   const guard = commandGuard(state, { phases: ['vote', 'runoff'] });
   if (guard) return guard;
@@ -115,15 +115,15 @@ export function recordVote(state, {
     taskType: 'vote',
     candidateIds: session.candidateIds,
   });
-  const factionStrategy = resolveFactionStrategyForCommit(state, voterId, factionStrategyUpdate);
+  const factionStrategy = resolveFactionStrategyForCommit(state, voterId, factionStrategyPatch);
   if (!factionStrategy.ok) return result(false, factionStrategy.errors.join('\n'));
-  const committedFactionStrategyUpdate = factionStrategy.update;
+  const committedFactionStrategyPatch = factionStrategy.update;
   const existingEventId = session.voteEventIdByVoterId[voterId];
   if (existingEventId) {
     const existing = getEvent(state, existingEventId);
     if (existing?.status === 'published') return result(false, '公開済み投票は通常操作で変更できません。');
     voidEvent(state, existingEventId);
-    voidActionRationalesForEvent(state, existingEventId);
+    voidSelectionRationalesForEvent(state, existingEventId);
   }
   session.votes[voterId] = targetId;
   setHeartVoice(state, voterId, heartVoice);
@@ -157,29 +157,29 @@ export function recordVote(state, {
       parsedHeartVoice: heartVoice,
       parsedInternalMemoUpdate: internalMemoUpdate,
       parsedActionAnswer: targetId,
-      parsedActionRationale: String(actionRationale ?? '').trim(),
+      parsedSelectionRationale: String(selectionRationale ?? '').trim(),
       parsedDecisionUpdate: parsedDecisionUpdate ?? null,
       resolvedDecisionUpdate: committedDecisionUpdate,
-      parsedFactionStrategyUpdate: parsedFactionStrategyUpdate ?? null,
-      resolvedFactionStrategyUpdate: committedFactionStrategyUpdate,
+      parsedFactionStrategyPatch: parsedFactionStrategyPatch ?? null,
+      resolvedFactionStrategyState: committedFactionStrategyPatch,
       warnings,
       override,
       committedEntityIds: [event.id],
     });
     sourceTurnId = turn.id;
-    setFactionStrategyState(state, voterId, committedFactionStrategyUpdate, turn.id);
+    setFactionStrategyState(state, voterId, committedFactionStrategyPatch, turn.id);
     applyInternalMemoryUpdate(state, voterId, internalMemoUpdate, turn.id);
   } else {
     applyInternalMemoryUpdate(state, voterId, internalMemoUpdate);
   }
-  if (String(actionRationale ?? '').trim()) {
-    recordActionRationale(state, voterId, {
+  if (String(selectionRationale ?? '').trim()) {
+    recordSelectionRationale(state, voterId, {
       id: `action-rationale:${event.id}`,
       taskType: 'vote',
       day: state.game.day,
       phase: state.game.phase,
       targetId,
-      rationale: actionRationale,
+      rationale: selectionRationale,
       sourceAiTurnId: sourceTurnId,
       sourceEventId: event.id,
     });

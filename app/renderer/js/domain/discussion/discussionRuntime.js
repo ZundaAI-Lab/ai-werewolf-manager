@@ -284,8 +284,8 @@ const AI_SPEECH_INPUT_KEYS = Object.freeze(new Set([
   'parsedSpeechInteraction',
   'decisionUpdate',
   'parsedDecisionUpdate',
-  'factionStrategyUpdate',
-  'parsedFactionStrategyUpdate',
+  'factionStrategyPatch',
+  'parsedFactionStrategyPatch',
   'abilityClaims',
   'parsedAbilityClaims',
   'resolvedInternalReasoningDirective',
@@ -309,8 +309,8 @@ const AI_PRIORITY_ANSWER_INPUT_KEYS = Object.freeze(new Set([
   'warnings',
   'decisionUpdate',
   'parsedDecisionUpdate',
-  'factionStrategyUpdate',
-  'parsedFactionStrategyUpdate',
+  'factionStrategyPatch',
+  'parsedFactionStrategyPatch',
   'coOperation',
   'abilityClaims',
   'parsedAbilityClaims',
@@ -375,8 +375,8 @@ export function recordSpeechCore(state, {
   questionTargetId = null,
   decisionUpdate = null,
   parsedDecisionUpdate = null,
-  factionStrategyUpdate = null,
-  parsedFactionStrategyUpdate = null,
+  factionStrategyPatch = null,
+  parsedFactionStrategyPatch = null,
   abilityClaims = [],
   parsedAbilityClaims = null,
   resolvedInternalReasoningDirective = null,
@@ -449,10 +449,10 @@ export function recordSpeechCore(state, {
     ? resolveDecisionUpdateForCommit(state, playerId, decisionUpdate, { taskType: 'speech' })
     : null;
   const factionStrategy = aiLikeSource
-    ? resolveFactionStrategyForCommit(state, playerId, factionStrategyUpdate)
+    ? resolveFactionStrategyForCommit(state, playerId, factionStrategyPatch)
     : { ok: true, update: null, errors: [] };
   if (!factionStrategy.ok) return result(false, factionStrategy.errors.join('\n'));
-  const committedFactionStrategyUpdate = factionStrategy.update;
+  const committedFactionStrategyPatch = factionStrategy.update;
 
   const speechEvent = createEvent(state, {
     type: 'public-speech',
@@ -505,8 +505,8 @@ export function recordSpeechCore(state, {
       resolvedAbilityClaims: normalizedAbilityClaims,
       parsedDecisionUpdate: parsedDecisionUpdate ?? null,
       resolvedDecisionUpdate: committedDecisionUpdate,
-      parsedFactionStrategyUpdate: parsedFactionStrategyUpdate ?? null,
-      resolvedFactionStrategyUpdate: committedFactionStrategyUpdate,
+      parsedFactionStrategyPatch: parsedFactionStrategyPatch ?? null,
+      resolvedFactionStrategyState: committedFactionStrategyPatch,
       resolvedInternalReasoningDirective,
       committedEntityIds: [
         speechEvent.id,
@@ -515,7 +515,7 @@ export function recordSpeechCore(state, {
         ...normalizedAbilityClaims.map((claim, index) => `ability-claim:${speechEvent.id}:${index}`),
       ].filter(Boolean),
     });
-    setFactionStrategyState(state, playerId, committedFactionStrategyUpdate, turn.id);
+    setFactionStrategyState(state, playerId, committedFactionStrategyPatch, turn.id);
     applyInternalMemoryUpdate(state, playerId, internalMemoUpdate, turn.id);
   }
 
@@ -584,8 +584,8 @@ export function recordPriorityAnswerCore(state, {
   warnings = [],
   decisionUpdate = null,
   parsedDecisionUpdate = null,
-  factionStrategyUpdate = null,
-  parsedFactionStrategyUpdate = null,
+  factionStrategyPatch = null,
+  parsedFactionStrategyPatch = null,
   coOperation = null,
   abilityClaims = [],
   parsedAbilityClaims = null,
@@ -617,10 +617,10 @@ export function recordPriorityAnswerCore(state, {
     ? resolveDecisionUpdateForCommit(state, playerId, decisionUpdate, { taskType: 'priority-answer' })
     : null;
   const factionStrategy = sourceType === 'ai'
-    ? resolveFactionStrategyForCommit(state, playerId, factionStrategyUpdate)
+    ? resolveFactionStrategyForCommit(state, playerId, factionStrategyPatch)
     : { ok: true, update: null, errors: [] };
   if (!factionStrategy.ok) return result(false, factionStrategy.errors.join('\n'));
-  const committedFactionStrategyUpdate = factionStrategy.update;
+  const committedFactionStrategyPatch = factionStrategy.update;
   const opportunityContext = createSpeechOpportunitySnapshot(state, playerId);
   const committedInteraction = {
     questionTargetIds: [],
@@ -670,8 +670,8 @@ export function recordPriorityAnswerCore(state, {
       resolvedAbilityClaims: normalizedAbilityClaims,
       parsedDecisionUpdate: parsedDecisionUpdate ?? null,
       resolvedDecisionUpdate: committedDecisionUpdate,
-      parsedFactionStrategyUpdate: parsedFactionStrategyUpdate ?? null,
-      resolvedFactionStrategyUpdate: committedFactionStrategyUpdate,
+      parsedFactionStrategyPatch: parsedFactionStrategyPatch ?? null,
+      resolvedFactionStrategyState: committedFactionStrategyPatch,
       resolvedInternalReasoningDirective,
       committedEntityIds: [
         speechEvent.id,
@@ -679,7 +679,7 @@ export function recordPriorityAnswerCore(state, {
         ...normalizedAbilityClaims.map((claim, index) => `ability-claim:${speechEvent.id}:${index}`),
       ].filter(Boolean),
     });
-    setFactionStrategyState(state, playerId, committedFactionStrategyUpdate, turn.id);
+    setFactionStrategyState(state, playerId, committedFactionStrategyPatch, turn.id);
     applyInternalMemoryUpdate(state, playerId, internalMemoUpdate, turn.id);
   }
 
@@ -729,8 +729,8 @@ export function skipAiPriorityAnswer(state, {
   warnings = [],
   decisionUpdate = null,
   parsedDecisionUpdate = null,
-  factionStrategyUpdate = null,
-  parsedFactionStrategyUpdate = null,
+  factionStrategyPatch = null,
+  parsedFactionStrategyPatch = null,
   parsedAbilityClaims = null,
   resolvedInternalReasoningDirective = null,
 } = {}) {
@@ -744,7 +744,7 @@ export function skipAiPriorityAnswer(state, {
   const normalizedReason = String(reason ?? '').trim();
   if (!normalizedReason) return result(false, '回答をスキップする理由を入力してください。');
   const committedDecisionUpdate = resolveDecisionUpdateForCommit(state, playerId, decisionUpdate, { taskType: 'priority-answer' });
-  const factionStrategy = resolveFactionStrategyForCommit(state, playerId, factionStrategyUpdate);
+  const factionStrategy = resolveFactionStrategyForCommit(state, playerId, factionStrategyPatch);
   if (!factionStrategy.ok) return result(false, factionStrategy.errors.join('\n'));
   const resolutionEvent = createEvent(state, {
     type: 'priority-answer-resolution',
@@ -779,8 +779,8 @@ export function skipAiPriorityAnswer(state, {
     resolvedAbilityClaims: [],
     parsedDecisionUpdate: parsedDecisionUpdate ?? null,
     resolvedDecisionUpdate: committedDecisionUpdate,
-    parsedFactionStrategyUpdate: parsedFactionStrategyUpdate ?? null,
-    resolvedFactionStrategyUpdate: factionStrategy.update,
+    parsedFactionStrategyPatch: parsedFactionStrategyPatch ?? null,
+    resolvedFactionStrategyState: factionStrategy.update,
     resolvedInternalReasoningDirective,
     committedEntityIds: [resolutionEvent.id],
   });

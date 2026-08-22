@@ -68,13 +68,13 @@ export function buildWolfPartnerPublicPositionContext(state, playerId) {
     return {
       name: playerName(state, partnerId),
       latestSpeechRef: latestSpeech ? `#${latestSpeech.sequence}` : null,
-      suspicionCandidates: [],
+      suspects: [],
       executionCandidates: [],
       votePosition: publishedVote?.payload?.targetId
         ? playerName(state, publishedVote.payload.targetId)
         : null,
       decisionReason: null,
-      evidenceEventSequences: [],
+      evidenceRefs: [],
       contributionType: latestSpeech
         ? contributionType(structured, publishedVote)
         : publishedVote ? 'vote-position' : 'not-spoken',

@@ -30,3 +30,43 @@ test('人間の役職通知は直接操作せず本人確認待ちとして停�
   assert.equal(action.taskType, 'briefing');
   assert.equal(action.playerId, state.players[0].id);
 });
+
+test('全自動進行の機密会話は直前話者の次の参加者を通常次話者にする', () => {
+  for (const config of [
+    { taskType: 'graveyard-conversation', planKey: 'graveyardConversationRequired', stateKey: 'graveyardConversations', idKey: 'graveyardConversationId' },
+    { taskType: 'mason-conversation', planKey: 'masonConversationRequired', stateKey: 'masonConversations', idKey: 'masonConversationId' },
+    { taskType: 'wolf-conversation', planKey: 'wolfConversationRequired', stateKey: 'wolfConversations', idKey: 'wolfConversationId' },
+  ]) {
+    const state = createInitialState(6);
+    state.game.status = 'running';
+    state.game.phase = 'night';
+    const [first, second, third] = state.players;
+    [first, second, third].forEach((player) => { player.controller = 'ai'; });
+    const sessionId = `${config.taskType}-session`;
+    const session = {
+      id: sessionId,
+      status: 'open',
+      participantIds: [first.id, second.id, third.id],
+      messages: [{ speakerId: first.id }],
+      speechCountPerParticipant: 2,
+      remainingByParticipant: { [first.id]: 1, [second.id]: 2, [third.id]: 2 },
+    };
+    state[config.stateKey] = [session];
+    state.night = {
+      status: 'conversation',
+      plan: {
+        graveyardConversationRequired: false,
+        masonConversationRequired: false,
+        wolfConversationRequired: false,
+        wolfAttackRequired: false,
+      },
+      [config.idKey]: sessionId,
+    };
+    state.night.plan[config.planKey] = true;
+
+    const action = resolveAutomaticAction(state);
+    assert.equal(action.kind, 'ai-task', config.taskType);
+    assert.equal(action.taskRequest.taskType, config.taskType);
+    assert.equal(action.taskRequest.playerId, second.id, `${config.taskType}は直前話者の次へ進む`);
+  }
+});

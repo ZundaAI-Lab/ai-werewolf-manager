@@ -62,7 +62,7 @@ const REASONING_PROFILE_KEYS = [
 ];
 const INTERNAL_MEMORY_KEYS = ['summary', 'notes', 'lastConsolidatedAt', 'consolidationRecommended'];
 const INTERNAL_MEMORY_NOTE_KEYS = ['id', 'text', 'createdAt', 'sourceAiTurnId'];
-const MEMORY_LEDGER_KEYS = ['privateFacts', 'publicCommitments', 'pendingDiscriminators', 'actionRationales', 'updatedAt'];
+const MEMORY_LEDGER_KEYS = ['privateFacts', 'publicCommitments', 'pendingDiscriminators', 'selectionRationales', 'updatedAt'];
 const DECISION_STATE_KEYS = [
   'suspicionCandidateIds', 'executionCandidateIds', 'intendedVoteId', 'assessmentLevel',
   'keyPublicEvidenceEventIds', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference', 'uncertainty',
@@ -151,7 +151,7 @@ const PUBLIC_ABILITY_CLAIM_KEYS = [
   'sourceEventId', 'sourceClaimIndex', 'status', 'voidedByEventId',
 ];
 const RELATIONSHIP_SNAPSHOT_KEYS = [
-  'id', 'day', 'capturedAt', 'sourceEventId', 'sourceEventSequence', 'latestVoteDay', 'nodes', 'edges',
+  'id', 'day', 'capturedAt', 'sourceEventId', 'sourceRef', 'latestVoteDay', 'nodes', 'edges',
 ];
 const RELATIONSHIP_SNAPSHOT_NODE_KEYS = [
   'id', 'name', 'alive', 'controller', 'claimedRoleId', 'claimedRoleName', 'actualRoleId', 'actualRoleName',
@@ -168,10 +168,10 @@ const EVENT_KEYS = [
 const AUDIENCE_KEYS = ['type', 'targetIds'];
 const AI_TURN_KEYS = [
   'id', 'day', 'phase', 'stateRevision', 'promptContextFingerprint', 'promptMode', 'publicSequenceAtGeneration', 'publicSequenceAtRegistration', 'promptText',
-  'rawResponse', 'parsedPublicSpeech', 'parsedSpeechInteraction', 'resolvedSpeechInteraction', 'parsedWolfConversationMessage', 'parsedMasonConversationMessage', 'parsedGraveyardConversationMessage', 'parsedSharedStrategyUpdate',
-  'parsedHeartVoice', 'parsedInternalMemoUpdate', 'parsedConsolidatedMemo', 'parsedActionAnswer',
-  'parsedActionRationale', 'parsedCoOperation', 'parsedAbilityClaims', 'resolvedAbilityClaims',
-  'parsedDecisionUpdate', 'resolvedDecisionUpdate', 'parsedFactionStrategyUpdate', 'resolvedFactionStrategyUpdate', 'parsedAttackAssessment', 'resolvedAttackAssessment',
+  'rawResponse', 'parsedPublicSpeech', 'parsedSpeechInteraction', 'resolvedSpeechInteraction', 'parsedWolfConversationMessage', 'parsedMasonConversationMessage', 'parsedGraveyardConversationMessage', 'parsedSharedStrategyPatch',
+  'parsedHeartVoice', 'parsedInternalMemoUpdate', 'parsedFullMemo', 'parsedActionAnswer',
+  'parsedSelectionRationale', 'parsedCoOperation', 'parsedAbilityClaims', 'resolvedAbilityClaims',
+  'parsedDecisionUpdate', 'resolvedDecisionUpdate', 'parsedFactionStrategyPatch', 'resolvedFactionStrategyState', 'parsedAttackAssessment', 'resolvedAttackAssessment',
   'estimatedWerewolfIds', 'predictedAttackTargetIds',
   'resolvedInternalReasoningDirective',
   'warnings', 'override', 'committedEntityIds', 'runtimeBuildId', 'promptSpecVersion',
@@ -248,27 +248,27 @@ function validateGenerationRunShape(value, label, errors) {
 }
 
 
-const PARSED_SPEECH_INTERACTION_KEYS = ['questionTargetNames', 'answerEventSequences'];
+const PARSED_SPEECH_INTERACTION_KEYS = ['questionTargetNames', 'answerToRefs'];
 const RESOLVED_SPEECH_INTERACTION_KEYS = ['questionTargetIds', 'answersEventIds'];
 const INTERNAL_REASONING_DIRECTIVE_KEYS = [
   'modeId', 'lens', 'focusPlayerIds', 'anchorEventSequences', 'publicSequenceAtGeneration',
 ];
 const PARSED_ATTACK_ASSESSMENT_KEYS = [
-  'hunterSurvivalLikelihood', 'hunterSurvivalReason',
+  'hunterAliveChance', 'hunterSurvivalReason',
   'selectedTargetGuardRisk', 'selectedTargetValue', 'selectedTargetFailureCost',
-  'alternativeTargetName', 'alternativeTargetGuardRisk', 'alternativeTargetValue', 'selectionDifference',
+  'otherTargetName', 'otherTargetGuardRisk', 'otherTargetValue', 'selectionDifference',
 ];
 const RESOLVED_ATTACK_ASSESSMENT_KEYS = [
-  'hunterSurvivalLikelihood', 'hunterSurvivalReason',
+  'hunterAliveChance', 'hunterSurvivalReason',
   'selectedTargetGuardRisk', 'selectedTargetValue', 'selectedTargetFailureCost',
-  'alternativeTargetId', 'alternativeTargetGuardRisk', 'alternativeTargetValue', 'selectionDifference',
+  'otherTargetId', 'otherTargetGuardRisk', 'otherTargetValue', 'selectionDifference',
 ];
 const FACTION_STRATEGY_PATCH_KEYS = ['mode', 'changes'];
 const FACTION_STRATEGY_CHANGE_KEYS = [
   'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
   'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
 ];
-const SHARED_STRATEGY_UPDATE_KEYS = ['mode', 'changes'];
+const SHARED_STRATEGY_PATCH_KEYS = ['mode', 'changes'];
 const SHARED_STRATEGY_CHANGE_KEYS = ['claimPlan', 'blackReceivedPlan', 'partnerExecutionPlan', 'collapsePlan', 'discussionPlan', 'attackPlan'];
 const RESULT_KEYS = [
   'winner', 'reason', 'status', 'revealAllRoles', 'revealWolfConversation',
@@ -287,7 +287,7 @@ const EVENT_PAYLOAD_KEYS = Object.freeze({
   'role-notified': ['roleId', 'status', 'forcedReason'],
   'night-action': ['actionType', 'targetId', 'nightDay', 'rationale', 'override', 'sourceAiTurnId', 'editReason', 'editedAt'],
   'private-result': ['actorId', 'actionType', 'targetId', 'result', 'ownerRoleId', 'resolvedTeam', 'availableFromDay', 'nightDay', 'acknowledgedAt'],
-  'wolf-conversation': ['conversationId', 'messageId', 'content', 'purpose', 'sharedStrategyUpdate', 'editReason', 'editedAt'],
+  'wolf-conversation': ['conversationId', 'messageId', 'content', 'purpose', 'sharedStrategyPatch', 'editReason', 'editedAt'],
   'mason-conversation': ['conversationId', 'messageId', 'content', 'editReason', 'editedAt'],
   'graveyard-conversation': ['conversationId', 'messageId', 'content', 'editReason', 'editedAt'],
   dawn: ['text', 'deadPlayerIds', 'frozenPlayerIds'],
@@ -308,9 +308,9 @@ function validateFactionStrategyPatchShape(update, label, errors) {
   exactKeys(update.changes, [], `${label}.changes`, errors, { optionalKeys: FACTION_STRATEGY_CHANGE_KEYS });
 }
 
-function validateSharedStrategyUpdateShape(update, label, errors) {
+function validateSharedStrategyPatchShape(update, label, errors) {
   if (update === null) return;
-  if (!exactKeys(update, SHARED_STRATEGY_UPDATE_KEYS, label, errors)) return;
+  if (!exactKeys(update, SHARED_STRATEGY_PATCH_KEYS, label, errors)) return;
   exactKeys(update.changes, [], `${label}.changes`, errors, { optionalKeys: SHARED_STRATEGY_CHANGE_KEYS });
 }
 
@@ -323,8 +323,8 @@ function validateEventShape(event, label, errors) {
     return;
   }
   exactKeys(event.payload, [], `${label}.payload`, errors, { optionalKeys: allowedPayloadKeys });
-  if (event.type === 'wolf-conversation' && Object.hasOwn(event.payload, 'sharedStrategyUpdate')) {
-    validateSharedStrategyUpdateShape(event.payload.sharedStrategyUpdate, `${label}.payload.sharedStrategyUpdate`, errors);
+  if (event.type === 'wolf-conversation' && Object.hasOwn(event.payload, 'sharedStrategyPatch')) {
+    validateSharedStrategyPatchShape(event.payload.sharedStrategyPatch, `${label}.payload.sharedStrategyPatch`, errors);
   }
 }
 
@@ -474,11 +474,11 @@ function validateStateShapeInternal(raw, label, errors, { includeHistory = true,
     if (turn.resolvedSpeechInteraction !== null) {
       exactKeys(turn.resolvedSpeechInteraction, RESOLVED_SPEECH_INTERACTION_KEYS, `${turnLabel}.resolvedSpeechInteraction`, turnErrors);
     }
-    if (turn.parsedSharedStrategyUpdate !== null) {
-      validateSharedStrategyUpdateShape(turn.parsedSharedStrategyUpdate, `${turnLabel}.parsedSharedStrategyUpdate`, turnErrors);
+    if (turn.parsedSharedStrategyPatch !== null) {
+      validateSharedStrategyPatchShape(turn.parsedSharedStrategyPatch, `${turnLabel}.parsedSharedStrategyPatch`, turnErrors);
     }
-    if (turn.parsedFactionStrategyUpdate !== null) {
-      validateFactionStrategyPatchShape(turn.parsedFactionStrategyUpdate, `${turnLabel}.parsedFactionStrategyUpdate`, turnErrors);
+    if (turn.parsedFactionStrategyPatch !== null) {
+      validateFactionStrategyPatchShape(turn.parsedFactionStrategyPatch, `${turnLabel}.parsedFactionStrategyPatch`, turnErrors);
     }
     if (turn.parsedAttackAssessment !== null) {
       exactKeys(turn.parsedAttackAssessment, PARSED_ATTACK_ASSESSMENT_KEYS, `${turnLabel}.parsedAttackAssessment`, turnErrors);

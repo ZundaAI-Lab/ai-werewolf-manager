@@ -109,7 +109,7 @@ export function normalizeSpectatorRoomState(raw) {
     questionTargetIds: [...new Set((Array.isArray(message?.questionTargetIds) ? message.questionTargetIds : []).map(String))].filter((id) => ids.has(id)),
     answersMessageIds: (Array.isArray(message?.answersMessageIds) ? message.answersMessageIds : []).map(String),
     sourcePublicRevision: Math.max(0, Number(message?.sourcePublicRevision ?? 0) || 0),
-    sourceEventSequence: Math.max(0, Number(message?.sourceEventSequence ?? 0) || 0),
+    sourceRef: Math.max(0, Number(message?.sourceRef ?? 0) || 0),
     createdAt: String(message?.createdAt ?? nowIso()),
   }));
   const messageById = new Map(messages.map((message) => [message.id, message]));
@@ -249,7 +249,7 @@ function addMessage(state, message) {
     questionTargetIds: [...new Set((message.questionTargetIds ?? []).map(String))],
     answersMessageIds: [...new Set((message.answersMessageIds ?? []).map(String))],
     sourcePublicRevision: Math.max(0, Number(message.sourcePublicRevision ?? 0) || 0),
-    sourceEventSequence: Math.max(0, Number(message.sourceEventSequence ?? 0) || 0),
+    sourceRef: Math.max(0, Number(message.sourceRef ?? 0) || 0),
     createdAt: nowIso(),
   };
   state.messages.push(entry);
@@ -263,7 +263,7 @@ export function addSpectatorSystemMessage(state, text) {
 }
 
 export function addSpectatorPublicUpdate(state, text, { publicRevision = 0, eventSequence = 0 } = {}) {
-  return addMessage(state, { kind: 'public', text, sourcePublicRevision: publicRevision, sourceEventSequence: eventSequence });
+  return addMessage(state, { kind: 'public', text, sourcePublicRevision: publicRevision, sourceRef: eventSequence });
 }
 
 function resolveAnsweredQuestions(state, speakerId, answersMessageIds) {
@@ -306,7 +306,7 @@ export function addSpectatorHumanMessage(state, { text, targetId = null, targetN
     text,
     questionTargetIds: resolvedTargetId ? [resolvedTargetId] : [],
     sourcePublicRevision: state.playbackPublicRevision,
-    sourceEventSequence: state.playbackEventSequence,
+    sourceRef: state.playbackEventSequence,
   });
   if (resolvedTargetId) {
     scheduleQuestions(state, message);
@@ -316,9 +316,9 @@ export function addSpectatorHumanMessage(state, { text, targetId = null, targetN
   return message;
 }
 
-export function addSpectatorAiMessage(state, { speakerId, speakerName, text, questionTargetIds = [], answersMessageIds = [], sourcePublicRevision = 0, sourceEventSequence = 0 } = {}) {
+export function addSpectatorAiMessage(state, { speakerId, speakerName, text, questionTargetIds = [], answersMessageIds = [], sourcePublicRevision = 0, sourceRef = 0 } = {}) {
   resolveAnsweredQuestions(state, speakerId, answersMessageIds);
-  const message = addMessage(state, { kind: 'ai', speakerId, speakerName, text, questionTargetIds, answersMessageIds, sourcePublicRevision, sourceEventSequence });
+  const message = addMessage(state, { kind: 'ai', speakerId, speakerName, text, questionTargetIds, answersMessageIds, sourcePublicRevision, sourceRef });
   scheduleQuestions(state, message);
   state.lastSpeakerId = speakerId;
   touch(state);

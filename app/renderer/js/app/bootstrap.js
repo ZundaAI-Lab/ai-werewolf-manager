@@ -1,5 +1,5 @@
 /**
- * 責務: アプリ起動、モジュール接続、外観設定の初期読込とdialog接続、正式タブ登録、グローバルUI操作、ゲームデータJSON入出力、新規ゲームと設定引継ぎ再開始の確認、デスクトップ自動保存、自動進行通知制御、AI項目単位回収後の自動代替登録APIの公開窓口を担当する。
+ * 責務: アプリ起動、モジュール接続、Renderer未捕捉エラー監視、外観設定の初期読込とdialog接続、正式タブ登録、グローバルUI操作、ゲームデータJSON入出力、新規ゲームと設定引継ぎ再開始の確認、デスクトップ自動保存、自動進行通知制御、AI項目単位回収後の自動代替登録APIの公開窓口を担当する。
  * 変更ルール: ゲーム規則・AI代替規則・画面描画・通知表示ポリシー・インポート参照検査・設定引継ぎ対象の選別は各専用モジュールへ委譲する。ゲームデータ転送の実処理は本モジュールを正本とし、ゲーム準備／記録・管理の表示層から送られる要求だけを受ける。破棄確認は同期ブラウザモーダルを使わず専用dialogを閉じた次フレームで初期化する。自動夜進行の通知秘匿スコープもAppUIへ委譲し、進行層へ人物名置換規則を複製しない。ゲーム準備の局所入力変更はイベント詳細を付け、不要な自動化側の全体更新を起動しない。ブラウザストレージへは読み書きしない。デスクトップ自動保存もゲームデータ読込と同じ製品schema互換ポリシーを通し、旧schemaは一方向migration、未来schemaは拒否する。現在扱えないゲーム事実は補修せず拒否し、利用不能な履歴エントリだけは個別除外して警告する。
  */
 
@@ -12,7 +12,7 @@ import { AppUI } from '../ui/AppUI.js';
 import { defaultAppearanceSettings, normalizeAppearanceSettings } from '../appearance/appearanceModel.js';
 import { applyManagementAppearance } from '../appearance/appearanceTheme.js';
 import { createAppearanceController } from '../ui/appearance/appearanceController.js';
-import { downloadJson, readFileText } from '../shared/utils.js';
+import { downloadJson, readFileText, sanitizeFilenamePart } from '../shared/utils.js';
 import { resolveGenerationPlan } from '../services/generationDepthPolicy.js';
 import { runGenerationPipeline } from '../services/generationPipeline.js';
 import { createGenerationPipelineTestTask } from '../services/generationPipelineTestFixture.js';
@@ -20,6 +20,7 @@ import { resolveGenerationStagePromptPolicy } from '../prompts/stages/generation
 import { buildDraftStagePrompt, buildProofreadStagePrompt, buildRenderStagePrompt } from '../prompts/stages/generationStagePromptBuilder.js';
 import { mergeTextPatch, parseTextPatchResponse, validateTextPatchForStage } from '../prompts/stages/generationStageResponse.js';
 import { createRuntimeFacade, publishRuntimeContract } from './runtimeFacade.js';
+import { installGlobalErrorReporter } from './globalErrorReporter.js';
 import { resolveAutomaticAction } from '../domain/game/automaticActionPolicy.js';
 import '../privacy/dataTransmissionNotice.js';
 import '../automation/automationEntry.js';
@@ -41,6 +42,7 @@ function startApplication(initialState, { restored = false, appearanceSettings: 
   const store = new StateStore(initialState);
   let appearanceSettings = normalizeAppearanceSettings(initialAppearance);
   const ui = new AppUI(store, { getAppearance: () => appearanceSettings });
+  installGlobalErrorReporter({ toast: (message, type, options) => ui.toast(message, type, options) });
   const appearanceController = createAppearanceController({
     dialog: document.querySelector('#appearance-dialog'),
     initialSettings: appearanceSettings,
@@ -134,7 +136,7 @@ function startApplication(initialState, { restored = false, appearanceSettings: 
 
   function exportGameData() {
     const state = store.getState();
-    const safeTitle = (state.game.title || 'ai-werewolf').replace(/[\/:*?"<>|]/g, '_');
+    const safeTitle = sanitizeFilenamePart(state.game.title, { fallback: 'ai-werewolf' });
     downloadJson(`${safeTitle}-revision-${state.revision}.json`, state);
     ui.toast('履歴・復元ポイントを含むゲームデータを出力しました。', 'success');
   }

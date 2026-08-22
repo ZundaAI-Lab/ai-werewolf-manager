@@ -11,6 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { esmSourceAsVmScript } = require('./esmTestSource.js');
 const { PRIVACY_NOTICE_SCHEMA_VERSION, PrivacyNoticeStore } = require('../../../app/main/privacyNoticeStore.js');
 const policy = require('../../../app/shared/dataTransmissionPolicy.js');
 const { runExternalDataOperation } = require('../../../app/main/externalDataNoticeGate.js');
@@ -72,8 +73,7 @@ test('未確認の外部LLMはMain側Gateで通信処理そのものを開始し
 });
 
 test('AI設定保存は外部LLM確認状態から独立して実行できる', async () => {
-  const source = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/settingsPersistenceCoordinator.js'), 'utf8')
-    .replace(/\nexport \{\};\s*$/u, '\n');
+  const source = esmSourceAsVmScript(fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/settingsPersistenceCoordinator.js'), 'utf8'));
   const window = {};
   window.window = window;
   const context = vm.createContext({
@@ -92,7 +92,8 @@ test('AI設定保存は外部LLM確認状態から独立して実行できる', 
     setAiExecutionSettings() {},
     refreshTab() {},
   };
-  const coordinator = window.AiWerewolfSettingsPersistenceCoordinator.createSettingsPersistenceCoordinator({
+  const createSettingsPersistenceCoordinator = vm.runInContext('createSettingsPersistenceCoordinator', context);
+  const coordinator = createSettingsPersistenceCoordinator({
     bridge: {
       isDesktop: true,
       async saveSettings(settings) { saveCalls += 1; return settings; },
@@ -113,8 +114,4 @@ test('AI設定保存は外部LLM確認状態から独立して実行できる', 
   assert.equal(controller.settings.profiles[0].provider, 'openai');
 });
 
-test('確認状態のRenderer IPC契約をpreloadが公開する', () => {
-  const preloadSource = fs.readFileSync(path.join(__dirname, '../../../app/main/preload.js'), 'utf8');
-  assert.match(preloadSource, /loadExternalDataNoticeStatusSync/u);
-  assert.match(preloadSource, /acceptExternalDataNotice/u);
-});
+

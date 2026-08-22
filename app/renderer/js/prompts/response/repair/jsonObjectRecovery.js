@@ -1,11 +1,12 @@
 /**
  * 責務: AI応答から厳密なJSONオブジェクトまたは完結済みトップレベル項目を決定的に回収する。
- * 変更ルール: ゲーム意味や項目妥当性を判断せず、構文回復と監査操作記録だけを担当する。生成オブジェクトはnull prototype辞書とし、特殊キーによるプロトタイプ変更を許可しない。
+ * 変更ルール: ゲーム意味や項目妥当性を判断せず、構文回復と監査操作記録だけを担当する。生成オブジェクトはnull prototype辞書とし、特殊キーによるプロトタイプ変更を許可しない。回復走査と厳密解析は入力長に対して有界にし、過剰ネストでRendererを占有しない。
  */
 
 
 const JSON_NUMBER_PATTERN = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/uy;
 const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const MAX_JSON_NESTING_DEPTH = 64;
 
 function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -26,13 +27,32 @@ function operation(operations, code, path, message) {
   operations.push({ code, path, message });
 }
 
-function parseJsonObjectStrict(text, operations) {
+function parseJsonValueStrict(text, operations, { requireObject = false } = {}) {
   let index = 0;
+  let depth = 0;
 
   function fail(message) {
     const error = new SyntaxError(`${message}（位置${index + 1}）`);
     error.code = 'INVALID_JSON';
     throw error;
+  }
+
+  function failTooDeep() {
+    const error = new RangeError(`JSONのネストが上限（${MAX_JSON_NESTING_DEPTH}段）を超えています。`);
+    error.code = 'JSON_TOO_DEEP';
+    throw error;
+  }
+
+  function enterNesting() {
+    depth += 1;
+    if (depth > MAX_JSON_NESTING_DEPTH) {
+      depth -= 1;
+      failTooDeep();
+    }
+  }
+
+  function leaveNesting() {
+    depth -= 1;
   }
 
   function skipWhitespace() {
@@ -80,70 +100,80 @@ function parseJsonObjectStrict(text, operations) {
   }
 
   function parseArray(path) {
-    index += 1;
-    const result = [];
-    skipWhitespace();
-    if (text[index] === ']') {
+    enterNesting();
+    try {
       index += 1;
-      return result;
-    }
-    let itemIndex = 0;
-    while (index < text.length) {
-      result.push(parseValue(`${path}[${itemIndex}]`));
-      itemIndex += 1;
+      const result = [];
       skipWhitespace();
       if (text[index] === ']') {
         index += 1;
         return result;
       }
-      if (text[index] !== ',') fail('配列要素の区切りがありません');
-      index += 1;
-      skipWhitespace();
+      let itemIndex = 0;
+      while (index < text.length) {
+        result.push(parseValue(`${path}[${itemIndex}]`));
+        itemIndex += 1;
+        skipWhitespace();
+        if (text[index] === ']') {
+          index += 1;
+          return result;
+        }
+        if (text[index] !== ',') fail('配列要素の区切りがありません');
+        index += 1;
+        skipWhitespace();
+      }
+      fail('配列が閉じられていません');
+    } finally {
+      leaveNesting();
     }
-    fail('配列が閉じられていません');
   }
 
   function parseObject(path) {
-    index += 1;
-    const result = Object.create(null);
-    skipWhitespace();
-    if (text[index] === '}') {
+    enterNesting();
+    try {
       index += 1;
-      return result;
-    }
-    while (index < text.length) {
-      skipWhitespace();
-      const key = parseString();
-      const keyPath = path ? `${path}.${key}` : key;
-      if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`);
-      skipWhitespace();
-      if (text[index] !== ':') fail('オブジェクトのキーと値の区切りがありません');
-      index += 1;
-      const nextValue = parseValue(keyPath);
-      if (Object.hasOwn(result, key)) {
-        const previousValue = result[key];
-        if (deepEqual(previousValue, nextValue)) {
-          operation(operations, 'DUPLICATE_KEY_REMOVED', keyPath, `${keyPath}の同一値重複を1件へ統合しました。`);
-        } else if (isEmptyValue(previousValue) !== isEmptyValue(nextValue)) {
-          result[key] = isEmptyValue(previousValue) ? nextValue : previousValue;
-          operation(operations, 'EMPTY_DUPLICATE_KEY_REMOVED', keyPath, `${keyPath}の空値側の重複を除外しました。`);
-        } else {
-          const error = new SyntaxError(`${keyPath}に異なる有効値が重複しています。`);
-          error.code = 'AMBIGUOUS_DUPLICATE_KEY';
-          throw error;
-        }
-      } else {
-        result[key] = nextValue;
-      }
+      const result = Object.create(null);
       skipWhitespace();
       if (text[index] === '}') {
         index += 1;
         return result;
       }
-      if (text[index] !== ',') fail('オブジェクト項目の区切りがありません');
-      index += 1;
+      while (index < text.length) {
+        skipWhitespace();
+        const key = parseString();
+        const keyPath = path ? `${path}.${key}` : key;
+        if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`);
+        skipWhitespace();
+        if (text[index] !== ':') fail('オブジェクトのキーと値の区切りがありません');
+        index += 1;
+        const nextValue = parseValue(keyPath);
+        if (Object.hasOwn(result, key)) {
+          const previousValue = result[key];
+          if (deepEqual(previousValue, nextValue)) {
+            operation(operations, 'DUPLICATE_KEY_REMOVED', keyPath, `${keyPath}の同一値重複を1件へ統合しました。`);
+          } else if (isEmptyValue(previousValue) !== isEmptyValue(nextValue)) {
+            result[key] = isEmptyValue(previousValue) ? nextValue : previousValue;
+            operation(operations, 'EMPTY_DUPLICATE_KEY_REMOVED', keyPath, `${keyPath}の空値側の重複を除外しました。`);
+          } else {
+            const error = new SyntaxError(`${keyPath}に異なる有効値が重複しています。`);
+            error.code = 'AMBIGUOUS_DUPLICATE_KEY';
+            throw error;
+          }
+        } else {
+          result[key] = nextValue;
+        }
+        skipWhitespace();
+        if (text[index] === '}') {
+          index += 1;
+          return result;
+        }
+        if (text[index] !== ',') fail('オブジェクト項目の区切りがありません');
+        index += 1;
+      }
+      fail('オブジェクトが閉じられていません');
+    } finally {
+      leaveNesting();
     }
-    fail('オブジェクトが閉じられていません');
   }
 
   function parseValue(path) {
@@ -163,7 +193,7 @@ function parseJsonObjectStrict(text, operations) {
   const value = parseValue('');
   skipWhitespace();
   if (index !== text.length) fail('JSONオブジェクトの後ろに不要な文章があります');
-  if (!isPlainObject(value)) {
+  if (requireObject && !isPlainObject(value)) {
     const error = new TypeError('AI応答がJSONオブジェクトではありません。');
     error.code = 'INVALID_JSON_OBJECT';
     throw error;
@@ -171,22 +201,19 @@ function parseJsonObjectStrict(text, operations) {
   return value;
 }
 
+function parseJsonObjectStrict(text, operations) {
+  return parseJsonValueStrict(text, operations, { requireObject: true });
+}
 
 function parseJsonObjectWithEnvelopeRecovery(raw) {
   const source = String(raw ?? '').trim();
   if (!source) return null;
-  const unfenced = source.replace(/^```(?:json)?\s*/iu, '').replace(/\s*```$/u, '').trim();
+  const operations = [];
+  const extracted = extractJsonObjectText(source, operations);
   try {
-    return JSON.parse(unfenced);
+    return parseJsonObjectStrict(extracted, operations);
   } catch {
-    const start = unfenced.indexOf('{');
-    const end = unfenced.lastIndexOf('}');
-    if (start < 0 || end <= start) return null;
-    try {
-      return JSON.parse(unfenced.slice(start, end + 1));
-    } catch {
-      return null;
-    }
+    return null;
   }
 }
 
@@ -204,43 +231,63 @@ function extractJsonObjectText(raw, operations) {
     if (error?.code === 'AMBIGUOUS_DUPLICATE_KEY') return text;
   }
 
-  const candidates = [];
-  for (let start = 0; start < text.length; start += 1) {
-    if (text[start] !== '{') continue;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (let cursor = start; cursor < text.length; cursor += 1) {
-      const char = text[cursor];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (char === '\\') escaped = true;
-        else if (char === '"') inString = false;
-        continue;
+  let candidateCount = 0;
+  let singleCandidate = '';
+  const stack = [];
+  let inString = false;
+  let escaped = false;
+
+  const addCandidate = (candidate) => {
+    try {
+      parseJsonObjectStrict(candidate, []);
+      candidateCount = Math.min(2, candidateCount + 1);
+      singleCandidate = candidateCount === 1 ? candidate : '';
+    } catch {
+      // 有効な単一JSON候補だけを収集する。
+    }
+  };
+
+  for (let cursor = 0; cursor < text.length; cursor += 1) {
+    const char = text[cursor];
+    if (stack.length && inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      else if (char < ' ') inString = false;
+      continue;
+    }
+    if (stack.length && char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === '{') {
+      // 厳密解析で受理できない過剰ネストを回復走査でも保持し続けず、
+      // その位置から新しい回復候補として探索を継続する。
+      if (stack.length >= MAX_JSON_NESTING_DEPTH) {
+        stack.length = 0;
+        inString = false;
+        escaped = false;
       }
-      if (char === '"') {
-        inString = true;
-        continue;
-      }
-      if (char === '{') depth += 1;
-      if (char === '}') depth -= 1;
-      if (depth === 0) {
-        const candidate = text.slice(start, cursor + 1);
-        try {
-          parseJsonObjectStrict(candidate, []);
-          candidates.push(candidate);
-        } catch {
-          // 有効な単一JSON候補だけを収集する。
-        }
-        start = cursor;
-        break;
-      }
-      if (depth < 0) break;
+      stack.push({ start: cursor, candidateCount, singleCandidate });
+      continue;
+    }
+    if (char !== '}' || !stack.length) continue;
+
+    const frame = stack.pop();
+    // 閉じた外側オブジェクトがある場合は、その内部で一時的に見つかった候補を
+    // 現行仕様どおり外側候補へ置き換える。外側が未閉鎖なら内部候補は残る。
+    candidateCount = frame.candidateCount;
+    singleCandidate = frame.singleCandidate;
+    addCandidate(text.slice(frame.start, cursor + 1));
+    if (!stack.length) {
+      inString = false;
+      escaped = false;
     }
   }
-  if (candidates.length !== 1) return text;
+
+  if (candidateCount !== 1) return text;
   operation(operations, 'SURROUNDING_TEXT_REMOVED', '', '単一JSONオブジェクト前後の説明文を除去しました。');
-  return candidates[0];
+  return singleCandidate;
 }
 
 
@@ -316,7 +363,7 @@ function parseCompleteTopLevelFields(raw, allowedKeys, operations) {
     const valueText = text.slice(valueStart, index).trim();
     if (!valueText) return null;
     try {
-      return { value: JSON.parse(valueText), valueText };
+      return { value: parseJsonValueStrict(valueText, []), valueText };
     } catch {
       return null;
     }

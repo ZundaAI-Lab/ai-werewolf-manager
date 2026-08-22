@@ -1,6 +1,6 @@
 /**
  * 責務: Renderer全体の描画ライフサイクル、正式依存の接続、外観設定参照を伴う公開表示プレビュー更新、人狼進行と独立した自由チャット/人狼観戦Hub Controllerへの描画・DOMイベント委譲だけを所有する。
- * 変更ルール: 各画面操作・AI登録・訂正・人間プレイヤー操作・公開表示の処理本体はui/controllers配下を正本とし、このFacadeへ戻さない。人間操作は公開・非公開を問わず進行卓内の操作カードを使用し、役職通知だけ共通ダイアログで表示する。ゲーム準備の入力変更は状態保存と全画面再描画を分離し、setupViewの局所同期へ委譲する。自動実行状態は表示タブから独立した一時UI状態として受け取り、競合する変更操作の無効化とロック解除時の復元だけを担当する。機密表示の切替は描画後に専用イベントで通知し、automation側へ表示状態そのものを直接参照させない。AI設定同期の変更検知には、Rendererが表示・利用可否判定で参照するプロファイル属性を含める。手動多段生成のsystem指示選択とtextPatch受理条件はManualGenerationControllerへ委譲し、このFacadeへ再実装しない。AI管理画面表示中の設定同期は画面を直接再描画せず、保存操作ごとの再描画可否はAI管理Controllerを正本とする。自由チャットと人狼観戦の状態・会話順・AI通信はchatRoomHub配下の各Controllerを正本とし、このFacadeへ実装しない。観戦側へはStore変更通知だけを渡し、公開情報の抽出・秘密境界はspectatorRoomControllerへ委譲する。キャラクターカタログ変更時の整合もHubへコールバック接続するだけとし、このFacadeで状態解釈しない。
+ * 変更ルール: 各画面操作・AI登録・訂正・人間プレイヤー操作・公開表示の処理本体はui/controllers配下を正本とし、このFacadeへ戻さない。人間操作は公開・非公開を問わず進行卓内の操作カードを使用し、役職通知だけ共通ダイアログで表示する。ゲーム準備の入力変更は状態保存と全画面再描画を分離し、setupViewの局所同期へ委譲する。自動実行状態は表示タブから独立した一時UI状態として受け取り、競合する変更操作の無効化とロック解除時の復元だけを担当する。機密表示の切替は描画後に専用イベントで通知し、automation側へ表示状態そのものを直接参照させない。AI設定同期の変更検知には、Rendererが表示・利用可否判定で参照するプロファイル属性を含める。手動多段生成のセッション遷移・プロンプトコピー・工程回答検証・フォールバック・最終登録ワークフローはManualGenerationControllerへ委譲し、このFacadeへ再実装しない。AI管理画面表示中の設定同期は画面を直接再描画せず、保存操作ごとの再描画可否はAI管理Controllerを正本とする。自由チャットと人狼観戦の状態・会話順・AI通信はchatRoomHub配下の各Controllerを正本とし、このFacadeへ実装しない。観戦側へはStore変更通知だけを渡し、公開情報の抽出・秘密境界はspectatorRoomControllerへ委譲する。キャラクターカタログ変更時の整合もHubへコールバック接続するだけとし、このFacadeで状態解釈しない。
  */
 
 import { isNormalSpeechTask } from '../config/discussionAiTaskTypes.js';
@@ -22,7 +22,6 @@ import { composeManualAiPrompt, evaluateAiTaskCandidate as evaluateAiTaskCandida
 
 
 import { parseAiResponse } from '../prompts/response/responseParser.js';
-import { autoRepairIssues } from '../prompts/response/responseAutoRepair.js';
 import { getAttackCandidates, getNightActionCandidates, getPlayer, getVoteCandidates, roleSummary, validateComposition } from '../domain/game/standardRules.js';
 import { getActiveGraveyardConversation, getActiveMasonConversation, getActiveWolfConversation, getPlayerName, getRoleName } from '../state/selectors.js';
 import { buildPublicSnapshot } from '../public/publicSnapshot.js';
@@ -48,7 +47,7 @@ import { beginRenderComposition, createRenderCompositionState, deferRenderWhileC
 import { isPersonalNightAction, nightActionLabel, nightActionTargetLabel, shouldHighlightFrozenPlayerPanel } from './controllers/uiStateFormatters.js';
 import { WorkbenchTaskRenderer } from './views/workbench/workbenchTaskRenderer.js';
 import { renderAiResponseBox, renderPromptDiagnostics } from './views/workbench/aiResponseBoxView.js';
-import { ManualGenerationController, MANUAL_STAGE_LABELS, manualStageAudit, manualStageSystemInstruction } from './ai/manualGenerationController.js';
+import { ManualGenerationController } from './ai/manualGenerationController.js';
 import { createTabController } from './controllers/tabController.js';
 import { createNotificationController } from './controllers/notificationController.js';
 import { createSetupActionController } from './controllers/setupActionController.js';
@@ -109,7 +108,15 @@ export class AppUI {
       aiExecutionSettings: () => this.aiExecutionSettings,
       drafts: () => this.drafts,
       manualGenerationSessions: () => this.manualGenerationSessions,
+      promptCache: () => this.promptCache,
       promptKey: (...args) => this._promptKey(...args),
+      getState: () => this.store.getState(),
+      prepareAiTask: (request) => this.prepareAiTask(request),
+      evaluateAiTaskCandidate: (request) => this.evaluateAiTaskCandidate(request),
+      commitAiTaskCandidate: (request) => this.commitAiTaskCandidate(request),
+      showValidation: (errors, warnings) => this._showValidation(errors, warnings),
+      toast: (message, type, options) => this.toast(message, type, options),
+      render: () => this.render(),
     });
     this.tabController = createTabController({ ui: this });
     this.notificationController = createNotificationController({
@@ -860,164 +867,6 @@ export class AppUI {
     return undefined;
   }
 
-
-  _manualSessionContext(button) {
-    const state = this.store.getState();
-    const playerId = button.dataset.playerId;
-    const taskType = button.dataset.taskType;
-    const slotId = button.dataset.slotId ?? '';
-    const plan = this.manualGenerationController.manualPlan(playerId, taskType);
-    if (!plan || plan.depth <= 1) throw new Error('このタスクは複数工程の手動生成対象ではありません。');
-    const artifact = prepareAiTaskService(state, {
-      playerId,
-      taskType,
-      slotId,
-      publicHistoryTransmissionMode: this.publicHistoryTransmissionMode,
-      forceFullPublicHistory: this.forceFullPublicHistoryPlayerIds.has(playerId),
-    });
-    const key = this._promptKey(state, taskType, playerId, slotId);
-    const existing = this.manualGenerationSessions.get(key);
-    const signature = this.manualGenerationController.manualTaskSignature(state, artifact, plan);
-    if (existing && (existing.taskInstanceId !== signature || existing.promptFingerprint !== artifact.fingerprint)) {
-      this.manualGenerationSessions.delete(key);
-      throw new Error('ゲーム状態またはAI設定が変わったため、古い手動生成セッションを破棄しました。最初の工程からやり直してください。');
-    }
-    this.promptCache.set(key, artifact);
-    const session = this.manualGenerationController.ensureManualSession(state, artifact, plan);
-    this.manualGenerationController.advanceManualSkippedStages(session, artifact, plan);
-    return { state, playerId, taskType, slotId, key, artifact, plan, session };
-  }
-
-  _copyManualStagePrompt(button) {
-    try {
-      const { artifact, plan, session } = this._manualSessionContext(button);
-      const stage = plan.stages[session.stageIndex];
-      if (!stage) throw new Error('現在コピーできる生成工程はありません。');
-      const prompt = this.manualGenerationController.manualStagePrompt(session, artifact, stage);
-      if (!prompt) throw new Error('対象文章がない工程のため、プロンプト送信は不要です。');
-      const manualPrompt = composeManualAiPrompt({
-        systemInstruction: manualStageSystemInstruction(artifact, stage.stageId),
-        text: prompt,
-      });
-      copyText(manualPrompt).then(() => this.toast(`${MANUAL_STAGE_LABELS[stage.stageId]}プロンプトをコピーしました。`, 'success', { key: 'manual-stage-copy' })).catch((error) => this.toast(error.message, 'error'));
-    } catch (error) {
-      this.toast(error.message, 'error');
-      this.render();
-    }
-  }
-
-  _advanceManualStage(button) {
-    try {
-      const { artifact, plan, session, key } = this._manualSessionContext(button);
-      const stage = plan.stages[session.stageIndex];
-      if (!stage) throw new Error('すべての生成工程は完了しています。');
-      const rawResponse = String(this.drafts.get(`manual-stage-response:${key}:${stage.stageId}`) ?? '').trim();
-      if (!rawResponse) throw new Error(`${MANUAL_STAGE_LABELS[stage.stageId]}の回答JSONを貼り付けてください。`);
-      if (stage.stageId === 'direct' || stage.stageId === 'draft') {
-        const evaluation = evaluateAiTaskCandidateService(this.store.getState(), artifact, rawResponse);
-        if (!evaluation.ok) {
-          this._showValidation(evaluation.validation.errors, evaluation.warnings);
-          return;
-        }
-        session.candidateObject = structuredClone(evaluation.candidateObject);
-        session.candidateRawResponse = evaluation.effectiveRawResponse ?? rawResponse;
-        session.presentTopLevelKeys = [...evaluation.presentTopLevelKeys];
-        session.evaluation = evaluation;
-        session.generationRun.finalStageId = stage.stageId;
-        session.generationRun.stages.push(manualStageAudit(stage, {
-          status: 'accepted',
-          rawResponse,
-          issues: autoRepairIssues(evaluation.autoRepair),
-        }));
-        session.stageIndex += 1;
-        session.pendingFallback = null;
-        this.manualGenerationController.advanceManualSkippedStages(session, artifact, plan);
-        this.render();
-        return;
-      }
-      const patchResult = this.manualGenerationController.validateManualTextStagePatch(session, artifact, stage, rawResponse);
-      const policy = patchResult.policy;
-      if (!patchResult.ok) {
-        session.pendingFallback = { rawResponse, issues: patchResult.issues ?? [] };
-        this.render();
-        return;
-      }
-      const mergedRawResponse = JSON.stringify(patchResult.candidateObject);
-      const evaluation = evaluateAiTaskCandidateService(this.store.getState(), artifact, mergedRawResponse);
-      if (!evaluation.ok) {
-        session.pendingFallback = {
-          rawResponse,
-          issues: [{ code: 'MERGED_CANDIDATE_INVALID', message: evaluation.issues.map((item) => item.message).join('\n') || '工程回答の適用後に最終候補が現行検証を通過しませんでした。' }],
-        };
-        this.render();
-        return;
-      }
-      session.candidateObject = structuredClone(evaluation.candidateObject);
-      session.candidateRawResponse = evaluation.effectiveRawResponse ?? mergedRawResponse;
-      session.presentTopLevelKeys = [...evaluation.presentTopLevelKeys];
-      session.evaluation = evaluation;
-      session.generationRun.finalStageId = stage.stageId;
-      session.generationRun.stages.push(manualStageAudit(stage, {
-        status: 'applied',
-        targetTextFields: policy.targetTextFields,
-        rawResponse,
-        issues: autoRepairIssues(evaluation.autoRepair),
-      }));
-      session.stageIndex += 1;
-      session.pendingFallback = null;
-      this.manualGenerationController.advanceManualSkippedStages(session, artifact, plan);
-      this.render();
-    } catch (error) {
-      this.toast(error.message, 'error');
-      this.render();
-    }
-  }
-
-  _useManualStageFallback(button) {
-    try {
-      const { artifact, plan, session } = this._manualSessionContext(button);
-      const stage = plan.stages[session.stageIndex];
-      if (!stage || !session.pendingFallback) throw new Error('フォールバック対象の工程回答がありません。');
-      const policy = this.manualGenerationController.manualStagePolicy(session, artifact, stage.stageId);
-      session.generationRun.stages.push(manualStageAudit(stage, {
-        status: 'fallback',
-        targetTextFields: policy?.targetTextFields ?? [],
-        rawResponse: session.pendingFallback.rawResponse,
-        fallbackUsed: true,
-        issues: session.pendingFallback.issues,
-      }));
-      session.stageIndex += 1;
-      session.pendingFallback = null;
-      this.manualGenerationController.advanceManualSkippedStages(session, artifact, plan);
-      this.render();
-    } catch (error) {
-      this.toast(error.message, 'error');
-      this.render();
-    }
-  }
-
-  _commitManualGeneration(button) {
-    try {
-      const { artifact, plan, session, key } = this._manualSessionContext(button);
-      if (session.stageIndex < plan.stages.length || !session.candidateRawResponse) throw new Error('生成工程が完了していません。');
-      const result = this.commitAiTaskCandidate({
-        taskArtifact: artifact,
-        rawResponse: session.candidateRawResponse,
-        evaluation: session.evaluation,
-        generationRun: structuredClone(session.generationRun),
-        interactive: true,
-      });
-      if (result?.ok) {
-        this.manualGenerationSessions.delete(key);
-        [...this.drafts.keys()].filter((draftKey) => draftKey.startsWith(`manual-stage-response:${key}:`)).forEach((draftKey) => this.drafts.delete(draftKey));
-      }
-      return result;
-    } catch (error) {
-      this.toast(error.message, 'error');
-      this.render();
-      return { ok: false, message: error.message };
-    }
-  }
 
   _copyPrompt(button) {
     const state = this.store.getState();

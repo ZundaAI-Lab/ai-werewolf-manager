@@ -3,9 +3,9 @@
  * 変更ルール:
  * - 深度3と4のdraft・renderを同一実装に保ち、全game-data区画の値はpromptDataSerializerを正本としてJSON化・データ境界文字列を無害化し、通常昼発言のdraftでは解決済み非公開参考視点を直接生成と同じ文面で判断材料へ含め、ゲーム状態を書き換えず、他人の私有情報を追加せず、公開発言本文の意味を解析しない。
  * - 処刑判断はgenerationGuidance.executionValuePolicyを正本として投票と最終巡の通常発言・優先回答へ同じ文面で適用し、voteのdecisionPatch具体化ガイダンスはvoteResponseGuidancePolicy.jsを正本として深度1/2と同じ優先項目を使用する。
- * - 構造草案では検証上任意の項目を原則出力と条件付き出力へ分離し、原則出力の生成機会を削らず、欠落だけをエラー条件へ昇格させない。
+ * - 構造草案では検証上任意の項目を原則出力と条件付き出力へ分離し、原則出力の生成機会を削らず、欠落だけをエラー条件へ昇格させない。能力結果を公開する草案ではabilityClaimsを構造化正本として維持し、同じ役職・対象・結果をpublicSpeechにも必ず明示させる。
  * - draftへ生公開イベントを渡さずgenerationStageSourceの公開履歴射影を使用し、空値を除去したminified JSONだけを掲載する。
- * - 各工程の中間区画は判断・表現・意味ロックだけを説明し、AI向け必須出力・原則出力、主JSON例、返却キー、文字数制約は各工程末尾の最終確認へ一度だけ集約する。
+ * - 各工程の中間区画は判断・表現・意味ロックだけを説明し、AI向け必須出力・原則出力、主JSON例、返却キー、文字数制約は各工程末尾の最終確認へ一度だけ集約する。heartVoiceは文数を指定せずmaxHeartVoiceLengthの文字数上限だけを提示する。
  * - 回答検証上のrequiredTopLevelKeysは原則出力項目を省く根拠にせず、recommendedTopLevelKeysと主JSON例へ検証任意項目の生成機会を維持する。
  * - 公開発言量の人間向けラベルや長さ区分は中間工程へ出さず、会話開始・序盤反応に意味がある追加指示だけroleTaskData.promptGuidanceから引き継ぐ。
  * - 内部UUIDは雪女の明示ID契約以外へ出さず表示名またはイベント番号へ変換する。
@@ -230,15 +230,27 @@ function buildProofreadSpeaker(source) {
 
 function compactCandidateAbilityClaims(value) {
   if (!Array.isArray(value)) return null;
-  return value.map((claim) => ({
-    roleId: String(claim?.roleId ?? ''),
-    resultDay: Number(claim?.resultDay ?? 0),
-    target: String(claim?.target ?? ''),
-    result: String(claim?.result ?? ''),
-    selectionBasis: String(claim?.selectionBasis ?? ''),
-    evidenceEventSequences: [...(claim?.evidenceEventSequences ?? [])].map(Number).filter(Number.isInteger),
-    selectionReasonAtTime: String(claim?.selectionReasonAtTime ?? ''),
-  }));
+  return value.map((claim) => {
+    const common = {
+      intent: String(claim?.intent ?? ''),
+      selectionBasis: String(claim?.selectionBasis ?? ''),
+      evidenceRefs: [...(claim?.evidenceRefs ?? [])].map(Number).filter(Number.isInteger),
+      selectionReasonAtTime: String(claim?.selectionReasonAtTime ?? ''),
+    };
+    if (common.intent === 'truthful') {
+      return {
+        ...common,
+        sourceRef: Number(claim?.sourceRef ?? 0),
+      };
+    }
+    return {
+      ...common,
+      roleId: String(claim?.roleId ?? ''),
+      resultDay: Number(claim?.resultDay ?? 0),
+      target: String(claim?.target ?? ''),
+      result: String(claim?.result ?? ''),
+    };
+  });
 }
 
 function buildLockedMeaning(candidateObject) {
@@ -246,8 +258,8 @@ function buildLockedMeaning(candidateObject) {
   const decisionPatch = candidateObject?.decisionPatch ?? {};
   return {
     questionTargets: [...(interaction.questionTargets ?? [])].map(String),
-    answerEventSequences: [...(interaction.answerEventSequences ?? [])].map(Number).filter(Number.isInteger),
-    correctedSpeechSequences: [...(decisionPatch.correctedSpeechSequences ?? [])].map(Number).filter(Number.isInteger),
+    answerToRefs: [...(interaction.answerToRefs ?? [])].map(Number).filter(Number.isInteger),
+    correctedSpeechRefs: [...(decisionPatch.correctedSpeechRefs ?? [])].map(Number).filter(Number.isInteger),
     coOperation: Object.hasOwn(candidateObject ?? {}, 'coOperation')
       ? structuredClone(candidateObject.coOperation)
       : null,
@@ -255,7 +267,7 @@ function buildLockedMeaning(candidateObject) {
       ? compactCandidateAbilityClaims(candidateObject.abilityClaims)
       : null,
     decisionStance: {
-      suspicionCandidates: [...(decisionPatch.suspicionCandidates ?? [])].map(String),
+      suspects: [...(decisionPatch.suspects ?? [])].map(String),
       executionCandidates: [...(decisionPatch.executionCandidates ?? [])].map(String),
       intendedVote: Object.hasOwn(decisionPatch, 'intendedVote') ? decisionPatch.intendedVote : undefined,
       assessmentLevel: String(decisionPatch.assessmentLevel ?? ''),
@@ -380,7 +392,7 @@ function stageOutputConstraints(source, { taskType = '', fields = [] } = {}) {
   }
   if (selected.has('heartVoice')) {
     const maxHeartVoiceLength = Number(source?.promptPolicies?.outputLimits?.maxHeartVoiceLength ?? 120);
-    rows.push(`心の声: 1～2文・${maxHeartVoiceLength}文字以内`);
+    rows.push(`心の声: ${maxHeartVoiceLength}文字以内`);
   }
   return rows.join('、');
 }
@@ -452,7 +464,7 @@ function actionSummary(source, candidateObject) {
     taskType: String(source?.currentMoment?.taskType ?? ''),
     validTargets: (source?.roleTaskData?.validTargetIds ?? []).map((id) => displayPlayerName(source, id)),
   };
-  for (const key of ['actionAnswer', 'attackAssessment', 'decisionPatch', 'speechInteraction', 'coOperation', 'abilityClaims', 'sharedStrategyUpdate', 'estimate']) {
+  for (const key of ['actionAnswer', 'attackAssessment', 'decisionPatch', 'speechInteraction', 'coOperation', 'abilityClaims', 'sharedStrategy', 'estimate']) {
     if (Object.hasOwn(candidateObject ?? {}, key)) summary[key] = sanitizePromptValue(source, candidateObject[key]);
   }
   return summary;
@@ -585,7 +597,7 @@ function publicDialogueLocks(source, candidateObject) {
     publicAct: {
       interaction: Object.hasOwn(candidateObject ?? {}, 'speechInteraction')
         ? sanitizePromptValue(source, candidateObject.speechInteraction)
-        : { questionTargets: [], answerEventSequences: [] },
+        : { questionTargets: [], answerToRefs: [] },
       claimOperation: Object.hasOwn(candidateObject ?? {}, 'coOperation')
         ? sanitizePromptValue(source, candidateObject.coOperation)
         : null,
@@ -692,10 +704,10 @@ export function buildDraftStagePrompt({ taskArtifact, policy }) {
     ? '\n- heartVoiceは原則出力します。公開本文へ出していない局面固有の本音・迷い・警戒を記入し、現在の入力から別内容を適切に生成できない場合だけ省略してください。'
     : '';
   const abilityClaimRule = allowedKeys.has('abilityClaims')
-    ? '\n- 本人選択能力のabilityClaimsでは、selectionBasis・evidenceEventSequences・selectionReasonAtTimeを選択時点の根拠として記録し、後発情報で変更しないでください。'
+    ? '\n- abilityClaimsを出力して能力結果を公開する場合は、同じ公開主張の役職・対象・結果をpublicSpeechにも必ず自然な台詞として含めてください。abilityClaimsだけに能力結果を置いてpublicSpeechから省略してはいけません。本人選択能力のselectionBasis・evidenceRefs・selectionReasonAtTimeは選択時点の根拠として記録し、後発情報で変更しないでください。'
     : '';
-  const actionRationaleRule = allowedKeys.has('actionRationale')
-    ? `\n- actionRationaleは結果判明前の具体的な選択理由を${taskArtifact.taskType === 'freeze' ? '1～3文' : '1～2文'}で簡潔に記録してください。`
+  const rationaleRule = allowedKeys.has('rationale')
+    ? `\n- rationaleは結果判明前の具体的な選択理由を${taskArtifact.taskType === 'freeze' ? '1～3文' : '1～2文'}で簡潔に記録してください。`
     : '';
   const privateTeamStrategyRule = (isNormalSpeechTask(taskArtifact.taskType) || taskArtifact.taskType === 'priority-answer')
     && nonEmpty(taskData?.histories?.privateTeamStrategy)
@@ -709,7 +721,7 @@ ${renderPublicSpeechSemanticRules({ firstDaySparseEvidence })}
 ${executionValuePolicy}
 ${executionFactionPolicy}
 - roleTaskData.promptGuidance.publicSpeechGuidanceがある場合は、その追加指示を適用してください。
-- CO・能力履歴公開時は役職・対象・結果を先に明示してください。`
+- CO・能力履歴公開時はpublicSpeechで役職・対象・結果を先に明示し、abilityClaimsと同じ公開主張にしてください。`
     : taskArtifact.taskType === 'priority-answer'
       ? `
 ${renderPriorityAnswerSemanticRules({ firstDaySparseEvidence })}
@@ -759,7 +771,7 @@ ${json(contractView, { compact: true })}
 
 - response-contractの許可項目・原則出力・条件付き出力の区分と項目構造を維持してください。
 - 文章フィールドは、意味が正確な簡潔な草案で構いません。
-- 項目を出す場合は具体値を入れ、空値や空配列を穴埋めとして出力しないでください。${recommendedRule}${conditionalRule}${heartVoiceRule}${abilityClaimRule}${actionRationaleRule}${privateTeamStrategyRule}${speechRules}
+- 項目を出す場合は具体値を入れ、空値や空配列を穴埋めとして出力しないでください。${recommendedRule}${conditionalRule}${heartVoiceRule}${abilityClaimRule}${rationaleRule}${privateTeamStrategyRule}${speechRules}
 
 ${finalConfirmation}`;
 }

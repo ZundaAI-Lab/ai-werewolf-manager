@@ -8,7 +8,7 @@
  * - 役職・局面別区画の出力契約は禁止・原則出力・条件付き出力を説明し、必須キー・必須条件・今回のJSON例・出力長制約は現在タスク末尾の最終確認へ一度だけ集約する。
  * - 投票タスク指示は対象選択と決選で増えた情報の区別だけを担当し、処刑価値・人数分岐・出力形式は各専用区画へ重複掲載しない。
  * - 公開発言は共通ルールへ重複回避・公開内容の責務を集約し、会話開始・序盤反応だけ局面固有の追加指示として同じ区画へ統合する。
- * - 人間向け発言量ラベルはAIへ表示せず、文字数目安と長文上限は最終確認だけを正本とする。
+ * - 人間向け発言量ラベルはAIへ表示せず、文字数目安と長文上限は最終確認だけを正本とする。heartVoiceは文数を指定せずmaxHeartVoiceLengthの文字数上限だけを提示する。
  * - 「最終確認」以下は軽量LLMにも最低限の実行条件を直前提示する固定末尾であり、キャッシュ最適化や区画再配置の対象にせず位置・内容を維持する。
  * - 役職通知は今回のゲームで固定される本人情報と有効ルールだけに限定し、昼議論・夜行動・JSON全項目の説明を先回りして掲載しない。
  * - 各実行タスクではactiveResponseContract.jsが選んだ必須項目・条件付き項目・動的必須項目だけを掲載する。
@@ -103,7 +103,7 @@ export function renderWolfDayStrategyInstruction({
 
 ${statusData}
 
-公開推理と本人限定の陣営戦略を分離してください。公開情報だけで自然に保留・質問・判断維持へ至る場合、勝ち筋のためだけに処刑候補や反対意見を作る必要はありません。factionStrategyUpdateは秘密の勝ち筋を記録する欄であり、その全内容を今回のpublicSpeechへ反映する義務はありません。
+公開推理と本人限定の陣営戦略を分離してください。公開情報だけで自然に保留・質問・判断維持へ至る場合、勝ち筋のためだけに処刑候補や反対意見を作る必要はありません。factionStrategyは秘密の勝ち筋を記録する欄であり、その全内容を今回のpublicSpeechへ反映する義務はありません。
 
 ${partnerStrategy}
 
@@ -325,7 +325,7 @@ export function renderTaskVariableInstruction({
     ? 'character.roleplayCueは設定紹介や決め台詞にせず、会話に合う場合だけ感情・反応・比喩へ自然ににじませてください。'
     : '';
   const requiredAnswersInstruction = hasRequiredAnswers
-    ? 'current-task.requiredAnswersの全件へ今回の通常発言内で直接答え、speechInteraction.answerEventSequencesへ各questionSequenceを記録してください。'
+    ? 'current-task.requiredAnswersの全件へ今回の通常発言内で直接答え、speechInteraction.answerToRefsへ各questionSequenceを記録してください。'
     : '';
   switch (taskType) {
     case 'briefing':
@@ -411,7 +411,7 @@ export function renderResponseFormat({
   hasPreviousDecision = false,
   hasPreviousFactionStrategy = false,
   partnerDispositionPolicy = null,
-  factionStrategyUpdatePolicy = null,
+  factionStrategyPolicy = null,
   claimRolePolicy = null,
   freezeEstimateLimit = null,
   wolfConversationPurpose = null,
@@ -427,7 +427,7 @@ export function renderResponseFormat({
     hasPreviousDecision,
     hasPreviousFactionStrategy,
     partnerDispositionPolicy,
-    factionStrategyUpdatePolicy,
+    factionStrategyPolicy,
     claimRolePolicy,
     freezeEstimateLimit,
     wolfConversationPurpose,
@@ -464,7 +464,7 @@ function renderFinalOutputConstraints({
       maxChars: maxPublicSpeechLength,
       responseLabel: taskType === 'priority-answer' ? '公開回答' : '公開発言',
     });
-    return [publicConstraint, `心の声: 1～2文・${maxHeartVoiceLength}文字以内`].filter(Boolean).join('、');
+    return [publicConstraint, `心の声: ${maxHeartVoiceLength}文字以内`].filter(Boolean).join('、');
   }
   if (taskType === 'testament') {
     return renderPublicSpeechFinalConstraint(publicSpeechPolicy, {
@@ -495,7 +495,7 @@ export function renderFinalResponseReminder({
   hasPreviousDecision = false,
   hasPreviousFactionStrategy = false,
   partnerDispositionPolicy = null,
-  factionStrategyUpdatePolicy = null,
+  factionStrategyPolicy = null,
   claimRolePolicy = null,
   freezeEstimateLimit = null,
   wolfConversationPurpose = null,
@@ -511,7 +511,7 @@ export function renderFinalResponseReminder({
     hasPreviousDecision,
     hasPreviousFactionStrategy,
     partnerDispositionPolicy,
-    factionStrategyUpdatePolicy,
+    factionStrategyPolicy,
     claimRolePolicy,
     freezeEstimateLimit,
     wolfConversationPurpose,

@@ -1,6 +1,6 @@
 /**
- * 責務: 外部APIキーなしで自動進行を検証できるデモAI応答を生成する。
- * 変更ルール: ゲーム状態を変更せず、マーク付きの今回JSON例と表示名ベースのdraft-task-dataだけを使用する。発言化はfield-jobs、昼議論校正はproofread-inputだけを読み、内部IDへ依存せず、実戦用AIの代替として評価結果へ混在させない。
+ * 責務: 外部APIキーなしでゲーム自動進行とチャットルームを検証できる、タスク種別ごとのデモAI応答を生成する。
+ * 変更ルール: ゲーム状態を変更しない。ゲーム進行ではマーク付きの今回JSON例と表示名ベースのdraft-task-dataを使用し、チャットルームではJSON例へ依存せず専用の固定台詞を構造化応答として返す。チャットの質問専用回答IDと本人の既存内部メモだけはPrompt内の専用data blockから引き継ぐ。発言化はfield-jobs、昼議論校正はproofread-inputだけを読み、内部IDへ依存せず、実戦用AIの代替として評価結果へ混在させない。
  */
 
 (function exposeDemoAi(root, factory) {
@@ -18,6 +18,22 @@
     } catch {
       return null;
     }
+  }
+
+  const CHAT_ROOM_DEMO_MESSAGE = 'こんにちは。デモAIです。チャットルームの動作確認用に参加しています。';
+
+  function generateChatRoomResponse(promptText) {
+    const memoryData = parseDataBlock(promptText, 'chat-memory') ?? {};
+    const turnData = parseDataBlock(promptText, 'chat-turn-context') ?? parseDataBlock(promptText, 'chat-turn') ?? {};
+    const requiredAnswerMessageId = String(turnData.requiredAnswerMessageId ?? '').trim();
+    return {
+      chatMessage: CHAT_ROOM_DEMO_MESSAGE,
+      memory: Array.isArray(memoryData.items) ? memoryData.items : [],
+      interaction: {
+        questionTargetIds: [],
+        answersMessageIds: requiredAnswerMessageId ? [requiredAnswerMessageId] : [],
+      },
+    };
   }
 
   function parseResponseExample(promptText) {
@@ -63,7 +79,7 @@
   function normalizeDecisionPatch(patch, { taskType, selectedTarget }) {
     if (!patch || typeof patch !== 'object') return patch;
     const result = structuredClone(patch);
-    if (Object.hasOwn(result, 'suspicionCandidates')) result.suspicionCandidates = [];
+    if (Object.hasOwn(result, 'suspects')) result.suspects = [];
     if (Object.hasOwn(result, 'executionCandidates')) result.executionCandidates = taskType === 'vote' && selectedTarget ? [selectedTarget.name] : [];
     if (Object.hasOwn(result, 'intendedVote')) result.intendedVote = taskType === 'vote' ? undefined : null;
     if (result.intendedVote === undefined) delete result.intendedVote;
@@ -74,8 +90,8 @@
     if (Object.hasOwn(result, 'uncertainty')) result.uncertainty = taskType === 'vote' ? '確定情報ではなく公開発言からの暫定判断。' : '公開根拠がまだ不足しているため保留。';
     if (Object.hasOwn(result, 'nextDiscriminatingInformation')) result.nextDiscriminatingInformation = '次の投票理由と能力結果の整合性。';
     if (Object.hasOwn(result, 'reason')) result.reason = '公開材料がまだ少ないため、断定せず発言の変化を継続して確認する。';
-    if (Object.hasOwn(result, 'evidenceEventSequences')) result.evidenceEventSequences = [];
-    if (Object.hasOwn(result, 'correctedSpeechSequences')) result.correctedSpeechSequences = [];
+    if (Object.hasOwn(result, 'evidenceRefs')) result.evidenceRefs = [];
+    if (Object.hasOwn(result, 'correctedSpeechRefs')) result.correctedSpeechRefs = [];
     return result;
   }
 
@@ -123,6 +139,9 @@
   }
 
   function generate({ prompt, taskType = '', playerName = '', requestPurpose = 'normal' } = {}) {
+    if (taskType === 'chat-room') {
+      return JSON.stringify(generateChatRoomResponse(prompt));
+    }
     if (requestPurpose === 'generation-render') {
       const jobs = parseDataBlock(prompt, 'field-jobs') ?? [];
       const textPatch = Object.fromEntries(jobs.map((job) => [String(job.field), demoStageText(job)]));
@@ -158,7 +177,7 @@
     const actorName = String(playerName || player.name || player.playerName || 'AIプレイヤー');
     const targets = targetRows(currentTask);
     const selectedTarget = chooseTarget(targets, `${actorName}:${taskType}:${prompt.length}`);
-    const alternativeTarget = targets.find((target) => target.name !== selectedTarget?.name) ?? null;
+    const otherTarget = targets.find((target) => target.name !== selectedTarget?.name) ?? null;
     const result = structuredClone(example);
     if (taskType === 'discussion-opening-preference' && Object.hasOwn(result, 'openingPreference')) result.openingPreference = 'NORMAL';
     if (taskType === 'speech-designated' && Object.hasOwn(result, 'nextSpeakerPreference')) result.nextSpeakerPreference = '';
@@ -173,8 +192,8 @@
     if (Object.hasOwn(result, 'decisionPatch')) {
       result.decisionPatch = normalizeDecisionPatch(result.decisionPatch, { taskType, selectedTarget });
     }
-    if (Object.hasOwn(result, 'factionStrategyUpdate')) {
-      result.factionStrategyUpdate = normalizeStrategyUpdate(result.factionStrategyUpdate, {
+    if (Object.hasOwn(result, 'factionStrategy')) {
+      result.factionStrategy = normalizeStrategyUpdate(result.factionStrategy, {
         selectedTarget,
         knownWolves: Array.isArray(privateInformation.knownWolves)
           ? privateInformation.knownWolves.map(String)
@@ -183,7 +202,7 @@
             : [],
       });
     }
-    if (Object.hasOwn(result, 'sharedStrategyUpdate')) result.sharedStrategyUpdate = normalizeStrategyUpdate(result.sharedStrategyUpdate);
+    if (Object.hasOwn(result, 'sharedStrategy')) result.sharedStrategy = normalizeStrategyUpdate(result.sharedStrategy);
     if (Object.hasOwn(result, 'wolfMessage')) {
       result.wolfMessage = selectedTarget
         ? `今夜は${selectedTarget.name}を候補にしつつ、護衛リスクと翌日の盤面を比較したい。`
@@ -198,8 +217,8 @@
         ? `${selectedTarget?.name ?? '投票先'}への投票理由と次の公開情報を照合する。`
         : '公開発言の整合性と投票理由の変化を次のターンでも確認する。';
     }
-    if (Object.hasOwn(result, 'actionRationale')) {
-      result.actionRationale = selectedTarget
+    if (Object.hasOwn(result, 'rationale')) {
+      result.rationale = selectedTarget
         ? `${selectedTarget.name}を他候補と比較し、現時点で得られる情報価値を優先した。`
         : '有効候補の中から公開情報に反しない対象を選んだ。';
     }
@@ -208,10 +227,10 @@
     }
     if (Object.hasOwn(result, 'attackAssessment')) {
       const assessment = result.attackAssessment;
-      assessment.hunterSurvivalLikelihood = 'medium';
+      assessment.hunterAliveChance = 'medium';
       assessment.guardRisk = 'medium';
-      if (Object.hasOwn(assessment, 'alternativeTarget')) assessment.alternativeTarget = alternativeTarget?.name ?? selectedTarget?.name ?? '';
-      if (Object.hasOwn(assessment, 'alternativeGuardRisk')) assessment.alternativeGuardRisk = 'medium';
+      if (Object.hasOwn(assessment, 'otherTarget')) assessment.otherTarget = otherTarget?.name ?? selectedTarget?.name ?? '';
+      if (Object.hasOwn(assessment, 'otherGuardRisk')) assessment.otherGuardRisk = 'medium';
     }
     if (Object.hasOwn(result, 'estimate')) {
       const aliveRows = targetRows({ alivePlayers: currentTask.alivePlayers ?? [] });
@@ -225,8 +244,8 @@
       const freezeTarget = chooseTarget(targetRows({ validTargets: currentTask.validTargets ?? [] }), `${actorName}:freeze`, excluded);
       if (Object.hasOwn(result, 'actionAnswer') && freezeTarget) result.actionAnswer = freezeTarget.name;
     }
-    if (Object.hasOwn(result, 'consolidatedMemo')) {
-      result.consolidatedMemo = '公開発言の整合性、投票理由、能力結果の時系列を優先して確認する。断定できない点は保留する。';
+    if (Object.hasOwn(result, 'fullMemo')) {
+      result.fullMemo = '公開発言の整合性、投票理由、能力結果の時系列を優先して確認する。断定できない点は保留する。';
     }
 
     return JSON.stringify(result);

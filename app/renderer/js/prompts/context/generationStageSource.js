@@ -233,8 +233,8 @@ export function buildGenerationStageSource({
         maxMasonMessageLength: Number(aiRules.maxMasonMessageLength ?? 450),
         maxGraveyardMessageLength: Number(aiRules.maxGraveyardMessageLength ?? 450),
         maxInternalMemoLength: Number(aiRules.maxInternalMemoLength ?? 3000),
-        maxNightActionRationaleLength: MAX_NIGHT_ACTION_RATIONALE_LENGTH,
-        maxFreezeActionRationaleLength: MAX_FREEZE_ACTION_RATIONALE_LENGTH,
+        maxNightSelectionRationaleLength: MAX_NIGHT_ACTION_RATIONALE_LENGTH,
+        maxFreezeSelectionRationaleLength: MAX_FREEZE_ACTION_RATIONALE_LENGTH,
       },
     },
     histories: {

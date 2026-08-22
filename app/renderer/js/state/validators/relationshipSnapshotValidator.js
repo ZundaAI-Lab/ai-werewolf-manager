@@ -195,9 +195,9 @@ export function validateRelationshipSnapshots(context) {
       if (!['execution', 'vote-finalized'].includes(sourceEvent.type)) errors.push(`${itemLabel}.保存元イベントが日終了イベントではありません。`);
       if (sourceEvent.type === 'vote-finalized' && sourceEvent.payload?.result?.type === 'execution') errors.push(`${itemLabel}.処刑あり投票結果を日終了保存元にできません。`);
       if (Number(sourceEvent.day) !== Number(snapshot.day)) errors.push(`${itemLabel}.Dayが保存元イベントと一致しません。`);
-      if (Number(sourceEvent.sequence) !== Number(snapshot.sourceEventSequence)) errors.push(`${itemLabel}.sourceEventSequenceが保存元イベントと一致しません。`);
+      if (Number(sourceEvent.sequence) !== Number(snapshot.sourceRef)) errors.push(`${itemLabel}.sourceRefが保存元イベントと一致しません。`);
     }
-    const sourceSequence = Number(snapshot.sourceEventSequence);
+    const sourceSequence = Number(snapshot.sourceRef);
     const maximumSequence = Number.isFinite(sourceSequence) ? sourceSequence : 0;
     const latestVoteEvent = latestVoteEventAtSequence(events, maximumSequence, eventById);
     const expectedLatestVoteDay = latestVoteEvent ? Number(latestVoteEvent.day ?? 0) : null;

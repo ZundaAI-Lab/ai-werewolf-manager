@@ -1,5 +1,5 @@
 /**
- * 責務: factionStrategyUpdateを自動修復対象から隔離し、本人限定戦略の意味をパーサーと検証器へそのまま渡す。
+ * 責務: factionStrategyを自動修復対象から隔離し、本人限定戦略の意味をパーサーと検証器へそのまま渡す。
  * 変更ルール: 戦略内容、許可キー、mode、partnerDispositionを削除・置換・補完しない。局面依存の無効値を含む不正入力は必ず再生成対象にし、保存前の正規化はdomain/game/factionStrategyState.jsだけで行う。
  */
 

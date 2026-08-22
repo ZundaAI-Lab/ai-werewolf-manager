@@ -1,10 +1,9 @@
 /**
- * 責務: 任意判断差分の対象者名、列挙値、公開根拠参照を現在の候補集合へ補正する。
- * 変更ルール: 判断内容を新規生成せず、既存入力の正規化と不正任意値の除去だけを行う。
+ * 責務: 任意判断差分の対象者名・列挙値・参照配列の構文を現在の候補集合へ正規化する。
+ * 変更ルール: 判断内容を新規生成しない。decisionPatch.correctedSpeechRefs / evidenceRefs の公開可視性・イベント種別は意味を持つ根拠なので黙って削除せず、responseValidator.jsへ渡して再生成対象として検証する。
  */
 
 import { buildDecisionTargetPolicy } from '../../../domain/game/decisionTargetPolicy.js';
-import { getPublishedPublicEvents } from '../../../domain/events/eventStore.js';
 import { getDecisionPatchKeys } from '../responseContract.js';
 import {
   isPlainObject,
@@ -12,7 +11,6 @@ import {
 } from './jsonObjectRecovery.js';
 import {
   canonicalizePlayerNames,
-  deepEqual,
   normalizeEnumField,
   normalizePositiveIntegerRefs,
   normalizeStringArray,
@@ -32,7 +30,7 @@ function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, 
   const patch = repairExactKeys(payload.decisionPatch, 'decisionPatch', allowedKeys, operations);
   const targetPolicy = buildDecisionTargetPolicy(state, playerId, { taskType, candidateIds });
   for (const [key, allowedIds] of [
-    ['suspicionCandidates', targetPolicy.suspicionCandidateIds],
+    ['suspects', targetPolicy.suspicionCandidateIds],
     ['executionCandidates', targetPolicy.executionCandidateIds],
   ]) {
     if (!Object.hasOwn(patch, key)) continue;
@@ -60,7 +58,7 @@ function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, 
   }
   normalizeEnumField(patch, 'assessmentLevel', 'decisionPatch', operations);
   for (const key of Object.keys(patch)) {
-    if (['correctedSpeechSequences', 'evidenceEventSequences'].includes(key)) continue;
+    if (['correctedSpeechRefs', 'evidenceRefs'].includes(key)) continue;
     if (typeof patch[key] === 'string') {
       if (!patch[key].trim()) {
         delete patch[key];
@@ -68,19 +66,8 @@ function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, 
       } else patch[key] = patch[key].trim();
     }
   }
-  normalizePositiveIntegerRefs(patch, 'correctedSpeechSequences', 'decisionPatch', operations);
-  normalizePositiveIntegerRefs(patch, 'evidenceEventSequences', 'decisionPatch', operations);
-  const bySequence = new Map(getPublishedPublicEvents(state).map((event) => [Number(event.sequence), event]));
-  const filterRefs = (key, allowedTypes) => {
-    if (!Array.isArray(patch[key])) return;
-    const valid = patch[key].filter((sequence) => allowedTypes.includes(bySequence.get(Number(sequence))?.type));
-    if (!deepEqual(valid, patch[key])) {
-      patch[key] = valid;
-      operation(operations, 'INVALID_DECISION_EVENT_SEQUENCES_REMOVED', `decisionPatch.${key}`, '現在参照できない判断根拠を除外しました。');
-    }
-  };
-  filterRefs('correctedSpeechSequences', ['public-speech']);
-  filterRefs('evidenceEventSequences', ['public-speech', 'vote-finalized', 'execution', 'dawn']);
+  normalizePositiveIntegerRefs(patch, 'correctedSpeechRefs', 'decisionPatch', operations);
+  normalizePositiveIntegerRefs(patch, 'evidenceRefs', 'decisionPatch', operations);
   if (!Object.keys(patch).length) {
     delete payload.decisionPatch;
     operation(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'decisionPatch', '有効な判断変更がないdecisionPatchを省略しました。');

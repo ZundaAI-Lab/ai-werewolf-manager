@@ -225,7 +225,7 @@ export function validatePublicAbilityClaim(state, {
     const submittedIds = [...new Set(claim.evidenceEventIds ?? [])].sort();
     const requiredIds = [...requirements.requiredEvidenceEventIds].sort();
     if (JSON.stringify(submittedIds) !== JSON.stringify(requiredIds)) {
-      errors.push(`霊能結果のevidenceEventSequencesは対象を決めた処刑イベント${requirements.requiredEvidenceRefs.map((ref) => `#${ref}`).join('、')}だけを指定してください。`);
+      errors.push(`霊能結果のevidenceRefsは対象を決めた処刑イベント${requirements.requiredEvidenceRefs.map((ref) => `#${ref}`).join('、')}だけを指定してください。`);
     }
   }
 

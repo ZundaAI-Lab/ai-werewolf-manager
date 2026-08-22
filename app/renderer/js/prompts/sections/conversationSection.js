@@ -59,7 +59,7 @@ function compressSequenceRanges(values) {
 
 function displayAbilityEvidenceCutoffs(cutoffs) {
   return Object.fromEntries(Object.entries(cutoffs ?? {}).map(([day, value]) => [day, {
-    eligibleEvidenceEventSequenceRanges: compressSequenceRanges(value?.eligibleEvidenceEventSequences),
+    eligibleEvidenceEventSequenceRanges: compressSequenceRanges(value?.eligibleEvidenceRefs),
   }]));
 }
 export function claimTimingSection(context) {
@@ -355,12 +355,12 @@ export function abilityClaimTimelineSection(context, situation, claimRolePolicy,
     ? `
 ${renderPromptDataBlock('pending-medium-claim-requirements', pendingMediumRequirements)}
 
-あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象とresultDayを対応する行へ一致させてください。selectionBasis・evidenceEventSequences・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
+あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象とresultDayを対応する行へ一致させてください。selectionBasis・evidenceRefs・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
     : '';
   return `## 能力履歴
 ${renderPromptDataBlock('ability-claim-evidence-windows', cutoffs)}${forcedBlock}
 
-resultDayは結果Day（夜行動は翌Day）。public-evidenceは指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceEventSequences=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
+resultDayは結果Day（夜行動は翌Day）。public-evidenceは指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
 }
 
 export function tacticalOpportunitySection({ counterClaimOpportunity = null, ownerClaimCorroborationOpportunity = null } = {}) {

@@ -41,7 +41,7 @@ import { buildClaimRolePolicy } from '../domain/claims/claimRolePolicy.js';
 import { resolveCounterClaimOpportunity } from '../domain/claims/counterClaimOpportunityPolicy.js';
 import { resolveOwnerClaimCorroborationOpportunity } from '../domain/claims/ownerClaimCorroborationPolicy.js';
 import { resolveWolfPartnerDispositionPolicy } from '../domain/game/wolfPartnerDispositionPolicy.js';
-import { resolveFactionStrategyUpdatePolicy } from '../domain/game/factionStrategyUpdatePolicy.js';
+import { resolveFactionStrategyPolicy } from '../domain/game/factionStrategyPolicy.js';
 import { resolveSnowWomanEstimateLimit } from '../domain/night/snowWomanEstimatePolicy.js';
 import { validatePromptVisibility } from './policies/promptAccessPolicy.js';
 import { buildPlayerVisibleContext, createPromptContextFingerprint } from './context/promptContext.js';
@@ -158,7 +158,7 @@ export function buildPromptModel(context, decision, {
   state = null,
   taskType = context.task.type,
   internalReasoningDirective = null,
-  factionStrategyUpdatePolicy = null,
+  factionStrategyPolicy = null,
   includeInitial = false,
   publicHistoryPolicy = null,
   counterClaimOpportunity = null,
@@ -173,7 +173,7 @@ export function buildPromptModel(context, decision, {
     .map((roleId) => ROLE_DEFINITIONS[roleId].name);
   const situation = buildPromptSituation(context, decision, { taskType });
   const sectionPolicy = resolvePromptSectionPolicy(situation, {
-    factionStrategyUpdatePolicy,
+    factionStrategyPolicy,
     includeInitial,
     publicHistoryPolicy,
   });
@@ -324,9 +324,11 @@ export function buildPromptModel(context, decision, {
     publicSpeechGuidance,
     reasoningPolicy: sectionPolicy.showReasoningPolicy ? renderRuntimeReasoningPolicy() : '',
     // 投票では全ターン共通なので不変区画、最終巡の通常発言・優先回答では会話段階依存なので可変区画へ置く。
-    executionValuePolicy: situation.isVote ? renderExecutionValueSemanticRules() : '',
+    executionValuePolicy: situation.isVote
+      ? renderExecutionValueSemanticRules({ revealExecutedRole: Boolean(context.game.rules.vote.revealExecutedRole) })
+      : '',
     executionVariablePolicy: situation.isFinalDiscussionDecisionWindow
-      ? renderExecutionValueSemanticRules()
+      ? renderExecutionValueSemanticRules({ revealExecutedRole: Boolean(context.game.rules.vote.revealExecutedRole) })
       : '',
     executionFactionPolicy: sectionPolicy.showExecutionValuePolicy
       ? renderFactionExecutionValueSemanticRules({ team: player.team })
@@ -405,7 +407,7 @@ export function buildPromptModel(context, decision, {
         && player.decisionInvalidation?.usablePreviousDecision !== false,
       hasPreviousFactionStrategy: Boolean(player.factionStrategyState?.updatedAt),
       partnerDispositionPolicy,
-      factionStrategyUpdatePolicy,
+      factionStrategyPolicy,
       claimRolePolicy: responseClaimRolePolicy,
       freezeEstimateLimit: taskType === 'freeze' ? resolveSnowWomanEstimateLimit(context.task.validTargetIds.length) : null,
       wolfConversationPurpose: context.task.wolfConversationPurpose ?? null,
@@ -470,7 +472,7 @@ export function buildPromptContext(state, playerId, {
   const internalReasoningDirective = isNormalSpeechTask(taskType)
     ? resolveInternalReasoningDirective(state, context, { conversationMode })
     : null;
-  const factionStrategyUpdatePolicy = resolveFactionStrategyUpdatePolicy(state, {
+  const factionStrategyPolicy = resolveFactionStrategyPolicy(state, {
     playerId,
     taskType,
   });
@@ -479,7 +481,7 @@ export function buildPromptContext(state, playerId, {
     state,
     taskType,
     internalReasoningDirective,
-    factionStrategyUpdatePolicy,
+    factionStrategyPolicy,
     includeInitial,
     publicHistoryPolicy,
     counterClaimOpportunity,
@@ -553,7 +555,7 @@ export function buildPromptContext(state, playerId, {
       promptSpecVersion: PROMPT_SPEC_VERSION,
       visibilityAudit: '正常',
       aliveCount: decision.population.aliveCount,
-      factionStrategyUpdateTriggers: [...(factionStrategyUpdatePolicy.triggers ?? [])],
+      factionStrategyTriggers: [...(factionStrategyPolicy.triggers ?? [])],
       strategyOpportunityTypes: [counterClaimOpportunity?.type, ownerClaimCorroborationOpportunity?.type].filter(Boolean),
       majorityThreshold: decision.population.majorityThreshold,
       publicHistoryMode: model.sectionPolicy.publicHistoryMode,

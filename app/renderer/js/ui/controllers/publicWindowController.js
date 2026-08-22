@@ -6,7 +6,7 @@
 // @ts-check
 
 import { buildPublicSnapshot } from '../../public/publicSnapshot.js';
-import { escapeHtml } from '../../shared/utils.js';
+import { escapeHtml, sanitizeFilenamePart } from '../../shared/utils.js';
 import { downloadStandalonePublicHtml } from '../../public/publicHtmlExport.js';
 import { renderPublicSnapshot } from '../views/public/publicView.js';
 import { applyPublicAppearance } from '../../appearance/appearanceTheme.js';
@@ -21,10 +21,7 @@ export function createPublicWindowController({ store, getConfidential, toast }) 
 
   function _exportPublicHtml() {
     const state = store.getState();
-    const safeTitle = String(state.game.title || 'AI人狼公開表示')
-      .replace(/[\/:*?"<>|]/g, '_')
-      .replace(/\s+/g, ' ')
-      .trim() || 'AI人狼公開表示';
+    const safeTitle = sanitizeFilenamePart(state.game.title, { fallback: 'AI人狼公開表示' });
     const includeConfidential = Boolean(getConfidential());
     downloadStandalonePublicHtml({
       title: `${safeTitle} - 公開表示`,

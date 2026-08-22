@@ -27,21 +27,21 @@ function repairAttackAssessment(state, taskType, candidateIds, payload, operatio
   }
   const assessment = repairExactKeys(payload.attackAssessment, 'attackAssessment', ATTACK_ASSESSMENT_KEYS, operations);
   removeNullOptionalFields(assessment, [], 'attackAssessment', operations);
-  for (const key of ['hunterSurvivalLikelihood', 'guardRisk', 'alternativeGuardRisk']) {
+  for (const key of ['hunterAliveChance', 'guardRisk', 'otherGuardRisk']) {
     normalizeEnumField(assessment, key, 'attackAssessment', operations, RISK_ALIASES);
   }
   const expectedTargetId = taskType === 'wolf-attack'
     ? resolvePlayer(state, payload.actionAnswer, candidateIds)?.id ?? null
     : null;
-  if (typeof assessment.alternativeTarget === 'string') {
-    const alternative = resolvePlayer(state, assessment.alternativeTarget, candidateIds);
+  if (typeof assessment.otherTarget === 'string') {
+    const alternative = resolvePlayer(state, assessment.otherTarget, candidateIds);
     if (!alternative || (expectedTargetId && alternative.id === expectedTargetId)) {
-      delete assessment.alternativeTarget;
-      delete assessment.alternativeGuardRisk;
-      operation(operations, 'INVALID_ALTERNATIVE_ASSESSMENT_REMOVED', 'attackAssessment.alternativeTarget', '無効または実対象と同一の比較候補を除外しました。');
-    } else if (alternative.name !== assessment.alternativeTarget) {
-      assessment.alternativeTarget = alternative.name;
-      operation(operations, 'PLAYER_REFERENCE_CANONICALIZED', 'attackAssessment.alternativeTarget', '比較候補を正式表示名へ修正しました。');
+      delete assessment.otherTarget;
+      delete assessment.otherGuardRisk;
+      operation(operations, 'INVALID_ALTERNATIVE_ASSESSMENT_REMOVED', 'attackAssessment.otherTarget', '無効または実対象と同一の比較候補を除外しました。');
+    } else if (alternative.name !== assessment.otherTarget) {
+      assessment.otherTarget = alternative.name;
+      operation(operations, 'PLAYER_REFERENCE_CANONICALIZED', 'attackAssessment.otherTarget', '比較候補を正式表示名へ修正しました。');
     }
   }
   if (!Object.keys(assessment).length) {

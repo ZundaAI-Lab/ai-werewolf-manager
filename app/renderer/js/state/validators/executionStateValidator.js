@@ -1,6 +1,6 @@
 /**
  * 責務: 処刑解決の対象、遺言、猫又道連れ、座敷わらし後追い、公開後死亡状態の整合を検査する。
- * 変更ルール: 投票集計や夜解決を再計算せず、確定済み処刑解決とプレイヤー状態の一致だけを検査する。凍結中の処刑対象は遺言自動スキップを必須とする。
+ * 変更ルール: 投票集計や夜解決を再計算せず、確定済み処刑解決とプレイヤー状態の一致だけを検査する。凍結中の遺言自動スキップは処刑公開前のresolved状態だけ現在の状態異常から検査し、公開後は保存済み遺言状態と公開イベントの整合を検査する。
  */
 
 import { FROZEN_TESTAMENT_SKIP_REASON, getTestamentAvailability } from '../../domain/execution/testamentPolicy.js';
@@ -17,11 +17,13 @@ export function validateExecutionState(context) {
     if (!testament || !testamentStatuses.has(testament.status)) errors.push(`${label}: 遺言状態が不正です。`);
     if (testament) {
       const enabled = raw.game.rules.testament?.enabled === true;
-      const availability = getTestamentAvailability(raw, resolution.targetId);
+      const availability = resolution.status === 'resolved'
+        ? getTestamentAvailability(raw, resolution.targetId)
+        : null;
       if (!enabled && testament.status !== 'not-required') errors.push(`${label}: 遺言OFFなのに遺言待ち状態があります。`);
-      if (enabled && availability.status === 'pending' && testament.status === 'not-required') errors.push(`${label}: 遺言ONなのに遺言が不要扱いです。`);
-      if (availability.status === 'skipped' && testament.status !== 'skipped') errors.push(`${label}: 凍結中の処刑対象に遺言機会が残っています。`);
-      if (availability.status === 'skipped' && testament.status === 'skipped' && testament.skippedReason !== FROZEN_TESTAMENT_SKIP_REASON) errors.push(`${label}: 凍結中の遺言自動スキップ理由が不正です。`);
+      if (enabled && testament.status === 'not-required') errors.push(`${label}: 遺言ONなのに遺言が不要扱いです。`);
+      if (availability?.status === 'skipped' && testament.status !== 'skipped') errors.push(`${label}: 凍結中の処刑対象に遺言機会が残っています。`);
+      if (availability?.status === 'skipped' && testament.status === 'skipped' && testament.skippedReason !== FROZEN_TESTAMENT_SKIP_REASON) errors.push(`${label}: 凍結中の遺言自動スキップ理由が不正です。`);
       if (testament.status === 'pending' && (testament.eventId !== null || testament.skippedReason !== '' || testament.completedAt !== null)) errors.push(`${label}: 遺言待ち状態の保存値が不正です。`);
       if (testament.status === 'completed') {
         const event = raw.events.find((item) => item.id === testament.eventId) ?? null;

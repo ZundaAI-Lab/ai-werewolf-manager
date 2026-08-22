@@ -1,6 +1,6 @@
 /**
- * 責務: ゲーム終了後のGM向けAI事後分析について、UIセッション内だけの質問履歴・実行中状態・エラー表示を管理する。
- * 変更ルール: ゲームState・AIターン監査・イベント・保存JSONを変更しない。分析API呼び出しはautomation層から注入されたadapterへ委譲し、ゲーム中・手動生成ターン・デモAIでは実行しない。利用可否は現在の実行方式ではなく、対象ターンの生成記録と現在の元プロファイル状態から判定する。
+ * 責務: ゲーム終了後のGM向けAI事後分析について、UIセッション内だけの質問履歴・実行中状態・エラー表示と、分析中再描画を跨ぐ対象detailsの開閉状態を管理する。
+ * 変更ルール: ゲームState・AIターン監査・イベント・保存JSONを変更しない。分析API呼び出しはautomation層から注入されたadapterへ委譲し、ゲーム中・手動生成ターン・デモAIでは実行しない。利用可否は現在の実行方式ではなく、対象ターンの生成記録と現在の元プロファイル状態から判定する。質問開始・完了時の再描画では記録詳細・対象AIターン・分析欄の現在の開閉状態をDOMから一時取得して復元し、永続状態へ保存しない。
  */
 
 function emptySession() {
@@ -59,6 +59,42 @@ export function createPostgameAnalysisController({ ui }) {
     };
   }
 
+  function captureOpenDetailsState(turnId) {
+    if (typeof document === 'undefined') return null;
+    const id = normalizeTurnId(turnId);
+    const state = {
+      auditSupport: document.querySelector?.('#records-audit-support')?.open ?? null,
+      aiTurn: null,
+      analysis: null,
+    };
+    document.querySelectorAll?.('[data-ai-turn-id]').forEach((details) => {
+      if (String(details?.dataset?.aiTurnId ?? '') === id) state.aiTurn = Boolean(details.open);
+    });
+    document.querySelectorAll?.('[data-postgame-analysis-turn-id]').forEach((details) => {
+      if (String(details?.dataset?.postgameAnalysisTurnId ?? '') === id) state.analysis = Boolean(details.open);
+    });
+    return state;
+  }
+
+  function restoreOpenDetailsState(turnId, state) {
+    if (!state || typeof document === 'undefined') return;
+    const id = normalizeTurnId(turnId);
+    const auditSupport = document.querySelector?.('#records-audit-support');
+    if (auditSupport && state.auditSupport !== null) auditSupport.open = state.auditSupport;
+    document.querySelectorAll?.('[data-ai-turn-id]').forEach((details) => {
+      if (String(details?.dataset?.aiTurnId ?? '') === id && state.aiTurn !== null) details.open = state.aiTurn;
+    });
+    document.querySelectorAll?.('[data-postgame-analysis-turn-id]').forEach((details) => {
+      if (String(details?.dataset?.postgameAnalysisTurnId ?? '') === id && state.analysis !== null) details.open = state.analysis;
+    });
+  }
+
+  function renderPreservingOpenDetails(turnId) {
+    const openState = captureOpenDetailsState(turnId);
+    ui.render();
+    restoreOpenDetailsState(turnId, openState);
+  }
+
   function setAdapter(nextAdapter) {
     if (nextAdapter !== null && typeof nextAdapter?.analyzeTurn !== 'function') {
       throw new TypeError('終了後AI分析adapterにanalyzeTurnがありません。');
@@ -90,7 +126,7 @@ export function createPostgameAnalysisController({ ui }) {
     const player = state.players.find((item) => item.id === turn.playerId);
     session.pending = true;
     session.error = '';
-    ui.render();
+    renderPreservingOpenDetails(id);
     try {
       const result = await adapter.analyzeTurn({
         gameId: String(state.game.id ?? ''),
@@ -125,14 +161,15 @@ export function createPostgameAnalysisController({ ui }) {
       ui.toast(`終了後AI分析失敗: ${session.error}`, 'error');
     } finally {
       session.pending = false;
-      ui.render();
+      renderPreservingOpenDetails(id);
     }
     return undefined;
   }
 
   function clear(turnId) {
-    sessions.delete(normalizeTurnId(turnId));
-    ui.render();
+    const id = normalizeTurnId(turnId);
+    sessions.delete(id);
+    renderPreservingOpenDetails(id);
   }
 
   return Object.freeze({ ask, clear, reset, setAdapter, viewModel });

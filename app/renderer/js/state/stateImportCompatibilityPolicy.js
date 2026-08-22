@@ -61,11 +61,11 @@ function emptyReconsideration(previous = null) {
 function preparePlayer(player) {
   if (!isPlainObject(player)) return player;
   const prepared = keepKnownKeys(player, PLAYER_KEY_SET);
-  const actionRationales = Array.isArray(prepared.memoryLedger?.actionRationales)
-    ? deepClone(prepared.memoryLedger.actionRationales)
+  const selectionRationales = Array.isArray(prepared.memoryLedger?.selectionRationales)
+    ? deepClone(prepared.memoryLedger.selectionRationales)
     : [];
   prepared.decisionState = createEmptyDecisionState();
-  prepared.memoryLedger = createEmptyMemoryLedger({ actionRationales });
+  prepared.memoryLedger = createEmptyMemoryLedger({ selectionRationales });
   return prepared;
 }
 

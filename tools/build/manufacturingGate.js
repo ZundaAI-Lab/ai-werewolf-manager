@@ -1,6 +1,6 @@
 /**
- * 責務: 正式bundle生成前の製造事前検査と、生成後の鮮度を含む完全製造検査を提供し、開発者・利用者README、本体MIT Licenseの適用範囲注記、配布同梱設定も保証する。製造監査が使用するTypeScript依存は監査モジュール読込前に自己修復する。
- * 変更ルール: 事前検査は生成物へ書き込まず、現行構成・全製品JSの責務ヘッダ・テスト入口・情報境界・Prompt Envelope・README/ライセンス配布契約を検査する。Git管理メタデータの.gitignoreは正規のルートファイルとして許可する。完全検査だけが生成物鮮度を追加検査し、一時パッチ・到達不能モジュール・製品内未使用export・不一致生成物を製造物へ混入させない。TypeScriptを必要とする監査はensureCurrentBuild.jsの共通依存保証後にだけ読み込む。
+ * 責務: 正式bundle生成前の製造事前検査と、生成後の鮮度を含む完全製造検査を提供し、開発者・利用者README、本体MIT Licenseの適用範囲注記、bundle済みRendererソースを二重同梱しない配布設定も保証する。製造監査が使用するTypeScript依存は監査モジュール読込前に自己修復する。
+ * 変更ルール: 事前検査は生成物へ書き込まず、現行構成・全製品JSの責務ヘッダ・テスト入口・情報境界・Prompt Envelope・README/ライセンス配布契約に加え、型情報を整備済みの限定JS領域へ段階的checkJs監査を適用する。Git管理メタデータの.gitignoreは正規のルートファイルとして許可する。完全検査だけが生成物鮮度を追加検査し、一時パッチ・到達不能モジュール・製品内未使用export・不一致生成物を製造物へ混入させない。TypeScriptを必要とする監査はensureCurrentBuild.jsの共通依存保証後にだけ読み込む。
  */
 
 'use strict';
@@ -250,10 +250,10 @@ function validateRuntimeAndPackaging(errors) {
   assertIncludes(errors, licenseText, '上記MIT Licenseは、AI人狼マネージャー本体の独自コードに適用されます。', '本体MIT Licenseの適用範囲注記');
   assertIncludes(errors, licenseText, '第三者が権利を有するキャラクター、名称、ロゴ、AIサービス、その他の第三者素材には適用されません。', '第三者権利のMIT除外注記');
   assertIncludes(errors, licenseText, 'Electron、Chromiumその他の第三者OSSには、それぞれのライセンスが適用されます。', '第三者OSSのライセンス注記');
-  for (const required of ['package.json', 'main/**/*', 'shared/**/*', 'renderer/index.html', 'renderer/css/**/*', 'renderer/data/characters/**/*', 'renderer/generated/bundle.js', 'renderer/js/ai/**/*', 'renderer/js/automation/**/*']) {
+  for (const required of ['package.json', 'main/**/*', 'shared/**/*', 'renderer/index.html', 'renderer/css/**/*', 'renderer/data/characters/**/*', 'renderer/generated/bundle.js']) {
     if (!files.includes(required)) errors.push(`配布対象が不足しています: ${required}`);
   }
-  for (const forbidden of ['tools/**/*', 'docs/**/*', 'renderer/js/domain/**/*', 'renderer/js/prompts/**/*']) {
+  for (const forbidden of ['tools/**/*', 'docs/**/*', 'renderer/js/ai/**/*', 'renderer/js/automation/**/*', 'renderer/js/domain/**/*', 'renderer/js/prompts/**/*']) {
     if (files.includes(forbidden)) errors.push(`配布対象へ開発物または未バンドルソースを含めています: ${forbidden}`);
   }
   const mainSources = currentMainSources();
@@ -302,6 +302,35 @@ function validatePromptEnvelopeContract(errors) {
   }
 }
 
+function validateTargetedCheckJs(errors) {
+  const tscPath = require.resolve('typescript/bin/tsc');
+  const targets = [
+    'app/renderer/js/app/globalErrorReporter.js',
+    'app/renderer/js/automation/automationRunControl.js',
+  ];
+  const run = spawnSync(process.execPath, [
+    tscPath,
+    '--allowJs',
+    '--checkJs',
+    '--noEmit',
+    '--noResolve',
+    '--target', 'ES2022',
+    '--module', 'ESNext',
+    '--lib', 'ES2022,DOM',
+    '--skipLibCheck',
+    '--noImplicitReturns',
+    '--noUnusedLocals',
+    '--pretty', 'false',
+    ...targets,
+  ], {
+    cwd: projectRoot,
+    encoding: 'utf8',
+  });
+  if (run.status === 0) return;
+  const detail = String(run.stderr || run.stdout || `exit=${run.status}`).trim();
+  errors.push(`段階的checkJs監査に失敗しました: ${detail}`);
+}
+
 function validateUnusedProductionExports(errors) {
   for (const candidate of collectUnusedProductionExports(projectRoot)) {
     errors.push(`製品内で参照されないexportがあります: ${candidate.file}:${candidate.line} ${candidate.name}`);
@@ -327,6 +356,7 @@ function validateManufacturingPreflight(errors) {
   validateModuleReachability(errors);
   validateRuntimeAndPackaging(errors);
   validatePromptEnvelopeContract(errors);
+  validateTargetedCheckJs(errors);
   validateUnusedProductionExports(errors);
   validateBehaviorContracts(errors);
 }

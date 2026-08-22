@@ -1,6 +1,6 @@
 /**
- * 責務: 初期3巡設定の1ゲーム通しテストと1人間プレイヤー通しテストを、実際のデモAI応答・パーサー・検証器・登録コマンド・保存状態検証まで接続して実行する。
- * 変更ルール: 初期ルールを短縮せず、AI回答をダミーJSONへ置換せず、検証失敗をGM代理・ランダム登録で回避しない。実在する公開イベント番号を含む判断根拠を少なくとも1件、解析・意味検証・登録・完全状態検証・JSON再読込まで通す。任意項目の出力数は品質資料として集計するだけで合否条件にせず、出力された項目は解析・保存・再読込まで確認する。
+ * 責務: 初期3巡設定の1ゲーム通しテストと1人間プレイヤー通しテストを、デモAIの生回答・パーサー・検証器・登録コマンド・保存状態検証まで改変せず接続して実行する。
+ * 変更ルール: 初期ルールを短縮せず、AI回答をダミーJSONへ置換・後加工せず、検証失敗をGM代理・ランダム登録で回避しない。生成された生回答をそのまま解析・意味検証・登録・完全状態検証・JSON再読込まで通す。任意項目の出力数は品質資料として集計するだけで合否条件にせず、出力された項目は解析・保存・再読込まで確認する。
  */
 
 import test from 'node:test';
@@ -124,8 +124,8 @@ function summarizeStructuredOutputs(state) {
   const fields = [
     ['heartVoice', 'parsedHeartVoice'],
     ['decisionUpdate', 'parsedDecisionUpdate'],
-    ['factionStrategyUpdate', 'parsedFactionStrategyUpdate'],
-    ['sharedStrategyUpdate', 'parsedSharedStrategyUpdate'],
+    ['factionStrategy', 'parsedFactionStrategyPatch'],
+    ['sharedStrategy', 'parsedSharedStrategyPatch'],
     ['internalMemoUpdate', 'parsedInternalMemoUpdate'],
     ['attackAssessment', 'parsedAttackAssessment'],
     ['speechInteraction', 'parsedSpeechInteraction'],
@@ -172,11 +172,11 @@ function summarizeStructuredOutputs(state) {
       } else {
         metric.empty += 1;
       }
-      if (!['decisionUpdate', 'factionStrategyUpdate', 'sharedStrategyUpdate', 'internalMemoUpdate'].includes(field)) return;
+      if (!['decisionUpdate', 'factionStrategy', 'sharedStrategy', 'internalMemoUpdate'].includes(field)) return;
       let representative = '';
       if (field === 'internalMemoUpdate') representative = String(raw[field]?.text ?? '');
       if (field === 'decisionUpdate') representative = String(raw[field]?.decisionReason ?? '');
-      if (['factionStrategyUpdate', 'sharedStrategyUpdate'].includes(field)) {
+      if (['factionStrategy', 'sharedStrategy'].includes(field)) {
         representative = Object.values(raw[field]?.changes ?? {}).find((value) => typeof value === 'string' && value.trim()) ?? '';
       }
       if (!representative) return;
@@ -190,7 +190,7 @@ function summarizeStructuredOutputs(state) {
   return result;
 }
 
-function assertStructuredFieldsSaved(state, parsed) {
+function assertStructuredFieldsSaved(state, parsed, validation) {
   const turn = state.aiTurns.at(-1);
   assert.ok(turn, 'AI回答がAIターンへ保存される');
   if (parsed.heartVoice !== undefined) assert.equal(turn.parsedHeartVoice, parsed.heartVoice);
@@ -199,46 +199,21 @@ function assertStructuredFieldsSaved(state, parsed) {
     assert.deepEqual(turn.parsedDecisionUpdate, parsed.decisionUpdate);
     assert.ok(turn.resolvedDecisionUpdate, '出力された判断更新を解決済み状態へ保存する');
   }
-  if (parsed.factionStrategyUpdate) {
-    assert.deepEqual(turn.parsedFactionStrategyUpdate, parsed.factionStrategyUpdate);
-    assert.ok(turn.resolvedFactionStrategyUpdate, '出力された陣営戦略を解決済み状態へ保存する');
+  if (parsed.factionStrategyPatch) {
+    assert.deepEqual(turn.parsedFactionStrategyPatch, parsed.factionStrategyPatch);
+    assert.ok(turn.resolvedFactionStrategyState, '出力された陣営戦略を解決済み状態へ保存する');
   }
-  if (parsed.sharedStrategyUpdate) assert.deepEqual(turn.parsedSharedStrategyUpdate, parsed.sharedStrategyUpdate);
+  if (parsed.sharedStrategyPatch) assert.deepEqual(turn.parsedSharedStrategyPatch, parsed.sharedStrategyPatch);
   if (parsed.attackAssessment) {
     assert.deepEqual(turn.parsedAttackAssessment, parsed.attackAssessment);
     assert.ok(turn.resolvedAttackAssessment, '出力された襲撃評価を解決済み状態へ保存する');
   }
   if (parsed.speechInteraction) assert.deepEqual(turn.parsedSpeechInteraction, parsed.speechInteraction);
   if (parsed.coOperation) assert.deepEqual(turn.parsedCoOperation, parsed.coOperation);
-  if (parsed.abilityClaims) assert.deepEqual(turn.parsedAbilityClaims, parsed.abilityClaims);
+  if (parsed.abilityClaims) assert.deepEqual(turn.parsedAbilityClaims, validation.normalizedParsedAbilityClaims);
 }
 
 
-function latestDecisionEvidenceSequence(state) {
-  const event = [...(state.events ?? [])]
-    .filter((item) => item.status === 'published'
-      && item.audience?.type === 'public'
-      && ['public-speech', 'vote-finalized', 'execution', 'dawn'].includes(item.type)
-      && Number.isInteger(Number(item.sequence)))
-    .sort((left, right) => Number(left.sequence) - Number(right.sequence))
-    .at(-1);
-  return event ? Number(event.sequence) : null;
-}
-
-function injectDecisionEvidence(rawResponse, sequence) {
-  if (!Number.isInteger(sequence) || sequence < 1) return { rawResponse, applied: false };
-  try {
-    const value = JSON.parse(String(rawResponse ?? ''));
-    if (!value?.decisionPatch || typeof value.decisionPatch !== 'object' || Array.isArray(value.decisionPatch)) {
-      return { rawResponse, applied: false };
-    }
-    value.decisionPatch.correctedSpeechSequences = [];
-    value.decisionPatch.evidenceEventSequences = [sequence];
-    return { rawResponse: JSON.stringify(value), applied: true };
-  } catch {
-    return { rawResponse, applied: false };
-  }
-}
 
 function buildAiCommonInput(built, rawResponse, parsed, validation, generationRun = null) {
   return {
@@ -250,19 +225,19 @@ function buildAiCommonInput(built, rawResponse, parsed, validation, generationRu
     resolvedInternalReasoningDirective: built.internalReasoningDirective ?? null,
     heartVoice: parsed.heartVoice,
     internalMemoUpdate: parsed.internalMemoUpdate,
-    actionRationale: parsed.actionRationale,
+    selectionRationale: parsed.selectionRationale,
     parsedAttackAssessment: parsed.attackAssessment,
     resolvedAttackAssessment: validation.resolvedAttackAssessment,
     estimatedWerewolfIds: validation.resolvedFreezeEstimates?.estimatedWerewolfIds ?? [],
     predictedAttackTargetIds: validation.resolvedFreezeEstimates?.predictedAttackTargetIds ?? [],
-    parsedFactionStrategyUpdate: parsed.factionStrategyUpdate,
-    factionStrategyUpdate: validation.resolvedFactionStrategyUpdate,
+    parsedFactionStrategyPatch: parsed.factionStrategyPatch,
+    factionStrategyPatch: validation.resolvedFactionStrategyState,
     warnings: validation.warnings,
     generationRun,
   };
 }
 
-async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '', generationDepth = 1, decisionEvidenceSequence = null }) {
+async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '', generationDepth = 1 }) {
   const player = state.players.find((item) => item.id === playerId);
   assert.ok(player, `${taskType}のAIプレイヤーが存在する`);
   assert.equal(player.controller, 'ai', `${player.name}はAI制御である`);
@@ -301,7 +276,6 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
   };
   const plan = resolveGenerationPlan({ ownerProfile, profiles: [ownerProfile], taskType });
   const textStagePrompts = [];
-  let decisionGroundingInjected = false;
   const pipeline = await runGenerationPipeline({
     plan,
     taskArtifact: built,
@@ -311,15 +285,12 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
     buildRenderPrompt: buildRenderStagePrompt,
     buildProofreadPrompt: buildProofreadStagePrompt,
     requestFullCandidate: async ({ stage, prompt }) => {
-      const generatedResponse = demoAi.generate({
+      const rawResponse = demoAi.generate({
         prompt,
         taskType,
         playerName: player.name,
         requestPurpose: stage.stageId === 'draft' ? 'generation-draft' : 'normal',
       });
-      const injected = injectDecisionEvidence(generatedResponse, decisionEvidenceSequence);
-      const rawResponse = injected.rawResponse;
-      decisionGroundingInjected ||= injected.applied;
       const evaluation = evaluateAiTaskCandidate(state, built, rawResponse);
       return {
         ok: evaluation.ok,
@@ -370,12 +341,12 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
       coOperation: parsed.coOperation,
       parsedSpeechInteraction: parsed.speechInteraction,
       speechInteraction: validation.resolvedSpeechInteraction,
-      parsedAbilityClaims: parsed.abilityClaims,
+      parsedAbilityClaims: validation.normalizedParsedAbilityClaims,
       abilityClaims: validation.resolvedAbilityClaims,
       parsedDecisionUpdate: parsed.decisionUpdate,
       decisionUpdate: validation.resolvedDecisionUpdate,
-      parsedFactionStrategyUpdate: common.parsedFactionStrategyUpdate,
-      factionStrategyUpdate: common.factionStrategyUpdate,
+      parsedFactionStrategyPatch: common.parsedFactionStrategyPatch,
+      factionStrategyPatch: common.factionStrategyPatch,
       resolvedInternalReasoningDirective: common.resolvedInternalReasoningDirective,
     });
   } else if (taskType === 'vote') {
@@ -411,7 +382,7 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
     response = recordWolfMessage(state, {
       speakerId: playerId,
       content: parsed.wolfMessage,
-      sharedStrategyUpdate: parsed.sharedStrategyUpdate,
+      sharedStrategyPatch: parsed.sharedStrategyPatch,
       ...common,
     });
   } else if (taskType === 'result-impression') {
@@ -425,7 +396,7 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
   }
 
   assertOk(response, `${player.name}/${taskType}登録`);
-  assertStructuredFieldsSaved(state, parsed);
+  assertStructuredFieldsSaved(state, parsed, validation);
   assertValidState(state, `${player.name}/${taskType}保存後`);
   const storedTurn = state.aiTurns.at(-1);
   assert.equal(storedTurn.generationRun.depth, generationDepth);
@@ -440,7 +411,6 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
     rawResponse,
     hasTruncatedPublicHistory: built.text.includes('"historyDetail"'),
     textStagePrompts,
-    decisionGroundingInjected,
     resultPromptAudit: resultPromptAudit ? (() => {
       const renderStageExpected = plan.stages.some((stage) => stage.stageId === 'render');
       const renderPrompts = textStagePrompts.filter((item) => item.stageId === 'render');
@@ -484,7 +454,7 @@ function executeHumanTask(state, task, humanId) {
     return recordWolfAttackVote(state, {
       actorId: humanId,
       targetId,
-      actionRationale: '人間が専用操作で明示選択した。',
+      selectionRationale: '人間が専用操作で明示選択した。',
     });
   }
   if (PERSONAL_NIGHT_TASKS.includes(task.type)) {
@@ -492,7 +462,7 @@ function executeHumanTask(state, task, humanId) {
       slotId: task.slotId,
       actorId: humanId,
       targetId,
-      actionRationale: '人間が専用操作で明示選択した。',
+      selectionRationale: '人間が専用操作で明示選択した。',
     });
   }
   assert.fail(`未対応の人間タスクです: ${task.type}`);
@@ -567,7 +537,6 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
       speechPromptLengthsByDay: {},
       proofreadPromptLengths: [],
       truncatedPublicHistoryPromptCount: 0,
-      decisionGroundingRoundTripCount: 0,
       resultPromptCount: 0,
       deepResultRenderPromptCount: 0,
       earlyExitResultPromptCount: 0,
@@ -590,12 +559,8 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
           taskType: task.type,
           playerId,
           generationDepth,
-          decisionEvidenceSequence: metrics.decisionGroundingRoundTripCount
-            ? null
-            : latestDecisionEvidenceSequence(state),
         });
         recordPromptMetrics(metrics, execution);
-        if (execution.decisionGroundingInjected) metrics.decisionGroundingRoundTripCount += 1;
         metrics.aiResponsePromptCount += 1;
         metrics.pipelineTaskCounts[task.type] = Number(metrics.pipelineTaskCounts[task.type] ?? 0) + 1;
       } else if (AI_RESPONSE_TASKS.includes(task.type)) {
@@ -611,13 +576,9 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
             playerId: task.playerId,
             slotId: task.slotId ?? '',
             generationDepth,
-            decisionEvidenceSequence: metrics.decisionGroundingRoundTripCount
-              ? null
-              : latestDecisionEvidenceSequence(state),
           });
           recordPromptMetrics(metrics, execution);
-          if (execution.decisionGroundingInjected) metrics.decisionGroundingRoundTripCount += 1;
-          metrics.aiResponsePromptCount += 1;
+            metrics.aiResponsePromptCount += 1;
           metrics.pipelineTaskCounts[task.type] = Number(metrics.pipelineTaskCounts[task.type] ?? 0) + 1;
         }
       } else if (task.type === 'private-notification') {
@@ -667,29 +628,6 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
       assert.ok(metrics.humanPublicSpeechCount >= 3, '人間本人が3巡の公開発言経路を通る');
       assert.equal(state.aiTurns.some((turn) => turn.playerId === human.id && turn.taskType === 'speech'), false, '人間発言をAI発言として保存しない');
     }
-    assert.equal(metrics.decisionGroundingRoundTripCount, 1, '実在公開番号を含む判断根拠を1件だけ本番経路へ通す');
-    const groundedTurn = state.aiTurns.find((turn) => turn.parsedDecisionUpdate?.grounding?.evidenceEventSequences?.length);
-    assert.ok(groundedTurn, '解析済み判断根拠がAIターンへ保存される');
-    assert.equal(Object.hasOwn(groundedTurn.parsedDecisionUpdate.grounding, 'cause'), false, '解析済み判断根拠へシステム変更原因を混在させない');
-    assert.deepEqual(Object.keys(groundedTurn.parsedDecisionUpdate.grounding).sort(), [
-      'correctedSpeechSequences',
-      'evidenceEventSequences',
-    ]);
-    const expectedRevisionCause = groundedTurn.taskType === 'vote' ? 'vote-pressure' : 'new-public-evidence';
-    assert.equal(groundedTurn.resolvedDecisionUpdate.revisionCause, expectedRevisionCause, '変更原因はタスク種別から解決し、解決済み判断だけへ保存する');
-
-    const imported = prepareImportedState(JSON.parse(JSON.stringify(state)));
-    assertValidState(imported, '完成ゲームJSON再読込後');
-    assert.deepEqual(imported.aiTurns, state.aiTurns, 'AI構造化回答はエクスポート・インポート後も維持する');
-
-    const importedGroundedTurn = imported.aiTurns.find((turn) => turn.id === groundedTurn.id);
-    assert.deepEqual(importedGroundedTurn?.parsedDecisionUpdate?.grounding, groundedTurn.parsedDecisionUpdate.grounding, '判断根拠参照はJSON再読込後も維持する');
-    const invalidParsedCauseState = JSON.parse(JSON.stringify(state));
-    const invalidGroundedTurn = invalidParsedCauseState.aiTurns.find((turn) => turn.id === groundedTurn.id);
-    invalidGroundedTurn.parsedDecisionUpdate.grounding.cause = 'new-public-evidence';
-    const invalidParsedCauseValidation = validateImportedState(invalidParsedCauseState);
-    assert.equal(invalidParsedCauseValidation.ok, false, '解析済み判断根拠へ変更原因を混在させた保存状態を拒否する');
-    assert.ok(invalidParsedCauseValidation.errors.some((error) => error.includes('解析済み判断根拠が不正')));
 
     return {
       state,
@@ -706,13 +644,13 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
   }
 }
 
-test('初期3巡設定で全AIの1ゲームを実回答の本番経路で完走する', async () => {
+test('初期3巡設定で全AIの1ゲームをデモAI統合経路で完走する', async () => {
   const { metrics } = await runProductionPlaythrough();
   assert.equal(metrics.humanPlayerId, null);
   console.log(`PLAYTHROUGH_ALL_AI ${JSON.stringify(metrics)}`);
 });
 
-test('初期3巡設定で1人間プレイヤーを含む1ゲームを分離経路で完走する', async () => {
+test('初期3巡設定で1人間プレイヤーを含む1ゲームをデモAI統合経路で完走する', async () => {
   const { metrics } = await runProductionPlaythrough({ humanPlayer: true, generationDepth: 4 });
   assert.ok(metrics.humanPlayerId);
   assert.ok(metrics.deepResultRenderPromptCount > 0, '深度4の感想発言化工程を本番経路で検証する');
