@@ -21,6 +21,7 @@ import {
   validatePublicAbilityClaim,
 } from '../../domain/policies/publicAbilityClaimPolicy.js';
 import { getFactionStrategyProfile } from '../../domain/roles/roleAttributes.js';
+import { validateAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import { getFactionStrategyFields } from '../../domain/game/factionStrategyState.js';
 import { stableStringify } from '../../shared/utils.js';
 
@@ -73,7 +74,8 @@ export function validateDerivedAndAiState(context) {
     const source = events.find((event) => event.id === claim.sourceEventId);
     if (!source) errors.push(`${label}: 能力結果主張の発言イベント参照先がありません。`);
     else if (claim.status === 'active' && source.status !== 'published') errors.push(`${label}: 無効な公開発言由来の能力結果がactiveです。`);
-    if (!Number.isInteger(Number(claim.observedDay)) || Number(claim.observedDay) < 1 || Number(claim.observedDay) > Number(claim.announcedDay)) errors.push(`${label}: 能力結果主張の日付が不正です。`);
+    validateAbilityClaimTiming(claim.claimedRoleId, claim, { announcedDay: claim.announcedDay })
+      .forEach((message) => errors.push(`${label}: ${message}`));
     if (!PUBLIC_ABILITY_RESULTS.includes(claim.result)) errors.push(`${label}: 能力結果主張のresultが不正です。`);
     if (!ABILITY_SELECTION_BASE_SET.has(claim.selectionBasis)) errors.push(`${label}: 能力結果主張のselectionBasisが不正です。`);
     checkEventIds(claim.evidenceEventIds, '能力結果主張の公開根拠イベント');
@@ -92,7 +94,7 @@ export function validateDerivedAndAiState(context) {
   });
   const abilityDayKeys = new Set();
   (raw.publicAbilityClaims ?? []).filter((claim) => claim.status === 'active').forEach((claim) => {
-    const key = `${claim.actorId}:${claim.claimedRoleId}:${claim.observedDay}`;
+    const key = `${claim.actorId}:${claim.claimedRoleId}:${claim.actionDay}`;
     if (abilityDayKeys.has(key)) errors.push(`${label}: 同一人物・同一役職・同一Dayの能力結果主張が複数あります。`);
     abilityDayKeys.add(key);
   });

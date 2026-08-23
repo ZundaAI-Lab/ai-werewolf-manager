@@ -7,6 +7,7 @@ import { isNormalSpeechTask } from '../config/discussionAiTaskTypes.js';
 import { APP_VERSION, PROMPT_SPEC_VERSION, ROLE_DEFINITIONS } from '../config/constants.js';
 import { BUILD_ID } from '../../generated/buildInfo.js';
 import { validatePlayerDisplayName } from '../domain/policies/playerIdentityPolicy.js';
+import { buildAbilityClaimTiming } from '../domain/policies/abilityClaimTimingPolicy.js';
 import { CHARACTER_TEXT_LIMITS } from '../characters/config/characterTextPolicyAdapter.js';
 
 import { findLatestNormalAiRegistrationTurn } from '../domain/game/aiTurnRegistrationPolicy.js';
@@ -83,7 +84,7 @@ export class AppUI {
     this.aiExecutionSettings = { executionMode: 'automatic', profiles: [], assignments: {} };
     this.aiExecutionSettingsSignature = '';
     this.manualGenerationSessions = new Map();
-    this.publicHistoryTransmissionMode = 'compact';
+    this.publicHistoryTransmissionMode = 'delta';
     this.forceFullPublicHistoryPlayerIds = new Set();
     this.selectedWolfSpeakerId = null;
     this.selectedMasonSpeakerId = null;
@@ -240,7 +241,7 @@ export class AppUI {
   }
 
   setPublicHistoryTransmissionMode(mode) {
-    const next = ['full', 'compact', 'delta'].includes(mode) ? mode : 'compact';
+    const next = ['full', 'compact', 'delta'].includes(mode) ? mode : 'delta';
     if (this.publicHistoryTransmissionMode === next) return;
     this.publicHistoryTransmissionMode = next;
     this.promptCache.clear();
@@ -414,6 +415,7 @@ export class AppUI {
     // 機密表示に依存しない設定画面を再描画すると、AIプロファイル等の未保存フォームDOMを置換してしまう。
     // 実際に表示内容が変わる画面だけを更新し、自動進行用ライブビューは専用イベント側で更新する。
     if (['workbench', 'records', 'public'].includes(this.activeTab)) this.render();
+    else this.relationshipDialogController.refresh();
     window.dispatchEvent(new CustomEvent('ai-werewolf-confidential-visibility-changed', {
       detail: { visible: this.showConfidential },
     }));
@@ -764,6 +766,7 @@ export class AppUI {
 
   refreshAppearance() {
     this.publicWindowController.setAppearance(this.getAppearance());
+    this.relationshipDialogController.refreshAppearance();
     if (this.activeTab === 'public') this.render();
   }
 
@@ -923,7 +926,7 @@ export class AppUI {
         claimedRoleId: this._controlValue(`${prefix}:role`, ''),
         targetId,
         result: this._controlValue(`${prefix}:result`, ''),
-        observedDay: Number(this._controlValue(`${prefix}:day`, String(index))),
+        ...(buildAbilityClaimTiming(this._controlValue(`${prefix}:role`, ''), Number(this._controlValue(`${prefix}:day`, String(offset)))) ?? {}),
         selectionBasis: this._controlValue(`${prefix}:basis`, 'no-public-information'),
         evidenceEventIds,
         selectionReasonAtTime: String(this._controlValue(`${prefix}:reason`, '')).trim(),
@@ -954,7 +957,7 @@ export class AppUI {
         claimedRoleId: this._controlValue(`${prefix}:role`, ''),
         targetId,
         result: this._controlValue(`${prefix}:result`, ''),
-        observedDay: Number(this._controlValue(`${prefix}:day`, String(index))),
+        ...(buildAbilityClaimTiming(this._controlValue(`${prefix}:role`, ''), Number(this._controlValue(`${prefix}:day`, String(offset)))) ?? {}),
         selectionBasis: this._controlValue(`${prefix}:basis`, 'no-public-information'),
         evidenceEventIds,
         selectionReasonAtTime: String(this._controlValue(`${prefix}:reason`, '')).trim(),

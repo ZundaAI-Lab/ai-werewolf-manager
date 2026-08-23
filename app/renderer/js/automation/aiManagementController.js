@@ -56,11 +56,14 @@ export function createAiManagementController(context) {
     switchProfileEditorTab,
     syncProfileProviderFields,
     updateProfileEditorPreview,
-    updateManagementReadouts,
-    applyManagementExecutionModeUi,
   } = profileEditorController;
   const { exportSelectedProfileJson, importProfileJsonFile } = aiProfileTransferController;
-  const { saveAssignment, showBulkAssignmentFeedback } = assignmentController;
+  const {
+    updateManagementReadouts,
+    applyManagementExecutionModeUi,
+    saveAssignment,
+    showBulkAssignmentFeedback,
+  } = assignmentController;
   const {
     testProfile,
     generationCandidateAnswer,

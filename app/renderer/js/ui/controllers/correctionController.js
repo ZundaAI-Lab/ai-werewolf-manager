@@ -8,6 +8,7 @@
 import { PHASE_LABELS } from '../../config/constants.js';
 import { correctPublicEventWithMode, correctRoleAssignmentWithMode, editConfirmedEvent } from '../../domain/correction/correctionCommands.js';
 import { recommendRestorePointForProgressionEvent, restoreGameFromPoint, summarizeRestoreImpact } from '../../domain/correction/restoreCorrectionService.js';
+import { buildAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import { getNightActionCandidates, getVoteCandidates } from '../../domain/game/standardRules.js';
 import { escapeHtml } from '../../shared/utils.js';
 import { option, playerOptions } from '../components/components.js';
@@ -66,7 +67,7 @@ export function createCorrectionController({
               actionType: abilityRoleId === 'medium' ? 'medium' : abilityRoleId === 'guard' ? 'guard' : 'inspect',
               targetId: abilityTargetId === 'none' ? null : abilityTargetId,
               result: abilityResult === 'none' ? '' : abilityResult,
-              observedDay: Number(controlValue('correction-ability-day', '0')),
+              ...(buildAbilityClaimTiming(abilityRoleId, Number(controlValue('correction-ability-day', '0'))) ?? {}),
               selectionBasis: controlValue('correction-ability-basis', 'no-public-information'),
               evidenceEventIds: String(controlValue('correction-ability-evidence', ''))
                 .split(/\s*,\s*/u)

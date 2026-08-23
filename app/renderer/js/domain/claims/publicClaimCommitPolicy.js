@@ -17,11 +17,11 @@ function activeClaimRoleId(state, playerId) {
 
 function normalizeAbilityClaim(state, playerId, claim, claimedRoleAfter) {
   const claimedRoleId = claim.claimedRoleId ?? claim.roleId ?? claimedRoleAfter;
-  const observedDay = Number(claim.observedDay ?? claim.resultDay ?? state.game.day);
+  const actionDay = Number(claim.actionDay);
   const targetId = claim.targetId ?? null;
   const forced = resolvePublicAbilityClaimRequirements(state, {
     roleId: claimedRoleId,
-    observedDay,
+    actionDay,
     targetId,
   });
   return {
@@ -31,7 +31,10 @@ function normalizeAbilityClaim(state, playerId, claim, claimedRoleAfter) {
     actionType: claim.actionType ?? getPublicAbilityClaimDefinition(claimedRoleId)?.actionType ?? null,
     targetId,
     result: claim.result,
-    observedDay,
+    actionDay,
+    actionPhase: String(claim.actionPhase ?? ''),
+    availableDay: Number(claim.availableDay),
+    availablePhase: String(claim.availablePhase ?? ''),
     selectionBasis: claimedRoleId === 'medium'
       ? forced.selectionBasis
       : String(claim.selectionBasis ?? ''),

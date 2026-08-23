@@ -1,6 +1,6 @@
 /**
  * 責務: 公開HTML出力と公開ウィンドウの生成・同期、および公開表示専用外観の反映を所有する。
- * 変更ルール: ゲーム規則を独自実装せず、store・機密表示取得・通知だけを明示依存として受け取る。公開表示の外観はsetAppearanceで受け取ったスナップショットだけを保持し、AppUI全体へ依存しない。公開ウィンドウ参照も本Controllerだけで保持する。公開HTMLは出力時点の機密表示状態に対応するスナップショットだけを生成して渡し、非表示出力では機密スナップショット自体を生成しない。公開専用ウィンドウはhtml要素へ専用クラスを付与し、通常画面の固定レイアウトと独立して全文を縦スクロールできる状態を維持する。
+ * 変更ルール: ゲーム規則を独自実装せず、store・機密表示取得・通知だけを明示依存として受け取る。公開表示の外観はsetAppearanceで受け取ったスナップショットだけを保持し、AppUI全体へ依存しない。公開ウィンドウ参照も本Controllerだけで保持する。公開HTMLは出力時点の機密表示状態に対応するスナップショットだけを生成して渡し、非表示出力では機密スナップショット自体を生成しない。公開専用ウィンドウはhtml要素へ専用クラスを付与し、通常画面の固定レイアウトと独立して全文を縦スクロールできる状態を維持する。Electron子ウィンドウのホイール入力は本Controllerで公開documentのscrollingElementへ明示的に接続し、CSSのルートスクロール解釈だけへ依存しない。
  */
 
 // @ts-check
@@ -18,6 +18,30 @@ export function createPublicWindowController({ store, getConfidential, toast }) 
 
   let publicWindow = null;
   let appearance = null;
+
+  function bindPublicWindowWheelScroll(targetWindow) {
+    const document = targetWindow?.document;
+    if (!document || document.documentElement?.dataset.publicWheelBound === 'true') return;
+    document.documentElement.dataset.publicWheelBound = 'true';
+    targetWindow.addEventListener('wheel', (event) => {
+      if (event.ctrlKey || !Number.isFinite(event.deltaY) || event.deltaY === 0) return;
+      const scroller = document.scrollingElement ?? document.documentElement;
+      const maximumScrollTop = Math.max(0, Number(scroller.scrollHeight ?? 0) - Number(scroller.clientHeight ?? 0));
+      if (maximumScrollTop <= 0) return;
+      const deltaUnit = event.deltaMode === 1
+        ? 40
+        : event.deltaMode === 2
+          ? Math.max(1, Number(scroller.clientHeight ?? 0))
+          : 1;
+      const nextScrollTop = Math.max(0, Math.min(
+        maximumScrollTop,
+        Number(scroller.scrollTop ?? 0) + (event.deltaY * deltaUnit),
+      ));
+      if (nextScrollTop === Number(scroller.scrollTop ?? 0)) return;
+      event.preventDefault();
+      scroller.scrollTop = nextScrollTop;
+    }, { passive: false });
+  }
 
   function _exportPublicHtml() {
     const state = store.getState();
@@ -65,6 +89,7 @@ export function createPublicWindowController({ store, getConfidential, toast }) 
 </html>`);
       publicWindow.document.close();
       applyPublicAppearance(appearance, publicWindow.document);
+      bindPublicWindowWheelScroll(publicWindow);
       try { publicWindow.opener = null; } catch {}
     }
     _updatePublicWindow();

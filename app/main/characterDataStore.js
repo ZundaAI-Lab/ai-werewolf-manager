@@ -6,7 +6,7 @@
 'use strict';
 
 const { existsSync, readFileSync, readdirSync } = require('node:fs');
-const { dirname, join, normalize, relative, resolve } = require('node:path');
+const { dirname, isAbsolute, join, relative, resolve, sep } = require('node:path');
 
 const CATALOG_SCHEMA_VERSION = 1;
 const GROUP_SCHEMA_VERSION = 1;
@@ -20,13 +20,14 @@ function parseJson(path, label) {
   }
 }
 
-function resolveInside(root, baseDirectory, relativePath, label) {
+function resolveInside(baseDirectory, relativePath, label) {
   const value = String(relativePath ?? '').trim();
   if (!value) throw new Error(`${label}のパスが空です。`);
-  const absolute = resolve(baseDirectory, normalize(value));
-  const rootRelative = relative(resolve(root), absolute).replaceAll('\\', '/');
-  if (rootRelative === '..' || rootRelative.startsWith('../')) {
-    throw new Error(`${label}がキャラクターデータ領域外を参照しています。`);
+  const base = resolve(baseDirectory);
+  const absolute = resolve(base, value);
+  const baseRelative = relative(base, absolute);
+  if (isAbsolute(baseRelative) || baseRelative === '..' || baseRelative.startsWith(`..${sep}`)) {
+    throw new Error(`${label}が同一キャラクターグループ外を参照しています。`);
   }
   return absolute;
 }
@@ -75,7 +76,7 @@ function readCharacterDataCatalog(dataRoot) {
     groupIds.add(id);
 
     const characters = group.characters.map((characterRef, characterIndex) => {
-      const characterPath = resolveInside(root, groupDirectory, characterRef, `${name}.characters[${characterIndex}]`);
+      const characterPath = resolveInside(groupDirectory, characterRef, `${name}.characters[${characterIndex}]`);
       const character = parseJson(characterPath, `${name}のキャラクター${characterIndex + 1}`);
       if (character?.schemaVersion !== CHARACTER_SCHEMA_VERSION) throw new Error(`${name}のキャラクター${characterIndex + 1}のschemaVersionが不正です。`);
       const characterId = String(character?.id ?? '').trim();

@@ -48,3 +48,67 @@ test('単一公開HTMLはタイトルをエスケープし実行scriptを許可�
   assert.equal(html.includes("script-src 'none'"), true);
   assert.equal(html.includes('<script'), false);
 });
+
+
+test('公開別ウィンドウのホイール入力は表示documentの縦スクロールへ反映する', async (t) => {
+  const { createPublicWindowController } = await import(moduleUrl('ui/controllers/publicWindowController.js'));
+  const previousWindow = global.window;
+  t.after(() => {
+    if (previousWindow === undefined) delete global.window;
+    else global.window = previousWindow;
+  });
+
+  const wheelListeners = [];
+  const scrollingElement = { scrollHeight: 2400, clientHeight: 600, scrollTop: 120 };
+  const documentElement = { dataset: {} };
+  const publicRoot = { innerHTML: '' };
+  const popup = {
+    closed: false,
+    opener: {},
+    document: {
+      documentElement,
+      scrollingElement,
+      write() {},
+      close() {},
+      querySelector(selector) { return selector === '#public-root' ? publicRoot : null; },
+    },
+    addEventListener(type, listener) {
+      if (type === 'wheel') wheelListeners.push(listener);
+    },
+    focus() {},
+  };
+  global.window = {
+    location: { href: 'file:///tmp/renderer/index.html' },
+    open() { return popup; },
+  };
+
+  const state = {
+    schemaVersion: 1,
+    publicRevision: 0,
+    game: { title: '公開テスト', status: 'setup', day: 0, phase: 'setup' },
+    players: [],
+    claims: [],
+    publicAbilityClaims: [],
+    events: [],
+    result: null,
+  };
+  const controller = createPublicWindowController({
+    store: { getState: () => state },
+    getConfidential: () => false,
+    toast: () => {},
+  });
+
+  controller._openPublicWindow();
+  assert.equal(wheelListeners.length, 1);
+
+  let prevented = false;
+  wheelListeners[0]({
+    ctrlKey: false,
+    deltaY: 180,
+    deltaMode: 0,
+    preventDefault() { prevented = true; },
+  });
+
+  assert.equal(scrollingElement.scrollTop, 300);
+  assert.equal(prevented, true);
+});

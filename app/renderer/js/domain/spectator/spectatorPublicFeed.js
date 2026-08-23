@@ -5,6 +5,7 @@
 
 import { ROLE_DEFINITIONS, TEAM_LABELS } from '../../config/constants.js';
 import { publicAbilityResultLabel } from '../policies/publicAbilityClaimPolicy.js';
+import { formatAbilityClaimTiming } from '../policies/abilityClaimTimingPolicy.js';
 
 function cleanText(value) {
   return String(value ?? '').trim();
@@ -106,7 +107,7 @@ export function buildSpectatorPublicFeed(snapshot, { afterSequence = 0, includeF
     })),
     publicAbilityClaims: (snapshot.publicAbilityClaims ?? []).map((claim) => ({
       actorName: nameOf(snapshot, claim.actorId),
-      observedDay: Number(claim.observedDay ?? 0) || 0,
+      timing: formatAbilityClaimTiming(claim),
       roleLabel: abilityRoleLabel(claim.claimedRoleId),
       targetName: nameOf(snapshot, claim.targetId),
       resultLabel: publicAbilityResultLabel(claim.result, claim.claimedRoleId),

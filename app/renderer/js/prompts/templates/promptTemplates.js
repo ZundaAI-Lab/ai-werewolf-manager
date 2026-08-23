@@ -361,7 +361,7 @@ export function renderTaskVariableInstruction({
     case 'mason-conversation':
       return '参加者だけが閲覧できる共有者同士の夜会話です。';
     case 'graveyard-conversation':
-      return '死亡者だけが閲覧できる墓場会話です。あなたの公開知識は死亡時点で固定されています。死亡後の地上の出来事を観戦者のように補完せず、現在の墓場参加者や墓場ログから聞いた情報だけを追加で共有してください。';
+      return '死亡者だけが閲覧できる墓場会話です。墓場会話の主目的は、死亡者同士で生前の秘密を共有し、答え合わせや感想を交わすことです。自分だけが知っていた真役職、能力結果、仲間情報、騙りの意図、行動理由など、墓場でまだ共有されていない情報があれば優先して話してください。他の死亡者から新しい秘密や、自分の死亡後に地上で起きた出来事を聞いた場合は、それに対する驚き、納得、後悔、感想、生前の認識との違いなどを自然に返してください。あなたの公開知識は死亡時点で固定され、死亡後の地上情報は墓場で実際に共有された内容だけ追加で知ります。';
     case 'wolf-conversation':
       if (wolfConversationPurpose === 'opening-strategy') return renderOpeningWolfStrategyInstruction();
       if (wolfConversationPurpose === 'opening-strategy-and-attack') return renderOpeningAndAttackInstruction();
@@ -418,6 +418,10 @@ export function renderResponseFormat({
   attackAlternativeAvailable = true,
   exampleReferences = null,
   decisionPatchRequired = false,
+  reasoningModeId = null,
+  reasoningProfile = null,
+  isExecutionDecisionWindow = false,
+  isFinalDiscussionDecisionWindow = false,
 }) {
   const mode = getResponseModeForTask(taskType);
   if (taskType === 'briefing') return '応答不要';
@@ -434,6 +438,10 @@ export function renderResponseFormat({
     attackAlternativeAvailable,
     exampleReferences,
     decisionPatchRequired,
+    reasoningModeId,
+    reasoningProfile,
+    isExecutionDecisionWindow,
+    isFinalDiscussionDecisionWindow,
   });
 }
 
@@ -502,6 +510,10 @@ export function renderFinalResponseReminder({
   attackAlternativeAvailable = true,
   exampleReferences = null,
   decisionPatchRequired = false,
+  reasoningModeId = null,
+  reasoningProfile = null,
+  isExecutionDecisionWindow = false,
+  isFinalDiscussionDecisionWindow = false,
 } = {}) {
   if (taskType === 'briefing') return '応答不要';
   const mode = getResponseModeForTask(taskType);
@@ -518,6 +530,10 @@ export function renderFinalResponseReminder({
     attackAlternativeAvailable,
     exampleReferences,
     decisionPatchRequired,
+    reasoningModeId,
+    reasoningProfile,
+    isExecutionDecisionWindow,
+    isFinalDiscussionDecisionWindow,
   });
   const outputConstraints = renderFinalOutputConstraints({
     taskType,
@@ -646,6 +662,7 @@ export function renderDynamicTaskPrompt(model) {
     model.masonConversationSection,
     model.wolfConversationSection,
     gameStateSection(model.gameStateDataBlock),
+    model.roleCompositionSituationGuideSection,
     optionalSection('前回発言との差分判定用の自分の直近公開発言', model.latestOwnSpeechDataBlock),
     optionalSection('差分送信時のあなたの直近公開発言', model.deltaSelfSpeechDataBlock),
     optionalSection(model.publicHistoryTitle, model.publicHistoryDataBlock),

@@ -1,9 +1,10 @@
 /**
  * 責務: Renderer上のキャラクターライブラリ編集要求、キャラ単位の使用状態、グループ順・キャラクター順をMainへ渡し、成功時だけカタログスナップショットを更新する。
- * 変更ルール: 組み込みJSONを編集対象へ変換しない。具体的なグループ名・キャラクター名を持たず、ユーザーグループだけをJSON入出力対象とする。ユーザーキャラクター作成時は名前以外を任意とし、内部で必要な標準設定は共通既定値から生成する。文字数検証はキャラクター保存・JSON取込で指定した対象だけMainに要求し、削除・並び替え・使用切替・複製・グループ編集では既存キャラクターを再検証しない。組み込み側の変更は使用状態と並び順のメタデータに限定する。
+ * 変更ルール: 組み込みJSONを編集対象へ変換しない。ユーザーライブラリ総サイズは共有userCharacterLibraryPolicyを正本とし、Main保存境界でも再検証する。具体的なグループ名・キャラクター名を持たず、ユーザーグループだけをJSON入出力対象とする。ユーザーキャラクター作成時は名前以外を任意とし、内部で必要な標準設定は共通既定値から生成する。文字数検証はキャラクター保存・JSON取込で指定した対象だけMainに要求し、削除・並び替え・使用切替・複製・グループ編集では既存キャラクターを再検証しない。組み込み側の変更は使用状態と並び順のメタデータに限定する。
  */
 
 import { DEFAULT_CHARACTER } from '../../config/constants.js';
+import { USER_CHARACTER_LIBRARY_MAX_BYTES } from '../config/userCharacterLibraryPolicyAdapter.js';
 import {
   getBuiltinCharacterGroups,
   getCharacterGroups,
@@ -14,6 +15,7 @@ import {
 
 export const USER_CHARACTER_LIBRARY_FORMAT = 'ai-werewolf-character-library';
 export const USER_CHARACTER_LIBRARY_SCHEMA_VERSION = 1;
+export { USER_CHARACTER_LIBRARY_MAX_BYTES };
 
 function clone(value) {
   return typeof structuredClone === 'function'

@@ -21,6 +21,7 @@ import { closeGraveyardConversation, recordGraveyardMessage } from '../../../app
 import { initializeNight } from '../../../app/renderer/js/domain/night/nightRuntime.js';
 import { getCurrentGmTask } from '../../../app/renderer/js/domain/game/workflow.js';
 import { buildPlayerVisibleContext } from '../../../app/renderer/js/prompts/context/promptContext.js';
+import { buildPromptContext } from '../../../app/renderer/js/prompts/promptBuilder.js';
 import { detectGameResult, confirmGameResult, publishGameResult } from '../../../app/renderer/js/domain/result/resultRuntime.js';
 import { buildPublicSnapshot } from '../../../app/renderer/js/public/publicSnapshot.js';
 import { prepareImportedState } from '../../../app/renderer/js/state/stateImport.js';
@@ -352,6 +353,58 @@ test('その夜に新しく死亡した者は途中参加せず、次の夜か�
   initializeNight(state, 2);
   const secondSession = state.graveyardConversations.find((item) => item.id === state.night.graveyardConversationId);
   assert.deepEqual(new Set(secondSession.participantIds), new Set([first.id, second.id, newcomer.id]));
+});
+
+
+test('墓場プロンプトは生前判断を再提示せず、新規死亡者と継続参加者で秘密共有・感想の焦点を切り替える', () => {
+  const state = createInitialState(6);
+  state.game.status = 'running';
+  state.game.rules.graveyardCommunication.enabled = true;
+  state.game.rules.graveyardCommunication.speechCountPerNight = 1;
+  state.game.rules.wolfCommunication.enabled = false;
+  state.game.rules.masonCommunication.enabled = false;
+  const [first, second, newcomer] = state.players.filter((player) => player.roleId !== 'wolf').slice(0, 3);
+  const living = state.players.find((player) => ![first.id, second.id, newcomer.id].includes(player.id));
+  markDead(first);
+  markDead(second);
+  first.decisionState = {
+    ...first.decisionState,
+    suspicionCandidateIds: living ? [living.id] : [],
+    executionCandidateIds: living ? [living.id] : [],
+    intendedVoteId: living?.id ?? null,
+    assessmentLevel: 'moderate',
+    nextDiscriminatingInformation: '生前の次の確認事項',
+    decisionReason: '生前の判断理由',
+    updatedAt: '2026-08-22T00:00:00.000Z',
+    sourceDay: 1,
+  };
+
+  initializeNight(state, 1);
+  const firstPrompt = buildPromptContext(state, first.id, { taskType: 'graveyard-conversation' });
+  assert.match(firstPrompt.text, /墓場会話の主目的は、死亡者同士で生前の秘密を共有し、答え合わせや感想を交わす/u);
+  assert.doesNotMatch(firstPrompt.text, /memoAdd/u);
+  assert.match(firstPrompt.text, /participantStatus.*new/us);
+  assert.doesNotMatch(firstPrompt.text, /previous-decision-state|生前の判断理由|生前の次の確認事項/u);
+
+  assert.equal(recordGraveyardMessage(state, { speakerId: first.id, content: '私は生前こう見ていたよ。' }).ok, true);
+  assert.equal(recordGraveyardMessage(state, { speakerId: second.id, content: 'こっちは役職の秘密があるよ。' }).ok, true);
+  state.game.day = 2;
+  state.game.phase = 'execution';
+  publicExecutionDeath(state, newcomer, '新規死亡者が処刑された');
+  initializeNight(state, 2);
+
+  const newcomerPrompt = buildPromptContext(state, newcomer.id, { taskType: 'graveyard-conversation' });
+  assert.match(newcomerPrompt.text, /participantStatus.*new/us);
+  assert.match(newcomerPrompt.text, /墓場側が知らなかった秘密/u);
+
+  const returningBefore = buildPromptContext(state, first.id, { taskType: 'graveyard-conversation' });
+  assert.match(returningBefore.text, /participantStatus.*returning/us);
+  assert.match(returningBefore.text, /前夜までの墓場会話/u);
+
+  assert.equal(recordGraveyardMessage(state, { speakerId: newcomer.id, content: '実は私は占い師だったよ。' }).ok, true);
+  const returningAfter = buildPromptContext(state, first.id, { taskType: 'graveyard-conversation' });
+  assert.match(returningAfter.text, /newcomerMessageSpeakers/u);
+  assert.match(returningAfter.text, /驚き、納得、後悔/u);
 });
 
 test('墓場AIの公開知識は本人の死亡時点で凍結し、後の地上情報は新規死亡者の墓場発言からだけ共有される', () => {

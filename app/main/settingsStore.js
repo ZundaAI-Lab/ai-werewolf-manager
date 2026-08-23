@@ -16,7 +16,7 @@
  * - ゲームIDやチャットセッションIDは詳細ログ用メタデータに留め、料金集計の階層キーにしない。
  * - プロファイル単位リセットは該当プロファイル累計だけを全体累計から差し引き、他プロファイル・詳細ログを変更しない。
  * - 詳細ログは保存直前に認証ヘッダー・APIキー形式をマスクし、POSIXでは現行ログとローテーション世代を0600へ制限する。
- * - ゲームID・AIプロファイルID・割り当てプレイヤーIDはMain境界で再検証し、AIプロファイルIDの重複はランダム修復せず拒否し、APIキーは配列位置ではなくIDで引き継ぐ。
+ * - ゲームID・AIプロファイルID・割り当てプレイヤーIDはMain境界で再検証し、AIプロファイルIDの重複はランダム修復せず拒否する。APIキーは配列位置ではなくIDで追跡し、カスタム接続先ではproviderと正規化済みendpointの両方が一致する場合だけ引き継ぐ。
  * - プロファイル別集計と参加者割り当ての動的キーはnull prototypeオブジェクトで保持する。
  */
 
@@ -245,7 +245,7 @@ function createDefaultSettings() {
       autoPublish: true,
     },
     aiOptions: {
-      publicHistoryMode: 'compact',
+      publicHistoryMode: 'delta',
       apiErrorAction: 'retry',
       responseRecoveryMode: 'repair-regenerate',
       apiLogScope: 'errors',
@@ -336,6 +336,12 @@ function sanitizeProfile(raw, index = 0) {
   };
 }
 
+function canReuseEncryptedApiKey(previous, profile) {
+  if (!previous || previous.provider !== profile.provider) return false;
+  if (!CUSTOM_ENDPOINT_PROVIDERS.has(profile.provider)) return true;
+  return previous.endpoint === profile.endpoint;
+}
+
 function uniqueProfiles(rawProfiles) {
   const source = Array.isArray(rawProfiles) ? rawProfiles.slice(0, MAX_PROFILE_COUNT) : [];
   const seen = new Set();
@@ -363,7 +369,9 @@ function normalizeAssignments(rawAssignments, profileIds) {
 }
 
 function normalizeAiOptions(raw, defaults) {
-  const publicHistoryMode = ['full', 'compact', 'delta'].includes(raw?.publicHistoryMode) ? raw.publicHistoryMode : 'compact';
+  const publicHistoryMode = ['full', 'compact', 'delta'].includes(raw?.publicHistoryMode)
+    ? raw.publicHistoryMode
+    : (['full', 'compact', 'delta'].includes(defaults?.publicHistoryMode) ? defaults.publicHistoryMode : 'delta');
   const apiErrorAction = ['retry', 'full-history-retry', 'stop'].includes(raw?.apiErrorAction)
     ? raw.apiErrorAction
     : defaults.apiErrorAction;
@@ -689,8 +697,8 @@ class SettingsStore {
     normalizedBase.profiles = normalizedBase.profiles.map((profile) => {
       const incoming = incomingById.get(profile.id) ?? {};
       const previous = previousById.get(profile.id);
-      // プロバイダー変更時は別サービスの秘密鍵を暗黙に再利用しない。
-      let apiKeyEncrypted = previous?.provider === profile.provider ? previous.apiKeyEncrypted : '';
+      // カスタム接続先はendpoint全体まで秘密鍵のスコープとし、別送信先へ暗黙に再利用しない。
+      let apiKeyEncrypted = canReuseEncryptedApiKey(previous, profile) ? previous.apiKeyEncrypted : '';
       if (incoming.clearApiKey === true) apiKeyEncrypted = '';
       const plain = String(incoming.apiKey ?? '');
       if (plain) {

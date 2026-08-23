@@ -12,6 +12,7 @@ import { buildPromptContext } from '../../../app/renderer/js/prompts/promptBuild
 import { buildPlayerVisibleContext } from '../../../app/renderer/js/prompts/context/promptContext.js';
 import { buildPublicSnapshot } from '../../../app/renderer/js/public/publicSnapshot.js';
 import { buildStandalonePublicHtml } from '../../../app/renderer/js/public/publicHtmlExport.js';
+import { buildPlayerRelationshipModel, captureDayEndPlayerRelationshipSnapshot, projectPlayerRelationshipSnapshot } from '../../../app/renderer/js/domain/records/playerRelationshipModel.js';
 import { correctPublicSpeech, enterCorrectionMode, publishGameResult, recordAiPriorityAnswer } from '../../../app/renderer/js/domain/game/gameRuntime.js';
 import { renderPublicSnapshot } from '../../../app/renderer/js/ui/views/public/publicView.js';
 import { createInitialState } from '../../../app/renderer/js/state/stateStore.js';
@@ -126,6 +127,39 @@ test('プロンプト盤面は未訂正発言へ自己IDだけの訂正系列を
   assert.equal(Object.hasOwn(ordinaryContext, 'correctionLineageIds'), false);
   assert.deepEqual(replacementContext.correctionLineageIds, [original.id, replacement.id]);
   assert.equal(replacementContext.sequence, original.sequence);
+});
+
+
+test('相関図は機密表示OFFでも疑い関係を表示し、真役職と内部確信度だけを秘匿する', () => {
+  const state = fixture();
+  const actor = state.players[0];
+  const target = state.players[2];
+  actor.decisionState = {
+    ...actor.decisionState,
+    suspicionCandidateIds: [target.id],
+    assessmentLevel: 'strong',
+    sourceDay: 1,
+  };
+
+  const publicModel = buildPlayerRelationshipModel(state, { showConfidential: false });
+  const publicActor = publicModel.nodes.find((node) => node.id === actor.id);
+  assert.equal(publicModel.edges.some((edge) => edge.type === 'suspicion' && edge.sourceId === actor.id && edge.targetId === target.id), true);
+  assert.deepEqual(publicActor.suspicionTargetIds, [target.id]);
+  assert.equal(publicActor.actualRoleId, null);
+  assert.equal(publicActor.suspicionStrength, null);
+
+  const confidentialModel = buildPlayerRelationshipModel(state, { showConfidential: true });
+  const confidentialActor = confidentialModel.nodes.find((node) => node.id === actor.id);
+  assert.equal(confidentialActor.actualRoleId, actor.roleId);
+  assert.equal(confidentialActor.suspicionStrength, 'strong');
+
+  const snapshot = captureDayEndPlayerRelationshipSnapshot(state);
+  const projected = projectPlayerRelationshipSnapshot(snapshot, { showConfidential: false, state });
+  const projectedActor = projected.nodes.find((node) => node.id === actor.id);
+  assert.equal(projected.edges.some((edge) => edge.type === 'suspicion' && edge.sourceId === actor.id && edge.targetId === target.id), true);
+  assert.deepEqual(projectedActor.suspicionTargetIds, [target.id]);
+  assert.equal(projectedActor.actualRoleId, null);
+  assert.equal(projectedActor.suspicionStrength, null);
 });
 
 test('心の声はGM監査で閲覧できるが通常公開と他AIプロンプトへ出ない', () => {

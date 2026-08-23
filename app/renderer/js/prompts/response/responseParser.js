@@ -1,6 +1,6 @@
 /**
  * 責務: AI応答の単一JSONオブジェクトを、公開発言・CO操作・能力結果主張・判断差分・判断根拠参照・陣営戦略差分・秘密会話・襲撃判断・雪女の推定候補・夜行動理由・心の声・内部メモへ厳密に構文分解する。
- * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、再帰解析によるRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。
+ * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、再帰解析によるRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。推理モード固有のdecisionPatch項目は解析済みターン内の思考整理情報として受理し、永続判断状態へ保存するかどうかはresponseValidator.js側の状態責務へ委譲する。
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
@@ -14,6 +14,19 @@ const MAX_JSON_NESTING_DEPTH = 64;
 const FACTION_STRATEGY_KEYS = new Set([
   'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
   'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
+]);
+
+const TURN_LOCAL_DECISION_TEXT_KEYS = Object.freeze([
+  'unresolvedPoint', 'responseImpact',
+  'changePoint', 'changeTrigger', 'changeNaturalness',
+  'conflictPoint', 'compatibleExplanation',
+  'commitmentAlignment', 'reversalExplanation',
+  'interactionAsymmetry', 'consensusIndependence', 'counterHypothesis',
+  'comparisonAxis', 'candidateDifference',
+]);
+
+const TURN_LOCAL_DECISION_LIST_KEYS = Object.freeze([
+  'supportingSignals', 'counterSignals', 'remainingHypotheses',
 ]);
 
 function parseStrictJson(text) {
@@ -359,19 +372,20 @@ function parseAbilityClaims(value, errors) {
       return { intent, sourceRef, selectionBasis, evidenceRefs, selectionReasonAtTime };
     }
 
-    const commonKeys = ['intent', 'roleId', 'resultDay', 'target', 'result'];
+    const commonKeys = ['intent', 'roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'];
     const item = validateExactKeys(claim, label, [...commonKeys, ...optionalSelectionKeys], commonKeys, errors);
     if (!item) return null;
     const roleId = parseString(item.roleId, `${label}.roleId`, errors);
-    let resultDay = null;
-    if (Object.hasOwn(item, 'resultDay') && item.resultDay !== null) {
-      resultDay = Number.isInteger(item.resultDay) && item.resultDay >= 1 ? item.resultDay : null;
-      if (resultDay === null) errors.push(`${label}.resultDayは1以上の整数で指定してください。`);
-    }
+    const actionDay = Number.isInteger(item.actionDay) && item.actionDay >= 0 ? item.actionDay : null;
+    if (actionDay === null) errors.push(`${label}.actionDayは0以上の整数で指定してください。`);
+    const actionPhase = parseString(item.actionPhase, `${label}.actionPhase`, errors);
+    const availableDay = Number.isInteger(item.availableDay) && item.availableDay >= 1 ? item.availableDay : null;
+    if (availableDay === null) errors.push(`${label}.availableDayは1以上の整数で指定してください。`);
+    const availablePhase = parseString(item.availablePhase, `${label}.availablePhase`, errors);
     const targetName = parseString(item.target, `${label}.target`, errors);
     const result = parseString(item.result, `${label}.result`, errors);
     if (roleId === 'medium') {
-      return { intent, roleId, resultDay, targetName, result, selectionBasis: '', evidenceRefs: [], selectionReasonAtTime: '' };
+      return { intent, roleId, actionDay, actionPhase, availableDay, availablePhase, targetName, result, selectionBasis: '', evidenceRefs: [], selectionReasonAtTime: '' };
     }
     let evidenceRefs = [];
     if (hasUsableOptionalValue(item, 'evidenceRefs')) {
@@ -389,7 +403,7 @@ function parseAbilityClaims(value, errors) {
         ? 'public-evidence'
         : 'no-public-information';
     const selectionReasonAtTime = parseOptionalStringField(item, 'selectionReasonAtTime', `${label}.selectionReasonAtTime`, errors);
-    return { intent, roleId, resultDay, targetName, result, selectionBasis, evidenceRefs, selectionReasonAtTime };
+    return { intent, roleId, actionDay, actionPhase, availableDay, availablePhase, targetName, result, selectionBasis, evidenceRefs, selectionReasonAtTime };
   }).filter(Boolean);
   if (!claims.length) return null;
   return { action: 'publish', count: claims.length, claims };
@@ -437,6 +451,14 @@ function parseDecisionPatch(value, errors, { responseMode = 'speech' } = {}) {
   if (allowedChangeKeys.includes('nextDiscriminatingInformation') && hasUsableOptionalValue(object, 'nextDiscriminatingInformation')) {
     changes.nextDiscriminatingInformation = text('nextDiscriminatingInformation');
   }
+  TURN_LOCAL_DECISION_TEXT_KEYS.forEach((key) => {
+    if (allowedChangeKeys.includes(key) && hasUsableOptionalValue(object, key)) changes[key] = text(key);
+  });
+  TURN_LOCAL_DECISION_LIST_KEYS.forEach((key) => {
+    if (allowedChangeKeys.includes(key) && hasUsableOptionalValue(object, key)) {
+      changes[key] = parseStringArray(object[key], `decisionPatch.${key}`, errors);
+    }
+  });
   if (!Object.keys(changes).length) return null;
   const correctedSpeechRefs = hasUsableOptionalValue(object, 'correctedSpeechRefs')
     ? parsePositiveIntegerRefs(object.correctedSpeechRefs, 'decisionPatch.correctedSpeechRefs', errors)

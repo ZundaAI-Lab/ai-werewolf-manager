@@ -15,6 +15,7 @@ import { normalizeName } from '../../shared/utils.js';
 import { buildClaimRolePolicy, isAbilityClaimRoleAllowed, validateCoOperationTransition } from '../../domain/claims/claimRolePolicy.js';
 import { resolveAiTruthfulAbilityClaimSource } from '../../domain/claims/aiAbilityClaimGroundingPolicy.js';
 import { getPlayer } from '../../domain/game/standardRules.js';
+import { canSpeakDuringDay } from '../../domain/game/playerStatus.js';
 import { countsAsWolf, getFactionStrategyProfile } from '../../domain/roles/roleAttributes.js';
 import { getPublicAbilityClaimDefinition, normalizePublicAbilityResult, resolvePublicAbilityClaimRequirements, validatePublicAbilityClaim } from '../../domain/policies/publicAbilityClaimPolicy.js';
 import { resolveAbilityEvidenceRefs } from '../../domain/policies/abilityClaimTimelinePolicy.js';
@@ -109,7 +110,7 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
     const label = `能力履歴${index + 1}`;
     let roleId = '';
     let target = null;
-    let resultDay = null;
+    let timing = null;
     let result = '';
 
     if (claim.intent === 'truthful') {
@@ -123,7 +124,12 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
       }
       roleId = grounded.source.roleId;
       target = getPlayer(state, grounded.source.targetId);
-      resultDay = grounded.source.observedDay;
+      timing = {
+        actionDay: grounded.source.actionDay,
+        actionPhase: grounded.source.actionPhase,
+        availableDay: grounded.source.availableDay,
+        availablePhase: grounded.source.availablePhase,
+      };
       result = grounded.source.result;
       if (!target) {
         errors.push(`${label}: truthful参照の対象が現在のゲーム状態に存在しません。`);
@@ -138,7 +144,12 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
       }
       if (resolvedTarget.certainty !== 'exact') warnings.push(`${label}の「${claim.targetName}」を${resolvedTarget.player.name}として解釈しました。`);
       target = resolvedTarget.player;
-      resultDay = Number(claim.resultDay);
+      timing = {
+        actionDay: Number(claim.actionDay),
+        actionPhase: String(claim.actionPhase ?? ''),
+        availableDay: Number(claim.availableDay),
+        availablePhase: String(claim.availablePhase ?? ''),
+      };
       result = normalizePublicAbilityResult(claim.result);
     }
 
@@ -152,12 +163,12 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
 
     const forced = resolvePublicAbilityClaimRequirements(state, {
       roleId,
-      observedDay: resultDay,
+      actionDay: timing.actionDay,
       targetId: target.id,
     });
     const evidence = roleId === 'medium'
       ? { errors: [], resolved: forced.requiredEvidenceEventIds.map((eventId) => state.events.find((event) => event.id === eventId)).filter(Boolean) }
-      : resolveAbilityEvidenceRefs(state, claim.evidenceRefs, resultDay);
+      : resolveAbilityEvidenceRefs(state, claim.evidenceRefs, timing.actionDay);
     errors.push(...evidence.errors.map((message) => `${label}: ${message}`));
 
     const resolved = {
@@ -167,7 +178,7 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
       actionType: getPublicAbilityClaimDefinition(roleId)?.actionType ?? null,
       targetId: target.id,
       result,
-      observedDay: resultDay,
+      ...timing,
       selectionBasis: roleId === 'medium' ? forced.selectionBasis : claim.selectionBasis,
       evidenceEventIds: evidence.resolved.map((event) => event.id),
       selectionReasonAtTime: roleId === 'medium' ? forced.selectionReasonAtTime : claim.selectionReasonAtTime,
@@ -182,7 +193,7 @@ function validateAbilityClaims(state, playerId, parsed, claimRolePolicy, errors,
     resolvedClaims.push(resolved);
     canonicalClaims.push({
       roleId,
-      resultDay,
+      ...timing,
       targetName: target.name,
       result,
       selectionBasis: roleId === 'medium' ? '' : claim.selectionBasis,
@@ -239,6 +250,10 @@ function validateSpeechInteraction(state, playerId, parsed, errors) {
     }
     if (!aliveIds.has(target.id)) {
       errors.push(`speechInteraction.questionTargetsの${target.name}は現在生存していません。`);
+      return;
+    }
+    if (!canSpeakDuringDay(state, target.id)) {
+      errors.push(`speechInteraction.questionTargets[${index}]の${target.name}は現在昼会話できません。`);
       return;
     }
     if (!questionTargetIds.includes(target.id)) questionTargetIds.push(target.id);
@@ -361,6 +376,8 @@ function validateDecisionUpdate(state, player, parsed, taskType, action, candida
     changes.intendedVoteId = intendedVote?.id ?? null;
   }
   if (taskType === 'vote' && action) changes.intendedVoteId = action.id;
+  // 継続判断状態へ保存するのは既存の状態項目だけ。推理モード固有のdecisionPatch項目は
+  // JSON例で今回の思考を誘導するターン内情報としてparsedDecisionUpdateへ残し、次ターンへ累積させない。
   [
     'assessmentLevel',
     'leaveAliveBenefit',

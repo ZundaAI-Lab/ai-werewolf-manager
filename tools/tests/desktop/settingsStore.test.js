@@ -74,6 +74,7 @@ test('現行schemaVersionでも保存形式が正規形でなければ既定値�
 
   const store = new SettingsStore(directory);
   assert.equal(store.publicSettings().executionMode, 'automatic');
+  assert.equal(store.publicSettings().aiOptions.publicHistoryMode, 'delta');
   assert.deepEqual(store.publicSettings().profiles.map((profile) => profile.id), ['profile-demo']);
 });
 
@@ -338,4 +339,42 @@ test('API使用量は要求ごとに同期書き込みせず明示flushで最新
   assert.equal(saved.totals.calls, 1);
   assert.equal(saved.totals.inputTokens, 12);
   assert.equal(store.flushUsageSummary(), false);
+});
+
+
+test('カスタム接続先のendpoint変更時は保存済みAPIキーを引き継がない', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-custom-endpoint-secret-scope-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      id: 'custom-main',
+      label: 'Custom',
+      provider: 'openai-compatible',
+      model: 'custom-model',
+      endpoint: 'https://gateway.example/service-a/v1/chat/completions',
+      apiKey: 'secret-a',
+    }],
+  });
+  assert.equal(store.decryptApiKey('custom-main'), 'secret-a');
+
+  const sameEndpoint = store.savePublicSettings({
+    ...store.publicSettings(),
+    profiles: [{ ...store.publicSettings().profiles[0] }],
+  });
+  assert.equal(sameEndpoint.profiles[0].hasApiKey, true);
+  assert.equal(store.decryptApiKey('custom-main'), 'secret-a');
+
+  const changedEndpoint = store.savePublicSettings({
+    ...sameEndpoint,
+    profiles: [{
+      ...sameEndpoint.profiles[0],
+      endpoint: 'https://gateway.example/service-b/v1/chat/completions',
+    }],
+  });
+  assert.equal(changedEndpoint.profiles[0].hasApiKey, false);
+  assert.equal(store.decryptApiKey('custom-main'), '');
 });

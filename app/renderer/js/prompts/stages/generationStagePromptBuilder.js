@@ -7,7 +7,7 @@
  * - draftへ生公開イベントを渡さずgenerationStageSourceの公開履歴射影を使用し、空値を除去したminified JSONだけを掲載する。
  * - 各工程の中間区画は判断・表現・意味ロックだけを説明し、AI向け必須出力・原則出力、主JSON例、返却キー、文字数制約は各工程末尾の最終確認へ一度だけ集約する。heartVoiceは文数を指定せずmaxHeartVoiceLengthの文字数上限だけを提示する。
  * - 回答検証上のrequiredTopLevelKeysは原則出力項目を省く根拠にせず、recommendedTopLevelKeysと主JSON例へ検証任意項目の生成機会を維持する。
- * - 公開発言量の人間向けラベルや長さ区分は中間工程へ出さず、会話開始・序盤反応に意味がある追加指示だけroleTaskData.promptGuidanceから引き継ぐ。
+ * - 公開発言量の人間向けラベルや長さ区分は中間工程へ出さず、会話開始・序盤反応に意味がある追加指示だけroleTaskData.promptGuidanceから引き継ぐ。通常昼議論第1巡の初期役職構成由来ガイドはpublicState内の解釈補助として直接生成と同じ条件で引き継ぐ。墓場会話では生存中のdecisionと昼推理用characterReasoningを草案へ再投入せず、memoAddをプロンプト契約から外して秘密共有・答え合わせ・感想の会話目的を維持する。
  * - 内部UUIDは雪女の明示ID契約以外へ出さず表示名またはイベント番号へ変換する。
  * - renderではsourceTextを唯一の意味正本とし、話者・口調・呼称・意味ロックだけを渡して他人の公開発言本文や候補全体を渡さない。
  * - 校正ではpublicSpeech以外、生の公開イベント、実役職、未許可区画を出力しない。
@@ -16,6 +16,7 @@
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
 import { publicAbilityResultLabel } from '../../domain/policies/publicAbilityClaimPolicy.js';
+import { formatAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import { renderPriorityAnswerSemanticRules, renderPublicSpeechSemanticRules, renderVoteReevaluationRule, renderWolfAttackSemanticRules } from '../policies/taskInstructionPolicy.js';
 import { renderVoteDecisionPatchGuidance } from '../policies/voteResponseGuidancePolicy.js';
 import { renderInternalReasoningDirective } from '../templates/characterReasoningDirectiveTemplates.js';
@@ -175,6 +176,7 @@ function draftPublicState(source) {
     publicLocks: sanitizePromptValue(source, source?.publicState?.publicLocks ?? {}),
     currentVoteState: sanitizePromptValue(source, source?.publicState?.currentVoteState ?? null),
     recentOutcomeSummary: sanitizePromptValue(source, source?.publicState?.recentOutcomeSummary ?? []),
+    roleCompositionSituationGuide: sanitizePromptValue(source, source?.publicState?.roleCompositionSituationGuide ?? null),
   };
 }
 
@@ -197,6 +199,7 @@ function draftRoleTaskData(source, taskType) {
   const result = sanitizePromptValue(source, roleTaskData);
   delete result.validTargetNames;
   delete result.validTargetIds;
+  if (taskType === 'graveyard-conversation') delete result.decision;
   if (taskType === 'freeze') {
     result.validTargetPlayers = (roleTaskData.validTargetIds ?? []).map((id) => ({
       id: String(id),
@@ -246,7 +249,10 @@ function compactCandidateAbilityClaims(value) {
     return {
       ...common,
       roleId: String(claim?.roleId ?? ''),
-      resultDay: Number(claim?.resultDay ?? 0),
+      actionDay: Number(claim?.actionDay ?? 0),
+      actionPhase: String(claim?.actionPhase ?? ''),
+      availableDay: Number(claim?.availableDay ?? 0),
+      availablePhase: String(claim?.availablePhase ?? ''),
       target: String(claim?.target ?? ''),
       result: String(claim?.result ?? ''),
     };
@@ -288,8 +294,8 @@ function formatPublishedAbilityClaims(source) {
     const actor = displayPlayerName(source, claim?.actorId);
     const target = displayPlayerName(source, claim?.targetId);
     const role = roleLabel(claim?.claimedRoleId ?? claim?.roleId);
-    const day = Number(claim?.observedDay ?? claim?.resultDay ?? 0);
-    return `Day ${day} ${actor}（${role}）→ ${target}: ${publicAbilityResultLabel(claim?.result, claim?.claimedRoleId ?? claim?.roleId)}`;
+    const timing = formatAbilityClaimTiming(claim);
+    return `${timing} ${actor}（${role}）→ ${target}: ${publicAbilityResultLabel(claim?.result, claim?.claimedRoleId ?? claim?.roleId)}`;
   });
 }
 
@@ -318,7 +324,9 @@ function effectivePublicClaim(source, candidateObject) {
 
 function compactClaimHistoryItem(source, claim) {
   return {
-    day: Number(claim?.observedDay ?? claim?.resultDay ?? 0),
+    timing: formatAbilityClaimTiming(claim),
+    actionDay: Number(claim?.actionDay ?? 0),
+    availableDay: Number(claim?.availableDay ?? 0),
     targetName: claim?.targetId
       ? displayPlayerName(source, claim.targetId)
       : String(claim?.target ?? ''),
@@ -671,6 +679,17 @@ function purposeInstructions(fieldJobs, stageId) {
   return lines.join('\n');
 }
 
+function promptContractForDraft(contract, taskType) {
+  const result = structuredClone(contract ?? {});
+  if (taskType !== 'graveyard-conversation') return result;
+  // 墓場ではmemoAddを回答検証契約から削除せず、LLMへ見せる草案契約だけから外す。
+  result.allowedTopLevelKeys = (result.allowedTopLevelKeys ?? []).filter((key) => key !== 'memoAdd');
+  result.optionalTopLevelKeys = (result.optionalTopLevelKeys ?? []).filter((key) => key !== 'memoAdd');
+  if (result.fieldDescriptions) delete result.fieldDescriptions.memoAdd;
+  if (result.completeExample) delete result.completeExample.memoAdd;
+  return result;
+}
+
 export function buildDraftStagePrompt({ taskArtifact, policy }) {
   if (!policy?.applicable) throw new RangeError('構造草案ポリシーが適用不能です。');
   const source = taskArtifact.stageSource;
@@ -684,7 +703,7 @@ export function buildDraftStagePrompt({ taskArtifact, policy }) {
   const internalReasoningDirective = isNormalSpeechTask(taskArtifact.taskType)
     ? renderInternalReasoningDirective(source.internalReasoningDirective ?? null, { isFirstDay })
     : '';
-  const contract = structuredClone(source.responseContract ?? {});
+  const contract = promptContractForDraft(source.responseContract ?? {}, taskArtifact.taskType);
   const allowedKeys = new Set(contract.allowedTopLevelKeys ?? []);
   const conditionalKeys = [...new Set([
     ...Object.keys(contract.conditionalExamples ?? {}),
@@ -735,10 +754,14 @@ ${renderVoteReevaluationRule()}
 ${executionValuePolicy}
 ${executionFactionPolicy}
 ${renderVoteDecisionPatchGuidance(getDecisionPatchKeys('vote'))}`
-        : taskArtifact.taskType === 'wolf-attack'
+        : taskArtifact.taskType === 'graveyard-conversation'
           ? `
+- 墓場会話の主目的は、生前の秘密を共有し、答え合わせや感想を交わすことです。
+- roleTaskData.promptGuidance.graveyardConversationGuidanceがある場合は、その参加状況に応じた会話目的を優先してください。`
+          : taskArtifact.taskType === 'wolf-attack'
+            ? `
 ${renderWolfAttackSemanticRules()}`
-          : '';
+            : '';
   const finalConfirmation = draftFinalConfirmation(
     source,
     taskArtifact.taskType,
@@ -746,10 +769,12 @@ ${renderWolfAttackSemanticRules()}`
     recommendedKeys,
     conditionalKeys,
   );
+  const draftLead = taskArtifact.taskType === 'graveyard-conversation'
+    ? '墓場で共有する生前の秘密、答え合わせ、感想を整理してください。\n文章表現の完成度より、誰が何を実際に知っているかと、墓場で共有済みかどうかの整合を優先してください。'
+    : 'ゲーム判断と構造化情報を確定してください。\n文章表現の完成度より、対象、結果、時系列、公開情報との整合を優先してください。';
   return `# 構造草案工程
 
-ゲーム判断と構造化情報を確定してください。
-文章表現の完成度より、対象、結果、時系列、公開情報との整合を優先してください。
+${draftLead}
 
 タスク固有情報:
 [game-data:draft-task-data]

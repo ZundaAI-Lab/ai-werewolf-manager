@@ -223,6 +223,43 @@ test('多段renderも内部UUIDを漏らさず公開名とイベント番号だ�
 });
 
 
+
+test('墓場の構造草案は生前decision・推理人物設定・memoAddを再提示せず秘密共有と感想へ寄せる', () => {
+  const taskArtifact = artifact('graveyard-conversation');
+  taskArtifact.stageSource.currentMoment = { day: 2, phase: 'night', taskType: 'graveyard-conversation', playerId: 'dead-a', playerName: 'ずんだもん' };
+  taskArtifact.stageSource.publicState = { alivePlayers: [{ id: 'alive-a', name: 'めたん' }], deadPlayers: [{ id: 'dead-a', name: 'ずんだもん' }] };
+  taskArtifact.stageSource.privateState = { ownRole: { roleId: 'seer', team: 'village' }, ownAbilityResults: [{ day: 1, targetName: 'めたん', result: 'human' }] };
+  taskArtifact.stageSource.roleTaskData = {
+    decision: { suspects: ['めたん'], intendedVote: 'めたん', nextDiscriminatingInformation: '次の投票を見る' },
+    promptGuidance: {
+      graveyardConversationGuidance: {
+        participantStatus: 'new',
+        focus: '生前に墓場側が知らなかった秘密があれば優先して共有する。',
+      },
+    },
+  };
+  taskArtifact.stageSource.characterReasoning = { reasoningProfile: { evidenceFocus: 'timeline' }, discussionBehavior: 'aggressive' };
+  taskArtifact.stageSource.histories = { recentGraveyardConversation: [], pastGraveyardConversations: [], existingInternalMemo: { summary: '生前メモ' } };
+  taskArtifact.stageSource.responseContract = {
+    mode: 'graveyard',
+    allowedTopLevelKeys: ['graveyardMessage', 'memoAdd'],
+    requiredTopLevelKeys: ['graveyardMessage'],
+    optionalTopLevelKeys: ['memoAdd'],
+    fieldDescriptions: { graveyardMessage: '墓場会話', memoAdd: '内部メモ' },
+    completeExample: { graveyardMessage: '墓場会話', memoAdd: '追記' },
+    conditionalExamples: {},
+  };
+  const policy = resolveGenerationStagePromptPolicy({ stageId: 'draft', taskType: 'graveyard-conversation' });
+  const prompt = buildDraftStagePrompt({ taskArtifact, policy });
+
+  assert.match(prompt, /墓場で共有する生前の秘密、答え合わせ、感想/u);
+  assert.match(prompt, /graveyardConversationGuidance/u);
+  assert.doesNotMatch(prompt, /"decision"/u);
+  assert.doesNotMatch(prompt, /reasoning-character|characterReasoning/u);
+  assert.doesNotMatch(prompt, /memoAdd/u);
+  assert.doesNotMatch(prompt, /ゲーム判断と構造化情報を確定/u);
+});
+
 test('遺言・墓場会話はheartVoiceを多段生成せずproofreadも通常発言と回答だけに限定する', () => {
   const testamentCandidate = { publicSpeech: '最後に残す遺言です。' };
   const testamentRender = resolveGenerationStagePromptPolicy({

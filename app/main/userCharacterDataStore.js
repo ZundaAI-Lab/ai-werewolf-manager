@@ -1,16 +1,18 @@
 /**
  * 責務: ユーザー作成キャラクターグループ、キャラクター単位の使用状態、組み込み側の使用状態・グループ順・キャラクター順をuserData配下へ原子的に保存する。明示的に指定されたキャラクター保存・JSON取込だけ共有文字数規則を検証する。
- * 変更ルール: 組み込みキャラクターJSONを書き換えない。製品schema互換層で旧ライブラリschemaを現行へ一方向migrationし、未来schemaは拒否する。具体的なグループ名・キャラクター名・ゲーム規則・文字数定数を持たず、ID規則はapp/shared/entityIdPolicy.js、文字数規則はapp/shared/characterTextPolicy.jsを正本とする。起動読込・削除・並び替え・使用切替・複製・グループ編集では既存キャラクターの文字数超過を理由に処理を止めない。キャラクター保存とJSON取込では対象キャラクターだけ現行上限を検証する。ユーザーキャラクターのcharacter省略は空設定として保存し、実行用既定値の補完はRenderer側カタログ正規化へ委譲する。
+ * 変更ルール: 組み込みキャラクターJSONを書き換えない。ライブラリ総サイズ上限はapp/shared/userCharacterLibraryPolicy.jsを正本とする。製品schema互換層で旧ライブラリschemaを現行へ一方向migrationし、未来schemaは拒否する。具体的なグループ名・キャラクター名・ゲーム規則・文字数定数を持たず、ID規則はapp/shared/entityIdPolicy.js、文字数規則はapp/shared/characterTextPolicy.jsを正本とする。起動読込・削除・並び替え・使用切替・複製・グループ編集では既存キャラクターの文字数超過を理由に処理を止めない。キャラクター保存とJSON取込では対象キャラクターだけ現行上限を検証する。ユーザーキャラクターのcharacter省略は空設定として保存し、実行用既定値の補完はRenderer側カタログ正規化へ委譲する。
  */
 
 'use strict';
 
-const { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } = require('node:fs');
+const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { requireCharacterTextPayload } = require('../shared/characterTextPolicy.js');
 const { requireEntityId } = require('../shared/entityIdPolicy.js');
+const { assertUserCharacterLibrarySerializedSize } = require('../shared/userCharacterLibraryPolicy.js');
 const { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } = require('../shared/dataCompatibility/schemaVersions.js');
 const { migratePersistedDocument, writeMigratedJsonSync } = require('./dataCompatibilityPersistence.js');
+const { atomicWriteSerializedJsonSync } = require('./atomicJsonFile.js');
 
 const USER_CHARACTER_LIBRARY_SCHEMA_VERSION = getCurrentDataSchemaVersion(DATA_SCHEMA_KIND.USER_CHARACTER_LIBRARY);
 const USER_CHARACTER_LIBRARY_FILENAME = 'character-library.json';
@@ -162,15 +164,9 @@ class UserCharacterDataStore {
         if (!foundIds.has(id)) throw new Error(`文字数検証対象のユーザーキャラクターが見つかりません: ${id}`);
       });
     }
-    mkdirSync(this.directory, { recursive: true });
-    const temporaryPath = `${this.path}.tmp`;
-    try {
-      writeFileSync(temporaryPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
-      renameSync(temporaryPath, this.path);
-    } catch (error) {
-      rmSync(temporaryPath, { force: true });
-      throw error;
-    }
+    const serialized = JSON.stringify(normalized, null, 2);
+    assertUserCharacterLibrarySerializedSize(serialized);
+    atomicWriteSerializedJsonSync(this.path, serialized);
     this.data = normalized;
     return this.snapshot();
   }

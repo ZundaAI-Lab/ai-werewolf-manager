@@ -13,7 +13,7 @@ import { exitCorrectionMode } from '../../domain/correction/correctionCommands.j
 
 const AUTOMATION_VIEW_ACTIONS = new Set([
   'go-setup', 'go-workbench', 'go-records', 'go-public', 'go-records-from-correction',
-  'open-player-relationship-dialog', 'open-role-help', 'inspect-player', 'open-public-window', 'export-public-html',
+  'open-player-relationship-dialog', 'open-player-relationship-window', 'open-role-help', 'inspect-player', 'open-public-window', 'export-public-html',
   'records-view-mode', 'records-correction-mode', 'records-correction-select',
   'relationship-select-player', 'relationship-clear-selection', 'relationship-select-snapshot', 'relationship-toggle-layer',
   'show-records-shared', 'show-records-audit', 'postgame-analysis-ask', 'postgame-analysis-clear', 'game-data-export',
@@ -55,6 +55,7 @@ export function createActionDispatchController({ ui }) {
     ['go-workbench', () => ui.setTab('workbench')],
     ['go-records', () => ui.setTab('records')],
     ['open-player-relationship-dialog', () => ui.relationshipDialogController.open()],
+    ['open-player-relationship-window', () => ui.relationshipDialogController.openWindow()],
     ['go-records-from-correction', () => { ui.recordsViewMode = 'correction'; ui.modal.close(); return ui.setTab('records'); }],
     ['go-public', () => ui.setTab('public')],
     ['new-game', () => ui._openNewGameDialog()],

@@ -5,6 +5,8 @@
  * - voteのdecisionPatch具体化ガイダンスはvoteResponseGuidancePolicy.jsを正本とし、構造草案側と同じ文言・優先項目を使用する。
  * - requiredTopLevelKeysは欠落時に進行を止める境界であり、検証上任意でもAIに生成してほしいrationale / decisionPatch / heartVoice / memoAdd等は原則出力の説明と主JSON例へ掲載する。
  * - 『プロンプトに掲載する』ことを理由に回答検証必須へ昇格してはならず、『検証上任意』を理由にプロンプトやJSON例から削除してはならない。
+ * - decisionPatchの子項目はJSON例への掲載有無だけで思考観点を誘導し、掲載された子項目もすべて回答任意とする。推理モード・人物傾向・処刑判断局面による掲載選択はdecisionPromptFieldPolicy.jsを正本とする。
+ * - 処刑比較項目の表示タイミングはpromptSituation / promptSectionPolicyで既に解決されたフラグを受け取り、本モジュールで残り発言回数やvote条件を再判定しない。
  * - 許可キーは本人役職へ適合済みの集合だけを表示する。
  * - 通常発言はpublicSpeechをAI向け必須出力とし、各モードの説明と今回のJSON例は最終確認用として一箇所から生成する。
  * - assessmentLevelの列挙値はdecisionState.js、partnerDispositionの列挙値はwolfPartnerDispositionPolicy.js由来の動的ポリシーを使用する。
@@ -12,17 +14,19 @@
  * - 外部JSONキーと内部保存キーを混在させず、speechInteractionは外部契約のquestionTargets / answerToRefsだけを明示する。
  * - 投票はactionAnswerをAI向け必須出力、rationale / decisionPatchを原則出力として主JSON例へ必ず掲載するが、後二者の欠落をエラーにしない。
  * - 夜行動理由、襲撃評価、雪女推定、初夜共有戦略、失効判断などの動的なAI向け必須性も本モジュールだけで決め、responseContract.jsの回答検証必須性へ逆流させない。
- * - heartVoiceは通常昼発言系とpriority-answerだけで原則出力とし、遺言・墓場会話へ生成指示を追加しない。
+ * - heartVoiceは通常昼発言系とpriority-answerだけで原則出力とし、遺言・墓場会話へ生成指示を追加しない。墓場会話ではmemoAddを機械許可のまま保持してもプロンプト掲載・JSON例から外し、秘密共有・答え合わせ・感想へ誘導する。
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
 import { buildVoteDecisionPatchGuidanceRows } from '../policies/voteResponseGuidancePolicy.js';
+import { resolveDecisionPromptFieldKeys } from '../policies/decisionPromptFieldPolicy.js';
 import { getFactionStrategyFields, isFactionStrategyRole } from '../../domain/game/factionStrategyState.js';
 import { getPublicAbilityClaimDefinition } from '../../domain/policies/publicAbilityClaimPolicy.js';
 import {
   buildAbilityClaimsConditionalExample,
   buildDeceptionAbilityClaimsConditionalExample,
   buildCoOperationConditionalExample,
+  buildDecisionPatchExample,
   buildResponseContractExample,
   buildSpeechInteractionConditionalExamples,
   getCoOperationRoleIds,
@@ -52,6 +56,26 @@ function selectExampleKeys(example, keys) {
   return Object.fromEntries(Object.entries(example).filter(([key]) => selected.has(key)));
 }
 
+function activeDecisionPromptFieldKeys({
+  mode,
+  reasoningModeId = null,
+  reasoningProfile = null,
+  isExecutionDecisionWindow = false,
+  isFinalDiscussionDecisionWindow = false,
+  exampleReferences = null,
+} = {}) {
+  const allowed = new Set(getDecisionPatchKeys(mode));
+  return resolveDecisionPromptFieldKeys({
+    reasoningModeId,
+    reasoningProfile,
+    isExecutionDecisionWindow,
+    isFinalDiscussionDecisionWindow,
+    includeCorrectionReference: Boolean(
+      normalizeResponseExampleReferences(exampleReferences).correctedSpeechRefs.length,
+    ),
+  }).filter((key) => allowed.has(key));
+}
+
 function dynamicRequiredKeys({ mode, roleId, decisionPatchRequired, factionStrategyPolicy, wolfConversationPurpose }) {
   const keys = [];
   if (decisionPatchRequired && [...SPEECH_MODES, 'priority-answer', 'mason'].includes(mode)) keys.push('decisionPatch');
@@ -75,9 +99,14 @@ function promptRequiredKeysForPhase(options) {
   ]).filter((key) => allowedKeys.has(key));
 }
 
+function promptVisibleTopLevelKeys(mode, roleId) {
+  return getRoleCompatibleResponseTopLevelKeys(mode, roleId)
+    .filter((key) => !(mode === 'graveyard' && key === 'memoAdd'));
+}
+
 function availableOptionalKeys({ mode, roleId, claimRolePolicy, requiredKeys }) {
   const required = new Set(requiredKeys);
-  return getRoleCompatibleResponseTopLevelKeys(mode, roleId)
+  return promptVisibleTopLevelKeys(mode, roleId)
     .filter((key) => !required.has(key))
     .filter((key) => !(isSpeechMode(mode) && key === 'publicSpeech'))
     .filter((key) => key !== 'coOperation' || getCoOperationRoleIds(claimRolePolicy).length > 0)
@@ -103,12 +132,12 @@ function coAndAbilityRules(claimRolePolicy, references) {
     const truthfulExample = buildAbilityClaimsConditionalExample(claimRolePolicy, normalizedReferences);
     const deceptionExample = buildDeceptionAbilityClaimsConditionalExample(claimRolePolicy, normalizedReferences);
     const hasTruthfulSource = Boolean(normalizedReferences.truthfulAbilitySourceRefs.length);
-    rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの本人P#記録をsourceRefで参照します。truthfulではroleId・resultDay・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。そのうえで、公開する能力結果の役職・対象・結果はpublicSpeechにも自然な発言として必ず含めてください。abilityClaimsは状態更新の正本、publicSpeechはプレイヤーが実際に口にする本文です。truthful / deceptionのどちらでも両者で同じ公開主張にしてください。');
+    rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。そのうえで、公開する能力結果の役職・対象・結果はpublicSpeechにも自然な発言として必ず含めてください。abilityClaimsは状態更新の正本、publicSpeechはプレイヤーが実際に口にする本文です。truthful / deceptionのどちらでも両者で同じ公開主張にしてください。');
     if (hasTruthfulSource && truthfulExample) rows.push(`truthful形式: ${JSON.stringify({ abilityClaims: truthfulExample })}`);
     const resultValuesByRole = claimRolePolicy.abilityClaimRoleIds
       .map((roleId) => `${roleId}=${(getPublicAbilityClaimDefinition(roleId)?.results ?? []).join(' / ')}`)
       .join('、');
-    rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・resultDay・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。`);
+    rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・actionDay・actionPhase・availableDay・availablePhase・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。`);
     if (deceptionExample) rows.push(`deception形式: ${JSON.stringify({ abilityClaims: deceptionExample })}`);
   }
   return rows;
@@ -172,24 +201,25 @@ function recommendedFieldRules(recommendedKeys, roleId, partnerDispositionPolicy
   return rows;
 }
 
-function decisionPatchRules(mode, decisionPatchRequired) {
+function decisionPatchRules(mode, decisionPatchRequired, decisionPromptKeys = []) {
   if (![...SPEECH_MODES, 'priority-answer', 'mason', 'vote'].includes(mode)) return [];
-  const keys = getDecisionChangeKeys(mode);
-  const allowedKeys = getDecisionPatchKeys(mode);
-  const assessmentLevelRule = keys.includes('assessmentLevel')
+  const shownKeys = [...new Set((decisionPromptKeys ?? []).filter((key) => getDecisionPatchKeys(mode).includes(key)))];
+  const assessmentLevelRule = shownKeys.includes('assessmentLevel')
     ? `decisionPatch.assessmentLevelは ${DECISION_ASSESSMENT_LEVELS.join(' / ')} のいずれかです。`
     : '';
   if (mode === 'vote') {
-    return buildVoteDecisionPatchGuidanceRows(allowedKeys);
+    return buildVoteDecisionPatchGuidanceRows(shownKeys);
   }
   const rows = [
     decisionPatchRequired
-      ? `decisionPatchはmode/changesで包まず、許可キーを直下に指定して必ず出力してください。許可キー: ${allowedKeys.join(' / ')}。`
-      : `本人の現在判断を変更・補足・具体化できる場合、decisionPatchはmode/changesで包まず許可キーを直下に指定して追加できます。許可キー: ${allowedKeys.join(' / ')}。`,
+      ? `decisionPatchはmode/changesで包まず直下形式で出力してください。今回JSON例に表示する子項目: ${shownKeys.join(' / ') || 'なし'}。各子項目は回答任意で、使わなくてもエラーにはなりません。`
+      : `本人の現在判断を変更・補足・具体化できる場合、decisionPatchはmode/changesで包まず直下形式で追加できます。今回JSON例に表示する子項目: ${shownKeys.join(' / ') || 'なし'}。各子項目は回答任意で、使わなくてもエラーにはなりません。`,
     assessmentLevelRule,
   ].filter(Boolean);
   if (decisionPatchRequired) {
-    rows.push('前回判断が現在の候補構造では利用できないため、今回はdecisionPatchで現在判断を再構成してください。判断内容の一部が維持される場合もdecisionPatch自体を省略しません。');
+    rows.push('前回判断が現在の候補構造では利用できないため、今回はdecisionPatch自体を出力してください。ただしJSON例内の個々の子項目は必要なものだけ使用し、未回答の子項目を埋めるために内容を作りません。');
+  }
+  if (shownKeys.includes('correctedSpeechRefs') || shownKeys.includes('evidenceRefs')) {
     rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
   }
   return rows;
@@ -206,6 +236,7 @@ function requiredModeRules({
   wolfConversationPurpose,
   attackAlternativeAvailable,
   decisionPatchRequired,
+  decisionPromptKeys = [],
   requiredKeys = [],
 }) {
   const rows = [];
@@ -215,7 +246,7 @@ function requiredModeRules({
   if (mode === 'priority-answer') rows.push('publicSpeechはcurrent-taskの質問へ直接答える完成本文です。新しい質問は追加しません。');
   if (mode === 'vote') rows.push('actionAnswerへ投票先の正式表示名を一つだけ必ず指定します。');
   if (mode === 'mason') rows.push('masonMessageは共有者相方だけに見せる秘密会話です。');
-  if (mode === 'graveyard') rows.push('graveyardMessageは現在の墓場参加者だけに見せる秘密会話です。死亡後の地上情報を推測・補完せず、死亡時点までの記憶と墓場で実際に共有された内容だけを使います。');
+  if (mode === 'graveyard') rows.push('graveyardMessageは現在の墓場参加者だけに見せる自然な秘密会話です。死亡時点までの記憶と墓場で実際に共有された内容を使い、生前の秘密・答え合わせ・感想を会話として表現します。');
   if (mode === 'testament') rows.push('publicSpeechは処刑直前に一度だけ残す完成済みの公開遺言です。質問や回答を追加せず、この発言後に議論が再開する前提で書きません。');
   if (mode === 'wolf') {
     rows.push('wolfMessageは人狼仲間だけに見せる秘密会話です。');
@@ -236,7 +267,7 @@ function requiredModeRules({
     rows.push('rationaleで人狼推定、襲撃予想、凍結対象の関係を説明します。');
   }
   if (mode === 'night-action') rows.push('rationaleには結果判明前の時点で、他候補よりその対象を選んだ具体的理由を記録します。');
-  if (decisionPatchRequired && mode !== 'vote') rows.push(...decisionPatchRules(mode, decisionPatchRequired));
+  if (decisionPatchRequired && mode !== 'vote') rows.push(...decisionPatchRules(mode, decisionPatchRequired, decisionPromptKeys));
   rows.push(...factionStrategyRules(roleId, factionStrategyPolicy, hasPreviousFactionStrategy, partnerDispositionPolicy, requiredKeys));
   if (!hasPreviousDecision && decisionPatchRequired && [...SPEECH_MODES, 'priority-answer', 'mason', 'vote'].includes(mode)) {
     rows.push('利用できる前回判断がないため、過去判断の維持ではなく現在の公開情報から記録してください。');
@@ -244,7 +275,7 @@ function requiredModeRules({
   return rows;
 }
 
-function recommendedModeRules({ mode, decisionPatchRequired, recommendedKeys = [] }) {
+function recommendedModeRules({ mode, decisionPatchRequired, decisionPromptKeys = [], recommendedKeys = [] }) {
   const rows = [];
   if (isSpeechMode(mode)) {
     rows.push('heartVoiceは原則出力します。公開本文の言い換えではない、本人とGMだけが読む局面固有の本音・迷い・警戒・期待を記録してください。現在の入力から公開本文とは別の内容を適切に生成できない場合に限り省略でき、未入力でもエラーにはなりません。');
@@ -253,9 +284,9 @@ function recommendedModeRules({ mode, decisionPatchRequired, recommendedKeys = [
     rows.push('heartVoiceは原則出力します。本人とGMだけが読む、質問への回答時点の本音・迷い・警戒を記録してください。現在の入力から適切に生成できない場合に限り省略でき、未入力でもエラーにはなりません。');
   }
   if (mode === 'vote') {
-    rows.push(...decisionPatchRules(mode, false));
+    rows.push(...decisionPatchRules(mode, false, decisionPromptKeys));
   } else if (!decisionPatchRequired) {
-    rows.push(...decisionPatchRules(mode, false));
+    rows.push(...decisionPatchRules(mode, false, decisionPromptKeys));
     if ([...SPEECH_MODES, 'priority-answer', 'mason'].includes(mode)) {
       rows.push('decisionPatchは、現在判断を変更・補足・具体化できる内容がある場合は原則として追加します。判断の変更点がない、または公開根拠が不足する場合だけ省略できます。');
     }
@@ -310,6 +341,10 @@ export function buildActiveResponseContractExample({
   exampleReferences = null,
   decisionPatchRequired = false,
   factionStrategyPolicy = null,
+  reasoningModeId = null,
+  reasoningProfile = null,
+  isExecutionDecisionWindow = false,
+  isFinalDiscussionDecisionWindow = false,
 } = {}) {
   const completeExample = buildResponseContractExample({
     mode,
@@ -336,7 +371,19 @@ export function buildActiveResponseContractExample({
   const exampleKeys = isSpeechMode(mode)
     ? unique([...requiredKeys, 'publicSpeech', ...recommendedKeys])
     : unique([...requiredKeys, ...recommendedKeys]);
-  return selectExampleKeys(completeExample, exampleKeys);
+  const example = selectExampleKeys(completeExample, exampleKeys);
+  if (example.decisionPatch) {
+    const decisionPromptKeys = activeDecisionPromptFieldKeys({
+      mode,
+      reasoningModeId,
+      reasoningProfile,
+      isExecutionDecisionWindow,
+      isFinalDiscussionDecisionWindow,
+      exampleReferences,
+    });
+    example.decisionPatch = buildDecisionPatchExample(mode, exampleReferences, { keys: decisionPromptKeys });
+  }
+  return example;
 }
 
 export function renderActiveResponseContract({
@@ -352,8 +399,20 @@ export function renderActiveResponseContract({
   attackAlternativeAvailable = true,
   exampleReferences = null,
   decisionPatchRequired = false,
+  reasoningModeId = null,
+  reasoningProfile = null,
+  isExecutionDecisionWindow = false,
+  isFinalDiscussionDecisionWindow = false,
 } = {}) {
   const references = normalizeResponseExampleReferences(exampleReferences);
+  const decisionPromptKeys = activeDecisionPromptFieldKeys({
+    mode,
+    reasoningModeId,
+    reasoningProfile,
+    isExecutionDecisionWindow,
+    isFinalDiscussionDecisionWindow,
+    exampleReferences: references,
+  });
   const options = {
     mode,
     roleId,
@@ -367,6 +426,7 @@ export function renderActiveResponseContract({
     attackAlternativeAvailable,
     exampleReferences: references,
     decisionPatchRequired,
+    decisionPromptKeys,
   };
   const requiredKeys = promptRequiredKeysForPhase(options);
   const optionalKeys = availableOptionalKeys({ mode, roleId, claimRolePolicy, requiredKeys });
@@ -385,7 +445,7 @@ export function renderActiveResponseContract({
     ]
     : [];
   const blocks = [
-    renderRuleBlock('禁止', prohibitionRules(mode, getRoleCompatibleResponseTopLevelKeys(mode, roleId))),
+    renderRuleBlock('禁止', prohibitionRules(mode, promptVisibleTopLevelKeys(mode, roleId))),
     renderRuleBlock('記載方針', fieldWritingGuidance(mode)),
     renderRuleBlock('原則出力', recommendedRows),
     renderRuleBlock('条件付き出力', conditionalRows),
@@ -406,8 +466,20 @@ export function renderActiveResponseFinalConfirmation({
   attackAlternativeAvailable = true,
   exampleReferences = null,
   decisionPatchRequired = false,
+  reasoningModeId = null,
+  reasoningProfile = null,
+  isExecutionDecisionWindow = false,
+  isFinalDiscussionDecisionWindow = false,
 } = {}) {
   const references = normalizeResponseExampleReferences(exampleReferences);
+  const decisionPromptKeys = activeDecisionPromptFieldKeys({
+    mode,
+    reasoningModeId,
+    reasoningProfile,
+    isExecutionDecisionWindow,
+    isFinalDiscussionDecisionWindow,
+    exampleReferences: references,
+  });
   const options = {
     mode,
     roleId,
@@ -421,6 +493,7 @@ export function renderActiveResponseFinalConfirmation({
     attackAlternativeAvailable,
     exampleReferences: references,
     decisionPatchRequired,
+    decisionPromptKeys,
   };
   const requiredKeys = promptRequiredKeysForPhase(options);
   const example = buildActiveResponseContractExample({
@@ -434,6 +507,10 @@ export function renderActiveResponseFinalConfirmation({
     exampleReferences: references,
     decisionPatchRequired,
     factionStrategyPolicy,
+    reasoningModeId,
+    reasoningProfile,
+    isExecutionDecisionWindow,
+    isFinalDiscussionDecisionWindow,
   });
   const requiredRows = [
     `今回の必須出力: ${requiredKeys.join(' / ') || 'なし'}。`,

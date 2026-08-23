@@ -45,6 +45,7 @@ const CLASSIC_SIDE_EFFECT_AMD_MODULES = Object.freeze({
   'js/ai/apiRetryPolicy': 'AiWerewolfApiRetryPolicy',
   'js/ai/responseRetryPolicy': 'AiWerewolfResponseRetryPolicy',
   'shared/entityIdPolicy': 'AiWerewolfEntityIdPolicy',
+  'shared/userCharacterLibraryPolicy': 'AiWerewolfUserCharacterLibraryPolicy',
   'shared/characterTextPolicy': 'AiWerewolfCharacterTextPolicy',
   'shared/appearanceSchema': 'AiWerewolfAppearanceSchema',
   'shared/dataCompatibility/schemaVersions': 'AiWerewolfDataSchemaVersions',

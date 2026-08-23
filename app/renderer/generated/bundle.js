@@ -209,14 +209,14 @@ define("js/config/constants", ["require", "exports", "js/config/dataCompatibilit
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.TASK_LABELS = exports.AUDIENCE_LABELS = exports.EVENT_TYPE_LABELS = exports.DEFAULT_RULES = exports.DEFAULT_CHARACTER = exports.DEFAULT_REASONING_PROFILE = exports.REASONING_PROFILE_PROMPT_DESCRIPTIONS = exports.REASONING_PROFILE_OPTION_LABELS = exports.PRESET_NOTES = exports.PRESET_ROLES = exports.ROLE_IDS = exports.ROLE_DEFINITIONS = exports.TEAM_LABELS = exports.PHASE_LABELS = exports.PHASES = exports.VOTE_TIE_RESOLUTIONS = exports.SUPPORTED_PLAYER_COUNTS = exports.MAX_PLAYER_COUNT = exports.MIN_PLAYER_COUNT = exports.MAX_RESTORE_POINTS = exports.MAX_UNDO = exports.MAX_RESULT_IMPRESSION_LENGTH = exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = exports.PROMPT_SPEC_VERSION = exports.SCHEMA_VERSION = exports.APP_VERSION = void 0;
-    exports.APP_VERSION = '1.0.2';
+    exports.APP_VERSION = '1.0.3';
     // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
     // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。
     // 製品版1.0.0の基準schemaは1。項目追加・削除・意味変更・必須条件変更時だけ増やす。
     exports.SCHEMA_VERSION = (0, dataCompatibilityAdapter_js_1.getCurrentDataSchemaVersion)(dataCompatibilityAdapter_js_1.DATA_SCHEMA_KIND.GAME_STATE);
     // PROMPT_SPEC_VERSIONはAIへ渡す情報構成・方針・優先度・生成指示の版を表し、対局状態のruntimeへ記録する。
     // 製品版1.0.0では1を基準とし、正式リリース後はAIへ渡す契約・方針・情報構成を変更した場合だけ単調増加させ、リセットしない。
-    exports.PROMPT_SPEC_VERSION = 2;
+    exports.PROMPT_SPEC_VERSION = 3;
     exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = 240;
     exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = 360;
     exports.MAX_RESULT_IMPRESSION_LENGTH = 180;
@@ -606,8 +606,8 @@ define("generated/buildInfo", ["require", "exports"], function (require, exports
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BUNDLE_SHA256 = exports.BUILD_ID = void 0;
-    exports.BUILD_ID = '281a91bffa1a677803633414b8fab13579f86cca653d721fa25622aa3dce2df6';
-    exports.BUNDLE_SHA256 = '3cadbf7ba596e63de31f7d90a8f43172fc434e8458e5cd498de2b981ddadeb96';
+    exports.BUILD_ID = '63047db0c277370ae7022aa81b591de792abf7bd495748b31f04ada4dc5118ca';
+    exports.BUNDLE_SHA256 = '2f04f8a41a136d47b2897b9508dd040fc5372a81b88ecd2e2b13b3ea66ed504b';
 });
 /**
  * 責務: 副作用の小さい汎用処理と、出力ファイル名部品のOS非依存な正規化を提供する。
@@ -929,7 +929,7 @@ define("js/state/stateSchema", ["require", "exports"], function (require, export
         'id', 'actorId', 'roleId', 'day', 'status', 'sourceEventId', 'withdrawnByEventId', 'voidedByEventId',
     ];
     const PUBLIC_ABILITY_CLAIM_KEYS = [
-        'id', 'actorId', 'claimedRoleId', 'actionType', 'targetId', 'result', 'observedDay',
+        'id', 'actorId', 'claimedRoleId', 'actionType', 'targetId', 'result', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase',
         'announcedDay', 'selectionBasis', 'evidenceEventIds', 'selectionReasonAtTime',
         'sourceEventId', 'sourceClaimIndex', 'status', 'voidedByEventId',
     ];
@@ -2207,7 +2207,7 @@ define("js/domain/game/standardRules", ["require", "exports", "js/config/constan
 });
 /**
  * 責務: AI判断状態で使用可能な疑い候補・処刑価値候補・投票予定対象を現在盤面から導出し、永続化されたAI回答を変更せず利用時だけ現在盤面向けへ射影する。
- * 変更ルール: 永続判断状態を書き換えない。候補可否、候補依存文章の表示失効、日跨ぎ失効情報は本モジュールへ集約する。文章生成・応答解析・公開履歴生成は行わない。
+ * 変更ルール: 永続判断状態を書き換えない。候補可否、候補依存文章の表示失効、日跨ぎ失効情報は本モジュールへ集約する。日跨ぎでは疑い候補を維持し、処刑価値候補・投票予定・当日比較情報だけを失効させ、対象消滅とは区別する。文章生成・応答解析・公開履歴生成は行わない。
  */
 define("js/domain/game/decisionTargetPolicy", ["require", "exports", "js/domain/game/standardRules"], function (require, exports, standardRules_js_1) {
     "use strict";
@@ -2243,7 +2243,8 @@ define("js/domain/game/decisionTargetPolicy", ["require", "exports", "js/domain/
         const executionAllowed = new Set(policy?.executionCandidateIds ?? []);
         const intendedAllowed = new Set(policy?.intendedVoteCandidateIds ?? []);
         const suspicionCandidateIds = sourceSuspicionIds.filter((candidateId) => suspicionAllowed.has(candidateId));
-        const executionCandidateIds = sourceExecutionIds.filter((candidateId) => executionAllowed.has(candidateId));
+        const availableExecutionCandidateIds = sourceExecutionIds.filter((candidateId) => executionAllowed.has(candidateId));
+        const executionCandidateIds = resetDailyComparisons ? [] : availableExecutionCandidateIds;
         const intendedVoteId = resetDailyComparisons
             ? null
             : source.intendedVoteId === 'abstain' && policy?.abstentionAllowed
@@ -2252,13 +2253,13 @@ define("js/domain/game/decisionTargetPolicy", ["require", "exports", "js/domain/
                     ? source.intendedVoteId
                     : null;
         const suspicionChanged = !sameIds(sourceSuspicionIds, suspicionCandidateIds);
-        const executionChanged = !sameIds(sourceExecutionIds, executionCandidateIds);
+        const executionTargetUnavailable = !sameIds(sourceExecutionIds, availableExecutionCandidateIds);
         const intendedChanged = (source.intendedVoteId ?? null) !== intendedVoteId;
         const intendedTargetUnavailable = !resetDailyComparisons && intendedChanged;
-        const targetContextChanged = suspicionChanged || executionChanged || intendedTargetUnavailable;
+        const targetContextChanged = suspicionChanged || executionTargetUnavailable || intendedTargetUnavailable;
         const comparisonContextInvalid = targetContextChanged || resetDailyComparisons;
         const removedSuspicionCandidateIds = sourceSuspicionIds.filter((id) => !suspicionCandidateIds.includes(id));
-        const removedExecutionCandidateIds = sourceExecutionIds.filter((id) => !executionCandidateIds.includes(id));
+        const removedExecutionCandidateIds = sourceExecutionIds.filter((id) => !availableExecutionCandidateIds.includes(id));
         const removedTargetIds = uniqueIds([
             ...removedSuspicionCandidateIds,
             ...removedExecutionCandidateIds,
@@ -2276,7 +2277,7 @@ define("js/domain/game/decisionTargetPolicy", ["require", "exports", "js/domain/
                 'decisionReason',
             ]
             : resetDailyComparisons
-                ? ['intendedVoteId', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference', 'decisionReason']
+                ? ['executionCandidateIds', 'intendedVoteId', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference', 'decisionReason']
                 : [];
         const hasStoredDecision = Boolean(source.updatedAt);
         const usablePreviousDecision = hasStoredDecision && !targetContextChanged;
@@ -2327,10 +2328,94 @@ define("js/domain/game/decisionTargetPolicy", ["require", "exports", "js/domain/
     }
 });
 /**
+ * 責務: 公開能力履歴の「能力が成立した時点」と「結果が本人に利用可能になった時点」を役職ごとに正規化する。
+ * 変更ルール:
+ * - 能力成立時点と結果取得時点をactionDay/actionPhase・availableDay/availablePhaseとして常に分離する。
+ * - 役職ごとの時間関係だけを扱い、対象・結果・真偽・公開可否は判定しない。
+ * - 霊能は処刑を能力成立時点、その他の公開可能な夜能力は夜行動を能力成立時点として扱う。
+ */
+define("js/domain/policies/abilityClaimTimingPolicy", ["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.abilityActionPhase = abilityActionPhase;
+    exports.buildAbilityClaimTiming = buildAbilityClaimTiming;
+    exports.normalizeAbilityClaimTiming = normalizeAbilityClaimTiming;
+    exports.validateAbilityClaimTiming = validateAbilityClaimTiming;
+    exports.formatAbilityClaimTiming = formatAbilityClaimTiming;
+    const ROLE_ACTION_PHASE = Object.freeze({
+        seer: 'night',
+        medium: 'execution',
+        guard: 'night',
+        namahage: 'night',
+        snowWoman: 'night',
+    });
+    function abilityActionPhase(roleId) {
+        return ROLE_ACTION_PHASE[String(roleId ?? '')] ?? null;
+    }
+    function buildAbilityClaimTiming(roleId, actionDay) {
+        const day = Number(actionDay);
+        const actionPhase = abilityActionPhase(roleId);
+        if (!actionPhase || !Number.isInteger(day) || day < 0)
+            return null;
+        return {
+            actionDay: day,
+            actionPhase,
+            availableDay: day + 1,
+            availablePhase: 'day',
+        };
+    }
+    function normalizeAbilityClaimTiming(claim) {
+        if (!claim || typeof claim !== 'object')
+            return null;
+        const actionDay = Number(claim.actionDay);
+        const availableDay = Number(claim.availableDay);
+        const actionPhase = String(claim.actionPhase ?? '');
+        const availablePhase = String(claim.availablePhase ?? '');
+        if (!Number.isInteger(actionDay) || !Number.isInteger(availableDay))
+            return null;
+        return { actionDay, actionPhase, availableDay, availablePhase };
+    }
+    function validateAbilityClaimTiming(roleId, claim, { announcedDay = null } = {}) {
+        const errors = [];
+        const timing = normalizeAbilityClaimTiming(claim);
+        const expectedPhase = abilityActionPhase(roleId);
+        if (!timing)
+            return ['能力結果主張の実行時点・取得時点が不正です。'];
+        if (timing.actionDay < 0)
+            errors.push('能力結果主張のactionDayは0以上の整数で指定してください。');
+        if (timing.availableDay < 1)
+            errors.push('能力結果主張のavailableDayは1以上の整数で指定してください。');
+        if (!expectedPhase || timing.actionPhase !== expectedPhase) {
+            errors.push(`能力結果主張のactionPhaseは${expectedPhase ?? '対応役職の所定値'}で指定してください。`);
+        }
+        if (timing.availablePhase !== 'day')
+            errors.push('能力結果主張のavailablePhaseはdayで指定してください。');
+        if (timing.availableDay !== timing.actionDay + 1) {
+            errors.push('能力結果主張のavailableDayはactionDayの翌日で指定してください。');
+        }
+        if (announcedDay !== null && timing.availableDay > Number(announcedDay)) {
+            errors.push('まだ取得していない未来の能力結果は公開できません。');
+        }
+        return errors;
+    }
+    function formatAbilityClaimTiming(claim) {
+        const timing = normalizeAbilityClaimTiming(claim);
+        if (!timing)
+            return '';
+        const action = timing.actionPhase === 'execution'
+            ? `D${timing.actionDay}処刑`
+            : timing.actionDay === 0
+                ? 'D0初夜'
+                : `D${timing.actionDay}夜`;
+        const available = `D${timing.availableDay}朝`;
+        return `${action}→${available}`;
+    }
+});
+/**
  * 責務: AI本人の確定記憶台帳と自由内部メモを管理し、通常ターンの短い応答によるメモ縮退を防ぐ。
  * 変更ルール: 公開・非公開の可視性を混同しない。通常更新はkeep/addだけを受理し、要約の全置換は専用整理処理に限定する。同一追記を重複保存せず、未整理ノートは新しい20件だけを保持する。
  */
-define("js/domain/memory/memoryLedger", ["require", "exports", "js/config/constants", "js/domain/roles/roleAttributes", "js/shared/utils", "js/domain/game/decisionTargetPolicy"], function (require, exports, constants_js_4, roleAttributes_js_2, utils_js_2, decisionTargetPolicy_js_1) {
+define("js/domain/memory/memoryLedger", ["require", "exports", "js/config/constants", "js/domain/roles/roleAttributes", "js/shared/utils", "js/domain/game/decisionTargetPolicy", "js/domain/policies/abilityClaimTimingPolicy"], function (require, exports, constants_js_4, roleAttributes_js_2, utils_js_2, decisionTargetPolicy_js_1, abilityClaimTimingPolicy_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createEmptyInternalMemory = createEmptyInternalMemory;
@@ -2487,8 +2572,8 @@ define("js/domain/memory/memoryLedger", ["require", "exports", "js/config/consta
                 snowWoman: '凍結',
             }[claim.claimedRoleId] ?? null;
             const claimText = actionLabel
-                ? `Day ${claim.observedDay} ${playerName(state, claim.targetId)}への${actionLabel}履歴を公開`
-                : `Day ${claim.observedDay} ${playerName(state, claim.targetId)}は${claim.result === 'wolf' ? '人狼' : '人狼ではない'}と公開`;
+                ? `${(0, abilityClaimTimingPolicy_js_1.formatAbilityClaimTiming)(claim)} ${playerName(state, claim.targetId)}への${actionLabel}履歴を公開`
+                : `${(0, abilityClaimTimingPolicy_js_1.formatAbilityClaimTiming)(claim)} ${playerName(state, claim.targetId)}は${claim.result === 'wolf' ? '人狼' : '人狼ではない'}と公開`;
             commitments.push({
                 id: `ability-claim:${claim.id}`,
                 type: 'ability-claim',
@@ -3981,7 +4066,7 @@ define("js/state/autosaveState", ["require", "exports"], function (require, expo
 });
 /**
  * 責務: 公開能力履歴が参照する公開証拠を能力決定時点の時間軸へ制限し、使用可能な公開イベント番号を列挙・解決する。
- * 変更ルール: resultDayは結果を得た昼を表す。夜能力はresultDayより前の日、霊能は対象処刑イベントだけを参照できる。結果の真偽や自然文理由の意味は判定しない。ただし理由内の明示的な#公開番号は構造化根拠の範囲内であることを検査し、状態を書き換えない。
+ * 変更ルール: 能力選択時点はactionDayを正本とし、同日の昼・処刑までに公開された情報を夜能力の選択根拠として利用できる。霊能は対象処刑イベントだけを参照できる。結果の真偽や自然文理由の意味は判定しない。ただし理由内の明示的な#公開番号は構造化根拠の範囲内であることを検査し、状態を書き換えない。
  */
 define("js/domain/policies/abilityClaimTimelinePolicy", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -3997,18 +4082,16 @@ define("js/domain/policies/abilityClaimTimelinePolicy", ["require", "exports"], 
         'public-evidence',
         'rule-forced',
     ]);
-    function isEligibleAbilityEvidenceEvent(event, observedDay) {
+    function isEligibleAbilityEvidenceEvent(event, actionDay) {
         if (event.status !== 'published'
             || event.audience?.type !== 'public'
             || !Number.isInteger(Number(event.sequence)))
             return false;
-        const eventDay = Number(event.day);
-        const resultDay = Number(observedDay);
-        return eventDay < resultDay;
+        return Number(event.day) <= Number(actionDay);
     }
-    function getAbilityEvidenceWindow(state, observedDay) {
-        const day = Number(observedDay);
-        if (!Number.isInteger(day) || day < 1)
+    function getAbilityEvidenceWindow(state, actionDay) {
+        const day = Number(actionDay);
+        if (!Number.isInteger(day) || day < 0)
             return [];
         return (state.events ?? [])
             .filter((event) => isEligibleAbilityEvidenceEvent(event, day))
@@ -4017,9 +4100,9 @@ define("js/domain/policies/abilityClaimTimelinePolicy", ["require", "exports"], 
     function getAbilityEvidenceCutoffs(state) {
         const currentDay = Math.max(0, Number(state.game?.day ?? 0));
         const cutoffs = {};
-        for (let day = 1; day <= currentDay; day += 1) {
-            cutoffs[day] = {
-                eligibleEvidenceRefs: getAbilityEvidenceWindow(state, day)
+        for (let actionDay = 0; actionDay <= currentDay; actionDay += 1) {
+            cutoffs[actionDay] = {
+                eligibleEvidenceRefs: getAbilityEvidenceWindow(state, actionDay)
                     .map((event) => Number(event.sequence)),
             };
         }
@@ -4038,8 +4121,8 @@ define("js/domain/policies/abilityClaimTimelinePolicy", ["require", "exports"], 
         const allowed = new Set((evidenceRefs ?? []).map(Number).filter((value) => Number.isSafeInteger(value) && value > 0));
         return extractPublicEventSequences(selectionReasonAtTime).filter((sequence) => !allowed.has(sequence));
     }
-    function resolveAbilityEvidenceRefs(state, evidenceRefs, observedDay) {
-        const window = getAbilityEvidenceWindow(state, observedDay);
+    function resolveAbilityEvidenceRefs(state, evidenceRefs, actionDay) {
+        const window = getAbilityEvidenceWindow(state, actionDay);
         const bySequence = new Map(window.map((event) => [Number(event.sequence), event]));
         const resolved = [];
         const errors = [];
@@ -4047,7 +4130,7 @@ define("js/domain/policies/abilityClaimTimelinePolicy", ["require", "exports"], 
             const sequence = Number(value);
             const event = bySequence.get(sequence);
             if (!event) {
-                errors.push(`#${value}はDay ${observedDay}の能力使用時点では利用できない公開情報です。`);
+                errors.push(`#${value}はD${actionDay}の能力実行時点では利用できない公開情報です。`);
                 return;
             }
             if (!resolved.some((item) => item.id === event.id))
@@ -4057,10 +4140,10 @@ define("js/domain/policies/abilityClaimTimelinePolicy", ["require", "exports"], 
     }
 });
 /**
- * 責務: ROLE_DEFINITIONSを正本として公開能力履歴の役職・行動種別・結果・時間軸・対象制約を一元検証する。
- * 変更ルール: resultDayは結果を得た昼として扱う。内部状態はwolf / not-wolf / unknownだけを保持し、日本語化は表示境界でのみ行う。役職を指定した表示ではunknownの意味を役職能力に合わせて明確化してよいが、内部値は変更しない。結果の真偽や陣営を判定せず、状態を書き換えない。能力対象の選定理由は思考・監査品質向上用の任意情報とし、意味内容は成立条件にしないが、理由中の#公開番号は構造化根拠の部分集合に限定する。未公開の霊能結果要件は、生存中かつ公開CO継続中の発言者本人へだけ導出する。
+ * 責務: ROLE_DEFINITIONSを正本として公開能力履歴の役職・行動種別・結果・実行時点・取得時点・対象制約を一元検証する。
+ * 変更ルール: 能力時刻はactionDay/actionPhaseとavailableDay/availablePhaseを分離して保持する。内部結果はwolf / not-wolf / unknownだけを保持し、日本語化は表示境界でのみ行う。役職を指定した表示ではunknownの意味を役職能力に合わせて明確化してよいが、内部値は変更しない。結果の真偽や陣営を判定せず、状態を書き換えない。能力対象の選定理由は思考・監査品質向上用の任意情報とし、意味内容は成立条件にしないが、理由中の#公開番号は構造化根拠の部分集合に限定する。未公開の霊能結果要件は、生存中かつ公開CO継続中の発言者本人へだけ導出する。
  */
-define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js/config/constants", "js/domain/policies/abilityClaimTimelinePolicy"], function (require, exports, constants_js_8, abilityClaimTimelinePolicy_js_1) {
+define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js/config/constants", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/policies/abilityClaimTimingPolicy"], function (require, exports, constants_js_8, abilityClaimTimelinePolicy_js_1, abilityClaimTimingPolicy_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.PUBLIC_ABILITY_RESULTS = exports.PUBLIC_ABILITY_ROLE_IDS = void 0;
@@ -4093,7 +4176,7 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             unknown: '成否不明',
         }[normalized] ?? String(value ?? '');
     }
-    function resolvePublicAbilityClaimRequirements(state, { roleId, observedDay, targetId, } = {}) {
+    function resolvePublicAbilityClaimRequirements(state, { roleId, actionDay, targetId, } = {}) {
         if (roleId !== 'medium') {
             return {
                 selectionBasis: null,
@@ -4104,7 +4187,7 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
         }
         const execution = (state.events ?? []).find((event) => event.status === 'published'
             && event.type === 'execution'
-            && Number(event.day) === Number(observedDay) - 1
+            && Number(event.day) === Number(actionDay)
             && (event.payload?.targetId === targetId || event.targetIds?.includes(targetId)));
         return {
             selectionBasis: 'rule-forced',
@@ -4118,11 +4201,11 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
         const activeClaimRoleId = (state.claims ?? []).find((claim) => (claim.actorId === actorId && claim.status === 'active'))?.roleId ?? null;
         if (!actor?.alive || activeClaimRoleId !== 'medium')
             return [];
-        const publishedResultDays = new Set((state.publicAbilityClaims ?? [])
+        const publishedActionDays = new Set((state.publicAbilityClaims ?? [])
             .filter((claim) => claim.status !== 'voided'
             && claim.actorId === actorId
             && claim.claimedRoleId === 'medium')
-            .map((claim) => Number(claim.observedDay)));
+            .map((claim) => Number(claim.actionDay)));
         const currentDay = Number(state.game?.day ?? 0);
         return (state.events ?? [])
             .filter((event) => event.status === 'published'
@@ -4131,7 +4214,7 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             .sort((left, right) => Number(left.sequence) - Number(right.sequence))
             .map((event) => ({
             roleId: 'medium',
-            observedDay: Number(event.day) + 1,
+            ...(0, abilityClaimTimingPolicy_js_2.buildAbilityClaimTiming)('medium', Number(event.day)),
             targetId: event.payload?.targetId ?? event.targetIds?.[0] ?? null,
             selectionBasis: 'rule-forced',
             requiredEvidenceEventIds: [event.id],
@@ -4139,8 +4222,8 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             selectionReasonAtTime: null,
         }))
             .filter((item) => item.targetId
-            && item.observedDay <= currentDay
-            && !publishedResultDays.has(item.observedDay));
+            && item.availableDay <= currentDay
+            && !publishedActionDays.has(item.actionDay));
     }
     function activeHistory(state, actorId, roleId, excludeSourceEventId = null, additionalClaims = []) {
         return [
@@ -4152,10 +4235,10 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
                 && item.claimedRoleId === roleId),
         ];
     }
-    function targetUnavailableBeforeResultDay(target, observedDay) {
-        return Boolean(target?.death && Number(target.death.day) < Number(observedDay));
+    function targetUnavailableAtNightAction(target, actionDay) {
+        return Boolean(target?.death && Number(target.death.day) <= Number(actionDay));
     }
-    function validateSelectionBasis(state, claim, observedDay, roleId) {
+    function validateSelectionBasis(state, claim, actionDay) {
         const errors = [];
         const basis = String(claim.selectionBasis ?? '');
         const evidenceEventIds = Array.isArray(claim.evidenceEventIds) ? claim.evidenceEventIds : [];
@@ -4172,20 +4255,16 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             errors.push('能力結果主張の公開根拠イベント参照が不正です。');
             return errors;
         }
-        const timeline = (0, abilityClaimTimelinePolicy_js_1.resolveAbilityEvidenceRefs)(state, evidenceRefs, observedDay);
+        const timeline = (0, abilityClaimTimelinePolicy_js_1.resolveAbilityEvidenceRefs)(state, evidenceRefs, actionDay);
         errors.push(...timeline.errors);
         const unlistedReasonSequences = (0, abilityClaimTimelinePolicy_js_1.getUnlistedAbilityReasonSequences)(selectionReasonAtTime, evidenceRefs);
         if (unlistedReasonSequences.length) {
             errors.push(`能力結果主張のselectionReasonAtTimeが構造化根拠にない公開番号を参照しています: ${unlistedReasonSequences.map((sequence) => `#${sequence}`).join('、')}`);
         }
-        if (basis === 'no-public-information') {
-            if (evidenceEventIds.length)
-                errors.push('no-public-informationでは公開根拠イベントを指定できません。');
-        }
-        if (basis === 'public-evidence') {
-            if (!evidenceEventIds.length)
-                errors.push('public-evidenceでは能力決定時点までに公開済みの根拠参照が必要です。');
-        }
+        if (basis === 'no-public-information' && evidenceEventIds.length)
+            errors.push('no-public-informationでは公開根拠イベントを指定できません。');
+        if (basis === 'public-evidence' && !evidenceEventIds.length)
+            errors.push('public-evidenceでは能力決定時点までに公開済みの根拠参照が必要です。');
         if (basis === 'rule-forced') {
             if (!evidenceEventIds.length)
                 errors.push('rule-forcedでは対象を決めた公開履歴の参照が必要です。');
@@ -4205,7 +4284,7 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             return errors;
         const roleId = claim.claimedRoleId ?? claim.roleId;
         const targetId = claim.targetId;
-        const observedDay = Number(claim.observedDay ?? claim.resultDay);
+        const actionDay = Number(claim.actionDay);
         const result = normalizePublicAbilityResult(claim.result);
         const target = (state.players ?? []).find((player) => player.id === targetId);
         const definition = getPublicAbilityClaimDefinition(roleId);
@@ -4217,9 +4296,7 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             errors.push('能力結果主張の役職と、発言後に有効となるCO役職が一致していません。');
         if (!target)
             errors.push('能力結果主張の対象が存在しません。');
-        if (!Number.isInteger(observedDay) || observedDay < 1 || observedDay > Number(announcedDay)) {
-            errors.push('能力結果主張のresultDayは1以上かつ現在Day以下で指定してください。');
-        }
+        errors.push(...(0, abilityClaimTimingPolicy_js_2.validateAbilityClaimTiming)(roleId, claim, { announcedDay }));
         if (!exports.PUBLIC_ABILITY_RESULTS.includes(result))
             errors.push('能力結果主張のresultが不正です。');
         if (definition && !definition.results.includes(result)) {
@@ -4229,33 +4306,30 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
             errors.push(`${constants_js_8.ROLE_DEFINITIONS[roleId].name}のactionTypeは${definition.actionType}です。`);
         }
         const structuralErrorCount = errors.length;
-        errors.push(...validateSelectionBasis(state, claim, observedDay, roleId));
+        errors.push(...validateSelectionBasis(state, claim, actionDay));
         if (structuralErrorCount || !target)
             return errors;
         const history = activeHistory(state, actorId, roleId, excludeSourceEventId, additionalClaims);
-        if (history.some((item) => Number(item.observedDay) === observedDay)) {
-            errors.push('同じ役職・同じresultDayの能力結果主張がすでにあります。内容を変える場合は公開発言の訂正を使用してください。');
+        if (history.some((item) => Number(item.actionDay) === actionDay)) {
+            errors.push('同じ役職・同じactionDayの能力結果主張がすでにあります。内容を変える場合は公開発言の訂正を使用してください。');
         }
         if (roleId === 'seer') {
-            if (observedDay === 1 && state.game?.rules?.firstNight?.seerMode === 'disabled')
+            if (actionDay === 0 && state.game?.rules?.firstNight?.seerMode === 'disabled')
                 errors.push('初日占いが無効な設定では初夜の占い結果を主張できません。');
             if (target.id === actorId && !state.game?.rules?.seer?.selfTargetAllowed)
                 errors.push('公開ルール上、占い師は自分自身を占えません。');
-            if (targetUnavailableBeforeResultDay(target, observedDay))
-                errors.push('その対象は結果を得た夜の開始時点で生存していないため、占い履歴として成立しません。');
-            if (!state.game?.rules?.seer?.repeatedTargetAllowed
-                && history.some((item) => item.targetId === target.id)) {
+            if (targetUnavailableAtNightAction(target, actionDay))
+                errors.push('その対象は能力を実行した夜の開始時点で生存していないため、占い履歴として成立しません。');
+            if (!state.game?.rules?.seer?.repeatedTargetAllowed && history.some((item) => item.targetId === target.id)) {
                 errors.push('公開ルール上、同じ対象を再度占えません。');
             }
         }
         if (roleId === 'medium') {
-            const requirements = resolvePublicAbilityClaimRequirements(state, {
-                roleId,
-                observedDay,
-                targetId: target.id,
-            });
+            if (actionDay < 1)
+                errors.push('霊能結果はDay 1以降の処刑に対応する必要があります。');
+            const requirements = resolvePublicAbilityClaimRequirements(state, { roleId, actionDay, targetId: target.id });
             if (!requirements.requiredEvidenceEventIds.length) {
-                errors.push('霊能結果の対象とresultDayは、実際に公開された処刑履歴と一致している必要があります。');
+                errors.push('霊能結果の対象とactionDayは、実際に公開された処刑履歴と一致している必要があります。');
             }
             if (claim.selectionBasis !== requirements.selectionBasis)
                 errors.push('霊能結果のselectionBasisはrule-forcedです。');
@@ -4267,48 +4341,42 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
         }
         if (roleId === 'guard') {
             validateUnknownResultRole(roleId, result, errors);
-            if (observedDay === 1 && !state.game?.rules?.firstNight?.guardEnabled)
+            if (actionDay === 0 && !state.game?.rules?.firstNight?.guardEnabled)
                 errors.push('初夜護衛が無効な設定では初夜の護衛履歴を主張できません。');
             if (target.id === actorId && !state.game?.rules?.guard?.selfGuardAllowed)
                 errors.push('公開ルール上、狩人は自分自身を護衛できません。');
-            if (targetUnavailableBeforeResultDay(target, observedDay))
-                errors.push('その対象は結果を得た夜の開始時点で生存していないため、護衛履歴として成立しません。');
+            if (targetUnavailableAtNightAction(target, actionDay))
+                errors.push('その対象は能力を実行した夜の開始時点で生存していないため、護衛履歴として成立しません。');
             if (!state.game?.rules?.guard?.consecutiveGuardAllowed) {
-                const previous = [...history]
-                    .filter((item) => Number(item.observedDay) < observedDay)
-                    .sort((a, b) => Number(b.observedDay) - Number(a.observedDay))[0];
-                if (previous && Number(previous.observedDay) === observedDay - 1 && previous.targetId === target.id) {
+                const previous = [...history].filter((item) => Number(item.actionDay) < actionDay).sort((a, b) => Number(b.actionDay) - Number(a.actionDay))[0];
+                if (previous && Number(previous.actionDay) === actionDay - 1 && previous.targetId === target.id) {
                     errors.push('公開ルール上、同じ対象を連続して護衛できません。');
                 }
             }
         }
         if (roleId === 'namahage') {
             validateUnknownResultRole(roleId, result, errors);
-            if (observedDay < 2)
-                errors.push('なまはげはDay 1夜から行動するため、最初に公開できる訪問履歴のresultDayは2です。');
+            if (actionDay < 1)
+                errors.push('なまはげはDay 1夜から行動するため、最初の訪問履歴のactionDayは1です。');
             if (target.id === actorId)
                 errors.push('公開ルール上、なまはげは自分自身を訪問できません。');
-            if (targetUnavailableBeforeResultDay(target, observedDay))
-                errors.push('その対象は結果を得た夜の開始時点で生存していないため、訪問履歴として成立しません。');
-            const previous = [...history]
-                .filter((item) => Number(item.observedDay) < observedDay)
-                .sort((a, b) => Number(b.observedDay) - Number(a.observedDay))[0];
-            if (previous && Number(previous.observedDay) === observedDay - 1 && previous.targetId === target.id) {
+            if (targetUnavailableAtNightAction(target, actionDay))
+                errors.push('その対象は能力を実行した夜の開始時点で生存していないため、訪問履歴として成立しません。');
+            const previous = [...history].filter((item) => Number(item.actionDay) < actionDay).sort((a, b) => Number(b.actionDay) - Number(a.actionDay))[0];
+            if (previous && Number(previous.actionDay) === actionDay - 1 && previous.targetId === target.id) {
                 errors.push('公開ルール上、なまはげは同じ対象を連続して訪問できません。');
             }
         }
         if (roleId === 'snowWoman') {
             validateUnknownResultRole(roleId, result, errors);
-            if (observedDay < 2)
-                errors.push('雪女はDay 1夜から行動するため、最初に公開できる凍結履歴のresultDayは2です。');
+            if (actionDay < 1)
+                errors.push('雪女はDay 1夜から行動するため、最初の凍結履歴のactionDayは1です。');
             if (target.id === actorId)
                 errors.push('公開ルール上、雪女は自分自身を凍結できません。');
-            if (targetUnavailableBeforeResultDay(target, observedDay))
-                errors.push('その対象は結果を得た夜の開始時点で生存していないため、凍結履歴として成立しません。');
-            const previous = [...history]
-                .filter((item) => Number(item.observedDay) < observedDay)
-                .sort((a, b) => Number(b.observedDay) - Number(a.observedDay))[0];
-            if (previous && Number(previous.observedDay) === observedDay - 1 && previous.targetId === target.id) {
+            if (targetUnavailableAtNightAction(target, actionDay))
+                errors.push('その対象は能力を実行した夜の開始時点で生存していないため、凍結履歴として成立しません。');
+            const previous = [...history].filter((item) => Number(item.actionDay) < actionDay).sort((a, b) => Number(b.actionDay) - Number(a.actionDay))[0];
+            if (previous && Number(previous.actionDay) === actionDay - 1 && previous.targetId === target.id) {
                 errors.push('公開ルール上、雪女は同じ対象を連続して凍結できません。');
             }
         }
@@ -4317,7 +4385,7 @@ define("js/domain/policies/publicAbilityClaimPolicy", ["require", "exports", "js
 });
 /**
  * 責務: 公開イベントからCO・公開能力結果・3巡目CO後の追加発言対象を再構築し、AI私有ターン台帳から本人自身の判断状態だけを決定的に再構築する。
- * 変更ルール: 公開発言本文を解析しない。公開事実とAI私有情報を同じイベントへ混在させず、判断状態はaiTurns.resolvedDecisionUpdateだけを一次情報源とする。DOM・保存・ゲーム進行操作を行わない。
+ * 変更ルール: 公開発言本文を解析しない。公開事実とAI私有情報を同じイベントへ混在させず、判断状態はaiTurns.resolvedDecisionUpdateだけを一次情報源とする。再構築1回の中ではイベント・プレイヤー索引と公開発言列を共有し、同じ全走査を繰り返さない。DOM・保存・ゲーム進行操作を行わない。
  */
 define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/game/decisionState"], function (require, exports, publicAbilityClaimPolicy_js_1, decisionState_js_2) {
     "use strict";
@@ -4336,6 +4404,12 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
             .filter((event) => event.type === 'public-speech' && event.audience?.type === 'public')
             .sort(bySequence);
     }
+    function buildEventIndex(state) {
+        return new Map((state.events ?? []).map((event) => [event.id, event]));
+    }
+    function buildPlayerIndex(state) {
+        return new Map((state.players ?? []).map((player) => [player.id, player]));
+    }
     function structuredOf(event) {
         return event.payload?.structured ?? {};
     }
@@ -4344,10 +4418,10 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
         const roleId = action === 'none' ? 'none' : String(value?.roleId ?? 'none');
         return { action, roleId };
     }
-    function rebuildRoleClaims(state) {
+    function rebuildRoleClaims(state, { speechEvents = publicSpeechEvents(state) } = {}) {
         const claims = [];
         const activeByActor = new Map();
-        publicSpeechEvents(state).forEach((event) => {
+        speechEvents.forEach((event) => {
             const operation = validCoOperation(structuredOf(event).coOperation);
             if (!['declare', 'change', 'withdraw'].includes(operation.action))
                 return;
@@ -4398,9 +4472,9 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
         state.claims = claims;
         return claims;
     }
-    function rebuildPublicAbilityClaims(state) {
+    function rebuildPublicAbilityClaims(state, { speechEvents = publicSpeechEvents(state) } = {}) {
         const claims = [];
-        publicSpeechEvents(state).forEach((event) => {
+        speechEvents.forEach((event) => {
             const eventClaims = structuredOf(event).abilityClaims ?? [];
             eventClaims.forEach((claim, index) => {
                 if (!claim || claim.action !== 'publish')
@@ -4412,7 +4486,10 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
                     actionType: claim.actionType,
                     targetId: claim.targetId,
                     result: claim.result,
-                    observedDay: Number(claim.observedDay),
+                    actionDay: Number(claim.actionDay),
+                    actionPhase: String(claim.actionPhase ?? ''),
+                    availableDay: Number(claim.availableDay),
+                    availablePhase: String(claim.availablePhase ?? ''),
                     announcedDay: Number(event.day),
                     selectionBasis: claim.selectionBasis,
                     evidenceEventIds: [...(claim.evidenceEventIds ?? [])],
@@ -4444,21 +4521,24 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
             keyPublicEvidenceEventIds: [...(update.keyPublicEvidenceEventIds ?? [])],
         };
     }
-    function committedPublicDecisionEvent(state, turn) {
-        const committedIds = new Set(turn.committedEntityIds ?? []);
-        return (state.events ?? [])
-            .filter((event) => committedIds.has(event.id))
-            .find((event) => ['public-speech', 'vote-cast'].includes(event.type)) ?? null;
+    const DECISION_SOURCE_EVENT_TYPES = new Set(['public-speech', 'vote-cast']);
+    function committedPublicDecisionEvent(eventById, turn) {
+        for (const eventId of turn.committedEntityIds ?? []) {
+            const event = eventById.get(eventId);
+            if (event && DECISION_SOURCE_EVENT_TYPES.has(event.type))
+                return event;
+        }
+        return null;
     }
-    function rebuildPlayerDecisionStates(state) {
-        (state.players ?? []).forEach((player) => {
+    function rebuildPlayerDecisionStates(state, { eventById = buildEventIndex(state), playerById = buildPlayerIndex(state), } = {}) {
+        playerById.forEach((player) => {
             player.decisionState = (0, decisionState_js_2.createEmptyDecisionState)();
         });
         (state.aiTurns ?? [])
             .filter((turn) => turn?.resolvedDecisionUpdate && DECISION_STATE_SOURCE_TASK_TYPES.has(turn.taskType))
             .forEach((turn) => {
             const update = cloneDecisionUpdateForDerivation(turn.resolvedDecisionUpdate);
-            const player = state.players.find((item) => item.id === turn.playerId);
+            const player = playerById.get(turn.playerId);
             if (!player)
                 return;
             const nextDecision = {
@@ -4481,7 +4561,7 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
                     hasPreviousDecision: Boolean(player.decisionState?.updatedAt),
                 }),
             };
-            const sourceEvent = committedPublicDecisionEvent(state, turn);
+            const sourceEvent = committedPublicDecisionEvent(eventById, turn);
             player.decisionState = {
                 ...resolvedDecision,
                 updatedAt: turn.timestamp ?? null,
@@ -4491,8 +4571,8 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
             };
         });
     }
-    function coReason(state, event, operation) {
-        const name = state.players.find((player) => player.id === event.actorId)?.name ?? 'プレイヤー';
+    function coReason(playerById, event, operation) {
+        const name = playerById.get(event.actorId)?.name ?? 'プレイヤー';
         if (operation.action === 'declare')
             return `${name}が新しく役職COしました。`;
         if (operation.action === 'change')
@@ -4510,7 +4590,7 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
             .filter((player) => player.alive && targetIds.has(player.id))
             .map((player) => player.id);
     }
-    function rebuildDiscussionReconsideration(state, { deterministicTimestamps = false } = {}) {
+    function rebuildDiscussionReconsideration(state, { deterministicTimestamps = false, speechEvents = publicSpeechEvents(state), eventById = buildEventIndex(state), playerById = buildPlayerIndex(state), } = {}) {
         const discussion = state.discussion;
         if (!discussion || state.game.phase !== 'discussion')
             return null;
@@ -4518,14 +4598,14 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
         const handledRound = Number(previous.handledRound ?? 0);
         const aliveIds = new Set((state.players ?? []).filter((player) => player.alive).map((player) => player.id));
         const items = [];
-        publicSpeechEvents(state)
+        speechEvents
             .filter((event) => event.status === 'published' && Number(event.day) === Number(discussion.day ?? state.game.day))
             .forEach((event) => {
             const eventRound = Number(event.payload?.round ?? 0);
             if (eventRound !== 3 || eventRound <= handledRound)
                 return;
             const operation = validCoOperation(structuredOf(event).coOperation);
-            const reason = coReason(state, event, operation);
+            const reason = coReason(playerById, event, operation);
             if (!reason)
                 return;
             const remainingAtSpeechStart = event.payload?.opportunityContext?.remainingByPlayerAtSpeechStart;
@@ -4547,7 +4627,7 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
         const affectedPlayerIds = orderAlivePlayerIds(state, items.flatMap((item) => item.targetPlayerIds ?? []));
         const sourceEventIds = unique(items.map((item) => item.sourceEventId));
         const sourceUpdatedAt = sourceEventIds
-            .map((eventId) => (state.events ?? []).find((event) => event.id === eventId))
+            .map((eventId) => eventById.get(eventId))
             .map((event) => event?.publishedAt ?? event?.createdAt ?? null)
             .filter(Boolean)
             .sort()
@@ -4609,10 +4689,18 @@ define("js/domain/events/publicDerivation", ["require", "exports", "js/domain/po
         return [...new Set(errors)];
     }
     function rebuildPublicDerivedState(state, { deterministicTimestamps = false } = {}) {
-        rebuildRoleClaims(state);
-        rebuildPublicAbilityClaims(state);
-        rebuildPlayerDecisionStates(state);
-        rebuildDiscussionReconsideration(state, { deterministicTimestamps });
+        const eventById = buildEventIndex(state);
+        const playerById = buildPlayerIndex(state);
+        const speechEvents = publicSpeechEvents(state);
+        rebuildRoleClaims(state, { speechEvents });
+        rebuildPublicAbilityClaims(state, { speechEvents });
+        rebuildPlayerDecisionStates(state, { eventById, playerById });
+        rebuildDiscussionReconsideration(state, {
+            deterministicTimestamps,
+            speechEvents,
+            eventById,
+            playerById,
+        });
         return state;
     }
 });
@@ -7149,6 +7237,8 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                 if (freezeSlot) {
                     if (freezeBlockedByFear)
                         expectedFreezeOutcome = 'not-executed';
+                    else if (deathById.has(freezeSlot.actorId))
+                        expectedFreezeOutcome = 'actor-dead';
                     else if (expectedGuarded.includes(expectedFreezeTargetId))
                         expectedFreezeOutcome = 'guarded';
                     else if (deathById.has(expectedFreezeTargetId))
@@ -7367,7 +7457,7 @@ define("js/state/validators/conversationNightVoteValidator", ["require", "export
  * 責務: 役職CO・能力結果主張の派生状態とAIターンの解析・採用・監査情報を検査する。
  * 変更ルール: 公開イベントから再構築した値との意味一致と参照整合だけを検査し、オブジェクトのキー挿入順だけの差を不一致扱いしない。配列順は保持し、代替ターンへ通常生成本文の同一性を要求しない。
  */
-define("js/state/validators/derivedAiStateValidator", ["require", "exports", "js/config/constants", "js/config/personalNightActionTasks", "js/domain/events/publicDerivation", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/roles/roleAttributes", "js/domain/game/factionStrategyState", "js/shared/utils", "js/state/validators/validatorShared"], function (require, exports, constants_js_16, personalNightActionTasks_js_2, publicDerivation_js_1, publicAbilityClaimPolicy_js_4, roleAttributes_js_8, factionStrategyState_js_3, utils_js_5, validatorShared_js_6) {
+define("js/state/validators/derivedAiStateValidator", ["require", "exports", "js/config/constants", "js/config/personalNightActionTasks", "js/domain/events/publicDerivation", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/roles/roleAttributes", "js/domain/policies/abilityClaimTimingPolicy", "js/domain/game/factionStrategyState", "js/shared/utils", "js/state/validators/validatorShared"], function (require, exports, constants_js_16, personalNightActionTasks_js_2, publicDerivation_js_1, publicAbilityClaimPolicy_js_4, roleAttributes_js_8, abilityClaimTimingPolicy_js_3, factionStrategyState_js_3, utils_js_5, validatorShared_js_6) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.validateDerivedAndAiState = validateDerivedAndAiState;
@@ -7418,8 +7508,8 @@ define("js/state/validators/derivedAiStateValidator", ["require", "exports", "js
                 errors.push(`${label}: 能力結果主張の発言イベント参照先がありません。`);
             else if (claim.status === 'active' && source.status !== 'published')
                 errors.push(`${label}: 無効な公開発言由来の能力結果がactiveです。`);
-            if (!Number.isInteger(Number(claim.observedDay)) || Number(claim.observedDay) < 1 || Number(claim.observedDay) > Number(claim.announcedDay))
-                errors.push(`${label}: 能力結果主張の日付が不正です。`);
+            (0, abilityClaimTimingPolicy_js_3.validateAbilityClaimTiming)(claim.claimedRoleId, claim, { announcedDay: claim.announcedDay })
+                .forEach((message) => errors.push(`${label}: ${message}`));
             if (!publicAbilityClaimPolicy_js_4.PUBLIC_ABILITY_RESULTS.includes(claim.result))
                 errors.push(`${label}: 能力結果主張のresultが不正です。`);
             if (!validatorShared_js_6.ABILITY_SELECTION_BASE_SET.has(claim.selectionBasis))
@@ -7442,7 +7532,7 @@ define("js/state/validators/derivedAiStateValidator", ["require", "exports", "js
         });
         const abilityDayKeys = new Set();
         (raw.publicAbilityClaims ?? []).filter((claim) => claim.status === 'active').forEach((claim) => {
-            const key = `${claim.actorId}:${claim.claimedRoleId}:${claim.observedDay}`;
+            const key = `${claim.actorId}:${claim.claimedRoleId}:${claim.actionDay}`;
             if (abilityDayKeys.has(key))
                 errors.push(`${label}: 同一人物・同一役職・同一Dayの能力結果主張が複数あります。`);
             abilityDayKeys.add(key);
@@ -7738,7 +7828,7 @@ define("js/state/validators/relationshipSnapshotValidator", ["require", "exports
             .flatMap((event) => (event.payload?.structured?.abilityClaims ?? []).map((claim, index) => ({ event, claim, index })))
             .filter(({ claim }) => claim?.action === 'publish')
             .sort((left, right) => {
-            const dayDifference = Number(left.claim.observedDay ?? left.event.day ?? 0) - Number(right.claim.observedDay ?? right.event.day ?? 0);
+            const dayDifference = Number(left.claim.availableDay ?? left.event.day ?? 0) - Number(right.claim.availableDay ?? right.event.day ?? 0);
             return dayDifference || Number(left.event.sequence) - Number(right.event.sequence) || left.index - right.index;
         });
         const expected = new Map();
@@ -7758,7 +7848,7 @@ define("js/state/validators/relationshipSnapshotValidator", ["require", "exports
                 targetId,
                 label: `${claimedRoleName}・${(0, publicAbilityClaimPolicy_js_5.publicAbilityResultLabel)(result, claimedRoleId)}`,
                 graphLabel: `${claimedRoleName}${result === 'wolf' ? '●' : result === 'not-wolf' ? '○' : '◇'}`,
-                day: Number(claim.observedDay ?? event.day ?? 0),
+                day: Number(claim.availableDay ?? event.day ?? 0),
                 result,
                 sourceEventId: event.id,
             });
@@ -9826,7 +9916,7 @@ define("js/domain/discussion/discussionOpportunity", ["require", "exports"], fun
  * 責務: 勝敗公開後の感想順序と、各キャラクター向けに勝敗・全員の確定役職・CO・能力結果・処刑・夜結果だけを、訂正後の論理時系列で重複なく導出する。
  * 変更ルール: 状態を更新しない。通常会話、疑い、信用、投票先、投票理由を感想用経過へ混在させない。公開事実は訂正後の正式イベント、本人の実能力結果と夜行動は本人可視イベントを正本とする。同一能力結果の再発表は意味単位で統合し、離脱後の出来事は結果を知った時点で区画単位に分ける。感想本文の生成・保存・表示は担当しない。
  */
-define("js/domain/result/resultImpressions", ["require", "exports", "js/config/constants", "js/domain/events/correctionLineage", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/roles/roleAttributes"], function (require, exports, constants_js_19, correctionLineage_js_2, publicAbilityClaimPolicy_js_6, roleAttributes_js_13) {
+define("js/domain/result/resultImpressions", ["require", "exports", "js/config/constants", "js/domain/events/correctionLineage", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/domain/roles/roleAttributes"], function (require, exports, constants_js_19, correctionLineage_js_2, publicAbilityClaimPolicy_js_6, abilityClaimTimingPolicy_js_4, roleAttributes_js_13) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getPublishedResultImpressions = getPublishedResultImpressions;
@@ -10034,7 +10124,7 @@ define("js/domain/result/resultImpressions", ["require", "exports", "js/config/c
             identity?.actorId ?? '',
             identity?.actionType ?? '',
             identity?.targetId ?? '',
-            Number(identity?.resultDay ?? 0),
+            Number(identity?.actionDay ?? 0),
         ].join('\u0000');
     }
     function abilitySemanticKey(identity) {
@@ -10052,14 +10142,17 @@ define("js/domain/result/resultImpressions", ["require", "exports", "js/config/c
             const actionType = String(constants_js_19.ROLE_DEFINITIONS[claimedRoleId]?.publicAbilityClaim?.actionType ?? '');
             const targetId = String(claim.targetId ?? '');
             const result = String(claim.result ?? 'unknown');
-            const observedDay = Number(claim.observedDay ?? claim.resultDay ?? event.day ?? 0);
+            const actionDay = Number(claim.actionDay ?? 0);
             const identity = {
                 actorId,
                 actionType,
                 claimedRoleId,
                 targetId,
                 result,
-                resultDay: observedDay,
+                actionDay,
+                actionPhase: String(claim.actionPhase ?? ''),
+                availableDay: Number(claim.availableDay ?? 0),
+                availablePhase: String(claim.availablePhase ?? ''),
             };
             return createFact({
                 sequence: event.sequence,
@@ -10067,7 +10160,7 @@ define("js/domain/result/resultImpressions", ["require", "exports", "js/config/c
                 day: event.day,
                 phase: event.phase,
                 type: 'ability-result',
-                text: `${actor}が${roleName(claimedRoleId)}として、Day ${observedDay}の${playerName(state, targetId)}を「${(0, publicAbilityClaimPolicy_js_6.publicAbilityResultLabel)(result, claimedRoleId)}」と発表した。`,
+                text: `${actor}が${roleName(claimedRoleId)}として、${(0, abilityClaimTimingPolicy_js_4.formatAbilityClaimTiming)(claim)}の${playerName(state, targetId)}を「${(0, publicAbilityClaimPolicy_js_6.publicAbilityResultLabel)(result, claimedRoleId)}」と発表した。`,
                 factKey: `ability-public:${abilitySemanticKey(identity)}`,
                 sourceEventIds: eventSourceIds(event),
                 abilityIdentity: identity,
@@ -10103,19 +10196,25 @@ define("js/domain/result/resultImpressions", ["require", "exports", "js/config/c
             const payload = event.payload ?? {};
             const actionType = String(payload.actionType ?? '');
             const targetId = String(payload.targetId ?? event.targetIds?.[0] ?? '');
-            const resultDay = Number(payload.nightDay ?? payload.availableFromDay ?? event.day ?? 0);
+            const actionDay = actionType === 'medium'
+                ? Math.max(0, Number(payload.availableFromDay ?? event.day ?? 1) - 1)
+                : Number(payload.nightDay ?? event.day ?? 0);
+            const timing = (0, abilityClaimTimingPolicy_js_4.buildAbilityClaimTiming)(publicAbilityRoleIdForActionType(actionType), actionDay);
             const identity = {
                 actorId: String(event.actorId ?? ''),
                 actionType,
                 roleId: publicAbilityRoleIdForActionType(actionType),
                 targetId,
                 result: String(payload.result ?? ''),
-                resultDay,
+                actionDay,
+                actionPhase: timing?.actionPhase ?? (actionType === 'medium' ? 'execution' : 'night'),
+                availableDay: timing?.availableDay ?? actionDay + 1,
+                availablePhase: timing?.availablePhase ?? 'day',
             };
             return createFact({
                 sequence: event.sequence,
                 order: 40,
-                day: resultDay,
+                day: actionDay,
                 phase: payload.nightDay !== undefined || actionType === 'choose-owner' ? 'night' : event.phase,
                 type: 'ability-result',
                 text: privateResultText(state, event),
@@ -10133,11 +10232,11 @@ define("js/domain/result/resultImpressions", ["require", "exports", "js/config/c
         const actionLabel = ACTION_LABELS[privateIdentity.actionType || publicIdentity.actionType] ?? '能力';
         const publicLabel = (0, publicAbilityClaimPolicy_js_6.publicAbilityResultLabel)(publicIdentity.result, publicIdentity.claimedRoleId ?? publicAbilityRoleIdForActionType(publicIdentity.actionType));
         const privateLabel = (0, publicAbilityClaimPolicy_js_6.publicAbilityResultLabel)(privateIdentity.result, privateIdentity.roleId ?? publicAbilityRoleIdForActionType(privateIdentity.actionType));
-        const resultDay = Number(publicIdentity.resultDay ?? privateIdentity.resultDay ?? 0);
+        const timingText = (0, abilityClaimTimingPolicy_js_4.formatAbilityClaimTiming)(publicIdentity) || (0, abilityClaimTimingPolicy_js_4.formatAbilityClaimTiming)(privateIdentity);
         if (publicIdentity.result === privateIdentity.result) {
-            return `${actor}のDay ${resultDay}の${target}への${actionLabel}結果は「${privateLabel}」で、公開した内容と一致していた。`;
+            return `${actor}の${timingText}の${target}への${actionLabel}結果は「${privateLabel}」で、公開した内容と一致していた。`;
         }
-        return `${actor}はDay ${resultDay}の${target}を「${publicLabel}」と発表したが、実際の${actionLabel}結果は「${privateLabel}」だった。`;
+        return `${actor}は${timingText}の${target}を「${publicLabel}」と発表したが、実際の${actionLabel}結果は「${privateLabel}」だった。`;
     }
     function mergePublicAndPrivateAbilityFacts(state, publicFacts, privateFacts) {
         const privateByBase = new Map();
@@ -10273,7 +10372,7 @@ define("js/domain/result/resultImpressions", ["require", "exports", "js/config/c
             const actionType = String(payload.actionType ?? '');
             const targetId = String(payload.targetId ?? event.targetIds?.[0] ?? '');
             const nightDay = Number(payload.nightDay ?? event.day ?? 0);
-            const base = abilityBaseKey({ actorId: event.actorId, actionType, targetId, resultDay: nightDay });
+            const base = abilityBaseKey({ actorId: event.actorId, actionType, targetId, actionDay: nightDay });
             if (actionType === 'choose-owner' || privateActionKeys.has(base))
                 return;
             const events = ownActionsByNight.get(nightDay) ?? [];
@@ -10457,7 +10556,10 @@ define("js/prompts/context/wolfPartnerPublicPositionContext", ["require", "expor
             .filter((claim) => claim.actorId === playerId && claim.status !== 'voided')
             .map((claim) => ({
             role: constants_js_20.ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId,
-            resultDay: claim.observedDay,
+            actionDay: claim.actionDay,
+            actionPhase: claim.actionPhase,
+            availableDay: claim.availableDay,
+            availablePhase: claim.availablePhase,
             target: playerName(state, claim.targetId),
             result: (0, publicAbilityClaimPolicy_js_7.publicAbilityResultLabel)(claim.result, claim.claimedRoleId),
         }));
@@ -11267,7 +11369,7 @@ define("js/prompts/context/characterPromptProfile", ["require", "exports", "js/c
  * 責務: プロンプト各セクションで共有する表示名解決、履歴整形、役職説明、データブロック圧縮を提供する。
  * 変更ルール: 表示契約だけを扱い、可視情報の選別やゲーム判断を追加しない。役職説明は公開配役・公開ルールから現在の対局に必要な相互作用だけを短く組み立て、秘密役職配置へ依存させない。公開イベントの順序・参照番号・保存済み構造化情報を変更しない。
  */
-define("js/prompts/sections/promptFormatters", ["require", "exports", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/serialization/promptDataSerializer"], function (require, exports, constants_js_23, publicAbilityClaimPolicy_js_9, promptDataSerializer_js_2) {
+define("js/prompts/sections/promptFormatters", ["require", "exports", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/prompts/serialization/promptDataSerializer"], function (require, exports, constants_js_23, publicAbilityClaimPolicy_js_9, abilityClaimTimingPolicy_js_5, promptDataSerializer_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.lines = lines;
@@ -11457,9 +11559,10 @@ ${(0, promptDataSerializer_js_2.renderPromptDataBlock)('call-names', rows)}
     function formatAbilityClaim(context, claim) {
         const roleName = constants_js_23.ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId ?? '能力';
         const actionLabel = { guard: '護衛', namahage: '訪問', snowWoman: '凍結' }[claim.claimedRoleId] ?? null;
+        const timing = (0, abilityClaimTimingPolicy_js_5.formatAbilityClaimTiming)(claim) || `D${claim.actionDay ?? '?'}能力`;
         if (actionLabel)
-            return `${playerName(context, claim.actorId)}: Day ${claim.observedDay} ${roleName}履歴 → ${playerName(context, claim.targetId)}へ${actionLabel}`;
-        return `${playerName(context, claim.actorId)}: Day ${claim.observedDay} ${roleName}結果 → ${playerName(context, claim.targetId)}は${(0, publicAbilityClaimPolicy_js_9.publicAbilityResultLabel)(claim.result, claim.claimedRoleId)}`;
+            return `${playerName(context, claim.actorId)}: ${timing} ${roleName}履歴 → ${playerName(context, claim.targetId)}へ${actionLabel}`;
+        return `${playerName(context, claim.actorId)}: ${timing} ${roleName}結果 → ${playerName(context, claim.targetId)}は${(0, publicAbilityClaimPolicy_js_9.publicAbilityResultLabel)(claim.result, claim.claimedRoleId)}`;
     }
     function roleTeamLabel(role) {
         if (role?.id === 'zashikiWarashi')
@@ -11643,12 +11746,13 @@ define("js/prompts/promptEnvelopeBuilder", ["require", "exports", "js/config/con
  * - 構文キーを追加・変更する場合はresponseParser.js、responseAutoRepair.js、responseContractCatalog.js、activeResponseContract.jsを同時に変更する。
  * - 通常の完全例と、実行時だけ追加できる条件付き例を分離して生成工程・自動検査へ渡す。
  * - フェーズプロンプトへ掲載する項目の選択はactiveResponseContract.jsへ委譲し、回答検証契約との集合一致を要求しない。
+ * - 推理モード固有のdecisionPatch項目は今回ターンの思考整理用として許可するが、継続判断状態への永続保存や回答必須性を意味しない。
  * - 個人夜行動かどうかの分類はpersonalNightActionTasks.jsへ委譲し、本モジュールは各taskTypeの応答モード対応だけを明示する。
  * - 公開イベント番号は固定値を置かず、呼出元から渡された実在参照だけを使用する。
  * - heartVoiceのAI生成許可は通常昼発言系とpriority-answerだけに限定し、生成・保存契約は維持する一方、過去の保存済みheartVoiceが次回入力へ再投入されることを前提にしない。
  * - 遺言・墓場会話では新規応答キーとして許可しない。
  */
-define("js/prompts/response/responseContract", ["require", "exports", "js/domain/game/factionStrategyState", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/policies/publicAbilityClaimPolicy"], function (require, exports, factionStrategyState_js_6, wolfPartnerDispositionPolicy_js_4, publicAbilityClaimPolicy_js_10) {
+define("js/prompts/response/responseContract", ["require", "exports", "js/domain/game/factionStrategyState", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy"], function (require, exports, factionStrategyState_js_6, wolfPartnerDispositionPolicy_js_4, publicAbilityClaimPolicy_js_10, abilityClaimTimingPolicy_js_6) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.RESPONSE_MODE_DEFINITIONS = void 0;
@@ -11682,6 +11786,14 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
         'suspects', 'executionCandidates', 'intendedVote', 'assessmentLevel',
         'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference',
         'uncertainty', 'nextDiscriminatingInformation',
+        // 以下は今回ターンの推理整理用。応答として許可するが、継続判断状態への永続保存は要求しない。
+        'unresolvedPoint', 'responseImpact',
+        'changePoint', 'changeTrigger', 'changeNaturalness',
+        'conflictPoint', 'compatibleExplanation',
+        'commitmentAlignment', 'reversalExplanation',
+        'interactionAsymmetry', 'consensusIndependence', 'counterHypothesis',
+        'comparisonAxis', 'candidateDifference',
+        'supportingSignals', 'counterSignals', 'remainingHypotheses',
     ]);
     const VOTE_DECISION_CHANGE_KEYS = Object.freeze(COMMON_DECISION_CHANGE_KEYS.filter((key) => key !== 'intendedVote'));
     exports.RESPONSE_MODE_DEFINITIONS = Object.freeze({
@@ -11799,7 +11911,8 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
         decisionEvidenceRefs: Object.freeze([]),
         abilityEvidenceRefs: Object.freeze([]),
         truthfulAbilitySourceRefs: Object.freeze([]),
-        abilityResultDay: 1,
+        abilityActionDay: 0,
+        abilityAvailableDay: 1,
     });
     const DECISION_GROUNDING_REFERENCE_FIELDS = Object.freeze({
         correctedSpeechRefs: Object.freeze({
@@ -11828,7 +11941,8 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
             decisionEvidenceRefs: normalizeExampleSequenceList(source.decisionEvidenceRefs),
             abilityEvidenceRefs: normalizeExampleSequenceList(source.abilityEvidenceRefs),
             truthfulAbilitySourceRefs: normalizeExampleSequenceList(source.truthfulAbilitySourceRefs),
-            abilityResultDay: Math.max(1, Number(source.abilityResultDay ?? 1)),
+            abilityActionDay: Math.max(0, Number(source.abilityActionDay ?? 0)),
+            abilityAvailableDay: Math.max(1, Number(source.abilityAvailableDay ?? 1)),
         };
     }
     function getResponseModeForTask(taskType) {
@@ -11922,10 +12036,13 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
         if (!roleId)
             return null;
         const result = (0, publicAbilityClaimPolicy_js_10.getPublicAbilityClaimDefinition)(roleId)?.results?.[0] ?? 'unknown';
+        const timing = (0, abilityClaimTimingPolicy_js_6.buildAbilityClaimTiming)(roleId, references.abilityActionDay);
+        if (!timing || timing.availableDay !== references.abilityAvailableDay || (roleId === 'medium' && timing.actionDay < 1))
+            return null;
         const claim = {
             intent: 'deception',
             roleId,
-            resultDay: references.abilityResultDay,
+            ...timing,
             target: '能力対象の正式表示名',
             result,
         };
@@ -11948,7 +12065,7 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
             examples.abilityClaims = abilityClaims;
         return examples;
     }
-    function buildDecisionPatchExample(mode, exampleReferences = null) {
+    function buildDecisionPatchExample(mode, exampleReferences = null, { keys = null } = {}) {
         const references = normalizeResponseExampleReferences(exampleReferences);
         const values = {
             suspects: ['疑っている相手の正式表示名'],
@@ -11960,16 +12077,34 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
             selectionDifference: '最有力の別候補との今日の処刑価値の差',
             uncertainty: '現在の判断に残る不確実性',
             nextDiscriminatingInformation: '次に判断を分ける情報',
-        };
-        const patch = Object.fromEntries(getDecisionChangeKeys(mode).map((key) => [key, values[key]]));
-        if (mode !== 'vote') {
-            patch.reason = mode === 'mason'
+            unresolvedPoint: '現在まだ解けていない確認点',
+            responseImpact: '相手の回答によって以前の評価がどう変わったか',
+            changePoint: '注目している発言・立場・投票姿勢などの変化',
+            changeTrigger: 'その変化を起こした可能性のある公開情報',
+            changeNaturalness: 'その公開情報で変化を自然に説明できるか',
+            conflictPoint: '同時には成立しにくい発言・行動',
+            compatibleExplanation: '矛盾に見える内容を自然に両立できる別解釈',
+            commitmentAlignment: '過去に示した立場と現在行動が一致しているか',
+            reversalExplanation: '立場変更を説明できる公開情報',
+            interactionAsymmetry: '二者間で確認できる態度・質問・評価などの非対称性',
+            consensusIndependence: '多数意見が独立した根拠か、他者への追従か',
+            counterHypothesis: '主流説以外に同じ公開情報から成立する説明',
+            comparisonAxis: '今回候補同士を比較する軸',
+            candidateDifference: 'その比較軸で確認できる候補間の具体的な差',
+            supportingSignals: ['現在の仮説を支持する独立した公開材料'],
+            counterSignals: ['現在の仮説に反する公開材料'],
+            remainingHypotheses: ['まだ排除できていない説明'],
+            reason: mode === 'mason'
                 ? '共有者間で確認した現在の判断理由'
-                : '現在の判断を支える具体的な公開根拠';
-        }
-        patch.correctedSpeechRefs = [];
-        patch.evidenceRefs = [];
-        return patch;
+                : '現在の判断を支える具体的な公開根拠',
+            correctedSpeechRefs: [...references.correctedSpeechRefs],
+            evidenceRefs: [...references.decisionEvidenceRefs],
+        };
+        const allowed = new Set(getDecisionPatchKeys(mode));
+        const selectedKeys = Array.isArray(keys) ? keys : getDecisionPatchKeys(mode);
+        return Object.fromEntries(selectedKeys
+            .filter((key) => allowed.has(key) && Object.hasOwn(values, key))
+            .map((key) => [key, values[key]]));
     }
     function strategyFieldExample(field, partnerDispositionPolicy) {
         const values = {
@@ -12128,7 +12263,7 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
 });
 /**
  * 責務: voteでAIへ原則出力させるdecisionPatchの比較項目と説明文を、直接生成・構造草案の両方へ同一内容で提供する。
- * 変更ルール: 回答検証上のrequired/optionalを変更しない。ここで列挙する項目はAIへ具体化を促す優先項目であり、欠落時のエラー条件ではない。許可キー集合は呼出元のresponseContractを正本とし、ゲーム状態・秘密情報を参照しない。decisionPatchの根拠参照は#公開ログ番号だけに限定し、P#本人限定参照との名前空間を混同させない。
+ * 変更ルール: 回答検証上のrequired/optionalを変更しない。ここで列挙する項目は今回JSON例へ表示された任意候補であり、欠落時のエラー条件ではない。機械許可キー集合はresponseContractを正本とし、本モジュールは表示集合だけを説明する。ゲーム状態・秘密情報を参照しない。decisionPatchの根拠参照は#公開ログ番号だけに限定し、P#本人限定参照との名前空間を混同させない。
  */
 define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", "js/domain/game/decisionState"], function (require, exports, decisionState_js_6) {
     "use strict";
@@ -12139,20 +12274,93 @@ define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", 
     exports.VOTE_PROMPT_PRIORITY_DECISION_CHANGE_KEYS = Object.freeze([
         'executionCandidates', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference',
     ]);
-    function buildVoteDecisionPatchGuidanceRows(allowedKeys = []) {
-        const normalizedAllowedKeys = [...new Set((allowedKeys ?? []).map(String).filter(Boolean))];
+    function buildVoteDecisionPatchGuidanceRows(displayedKeys = []) {
+        const normalizedDisplayedKeys = [...new Set((displayedKeys ?? []).map(String).filter(Boolean))];
         const priorityKeys = exports.VOTE_PROMPT_PRIORITY_DECISION_CHANGE_KEYS
-            .filter((key) => normalizedAllowedKeys.includes(key));
+            .filter((key) => normalizedDisplayedKeys.includes(key));
         const rows = [
-            `投票先はactionAnswer、投票理由はrationaleだけに記録します。decisionPatchはmode/changesで包まず、比較・不確実性・公開根拠参照を直下へ記録します。使用可能キー: ${normalizedAllowedKeys.join(' / ') || 'なし'}。${priorityKeys.length ? `特に ${priorityKeys.join(' / ')} を具体化してください。` : ''}`,
-            'leaveAliveBenefitには対象を残すことで自陣営が得る利益、misexecutionCostにはその処刑が自陣営に不利だった場合の主要損失、selectionDifferenceには最有力の別候補との今日の処刑価値の差を記録します。',
-            `decisionPatch.assessmentLevelは ${decisionState_js_6.DECISION_ASSESSMENT_LEVELS.join(' / ')} のいずれかです。`,
-            'decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。',
+            `投票先はactionAnswer、投票理由はrationaleだけに記録します。decisionPatchはmode/changesで包まず直下形式で、今回JSON例に表示された子項目から必要なものだけ任意で使用します。表示項目: ${normalizedDisplayedKeys.join(' / ') || 'なし'}。各子項目は未回答でもエラーになりません。${priorityKeys.length ? `処刑判断では ${priorityKeys.join(' / ')} が比較候補です。` : ''}`,
         ];
+        if (priorityKeys.some((key) => ['leaveAliveBenefit', 'misexecutionCost', 'selectionDifference'].includes(key))) {
+            rows.push('leaveAliveBenefitには対象を残すことで自陣営が得る利益、misexecutionCostにはその処刑が自陣営に不利だった場合の主要損失、selectionDifferenceには最有力の別候補との今日の処刑価値の差を記録します。');
+        }
+        if (normalizedDisplayedKeys.includes('assessmentLevel')) {
+            rows.push(`decisionPatch.assessmentLevelは ${decisionState_js_6.DECISION_ASSESSMENT_LEVELS.join(' / ')} のいずれかです。`);
+        }
+        if (normalizedDisplayedKeys.includes('correctedSpeechRefs') || normalizedDisplayedKeys.includes('evidenceRefs')) {
+            rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
+        }
         return rows;
     }
     function renderVoteDecisionPatchGuidance(allowedKeys = []) {
         return buildVoteDecisionPatchGuidanceRows(allowedKeys).join('\n');
+    }
+});
+/**
+ * 責務: AIへ今回のdecisionPatch JSON例として見せる任意項目を、推理モード・人物の推理傾向・既存の処刑判断局面から選ぶ。
+ * 変更ルール:
+ * - 本モジュールは回答検証必須性、機械許可キー、ゲーム状態更新を変更しない。JSON例への掲載は回答候補の提示だけを意味し、掲載項目の欠落をエラーにしてはならない。
+ * - 処刑比較項目の表示タイミングは呼出元がpromptSituation / promptSectionPolicyで解決した既存フラグだけを受け取り、本モジュールで残り発言回数やvote条件を再判定しない。
+ * - 推理モード固有項目は今回ターンの思考整理用であり、永続判断状態へ必須保存する前提を持たない。
+ * - confrontationStyle / questionStyleは公開表現・質問方法の責務なので、本モジュールからdecisionPatch項目を追加しない。
+ */
+define("js/prompts/policies/decisionPromptFieldPolicy", ["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.resolveDecisionPromptFieldKeys = resolveDecisionPromptFieldKeys;
+    const BASE_FIELDS = Object.freeze([
+        'suspects',
+        'assessmentLevel',
+        'reason',
+        'evidenceRefs',
+    ]);
+    const EXECUTION_FIELDS = Object.freeze([
+        'executionCandidates',
+        'leaveAliveBenefit',
+        'misexecutionCost',
+        'selectionDifference',
+    ]);
+    const MODE_FIELDS = Object.freeze({
+        'probe-response': Object.freeze(['unresolvedPoint', 'nextDiscriminatingInformation']),
+        'evaluate-response': Object.freeze(['responseImpact', 'uncertainty']),
+        'trace-change': Object.freeze(['changePoint', 'changeTrigger', 'changeNaturalness']),
+        'check-consistency': Object.freeze(['conflictPoint', 'compatibleExplanation']),
+        'inspect-commitment': Object.freeze(['commitmentAlignment', 'reversalExplanation']),
+        'compare-pair': Object.freeze(['interactionAsymmetry', 'candidateDifference']),
+        'challenge-consensus': Object.freeze(['consensusIndependence', 'counterHypothesis']),
+        'evaluate-information-gain': Object.freeze(['nextDiscriminatingInformation']),
+        'compare-candidates': Object.freeze(['comparisonAxis', 'candidateDifference']),
+        'synthesize-claims': Object.freeze(['supportingSignals', 'counterSignals']),
+        'hold-judgment': Object.freeze(['uncertainty', 'remainingHypotheses', 'nextDiscriminatingInformation']),
+    });
+    function unique(values) {
+        return [...new Set(values.filter(Boolean))];
+    }
+    function profileFields(reasoningProfile = null) {
+        const profile = reasoningProfile ?? {};
+        const fields = [];
+        if (profile.hypothesisBreadth === 'wide')
+            fields.push('remainingHypotheses');
+        if (profile.uncertaintyStyle === 'explicit')
+            fields.push('uncertainty');
+        if (profile.uncertaintyStyle === 'analytical') {
+            fields.push('remainingHypotheses', 'nextDiscriminatingInformation');
+        }
+        if (profile.updateTempo === 'conservative')
+            fields.push('counterSignals');
+        if (profile.updateTempo === 'rapid')
+            fields.push('responseImpact');
+        return fields;
+    }
+    function resolveDecisionPromptFieldKeys({ reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, includeCorrectionReference = false, } = {}) {
+        return unique([
+            ...BASE_FIELDS,
+            ...(MODE_FIELDS[String(reasoningModeId ?? '')] ?? []),
+            ...profileFields(reasoningProfile),
+            ...(isExecutionDecisionWindow ? EXECUTION_FIELDS : []),
+            ...(isFinalDiscussionDecisionWindow ? ['intendedVote'] : []),
+            ...(includeCorrectionReference ? ['correctedSpeechRefs'] : []),
+        ]);
     }
 });
 /**
@@ -12162,6 +12370,8 @@ define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", 
  * - voteのdecisionPatch具体化ガイダンスはvoteResponseGuidancePolicy.jsを正本とし、構造草案側と同じ文言・優先項目を使用する。
  * - requiredTopLevelKeysは欠落時に進行を止める境界であり、検証上任意でもAIに生成してほしいrationale / decisionPatch / heartVoice / memoAdd等は原則出力の説明と主JSON例へ掲載する。
  * - 『プロンプトに掲載する』ことを理由に回答検証必須へ昇格してはならず、『検証上任意』を理由にプロンプトやJSON例から削除してはならない。
+ * - decisionPatchの子項目はJSON例への掲載有無だけで思考観点を誘導し、掲載された子項目もすべて回答任意とする。推理モード・人物傾向・処刑判断局面による掲載選択はdecisionPromptFieldPolicy.jsを正本とする。
+ * - 処刑比較項目の表示タイミングはpromptSituation / promptSectionPolicyで既に解決されたフラグを受け取り、本モジュールで残り発言回数やvote条件を再判定しない。
  * - 許可キーは本人役職へ適合済みの集合だけを表示する。
  * - 通常発言はpublicSpeechをAI向け必須出力とし、各モードの説明と今回のJSON例は最終確認用として一箇所から生成する。
  * - assessmentLevelの列挙値はdecisionState.js、partnerDispositionの列挙値はwolfPartnerDispositionPolicy.js由来の動的ポリシーを使用する。
@@ -12169,9 +12379,9 @@ define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", 
  * - 外部JSONキーと内部保存キーを混在させず、speechInteractionは外部契約のquestionTargets / answerToRefsだけを明示する。
  * - 投票はactionAnswerをAI向け必須出力、rationale / decisionPatchを原則出力として主JSON例へ必ず掲載するが、後二者の欠落をエラーにしない。
  * - 夜行動理由、襲撃評価、雪女推定、初夜共有戦略、失効判断などの動的なAI向け必須性も本モジュールだけで決め、responseContract.jsの回答検証必須性へ逆流させない。
- * - heartVoiceは通常昼発言系とpriority-answerだけで原則出力とし、遺言・墓場会話へ生成指示を追加しない。
+ * - heartVoiceは通常昼発言系とpriority-answerだけで原則出力とし、遺言・墓場会話へ生成指示を追加しない。墓場会話ではmemoAddを機械許可のまま保持してもプロンプト掲載・JSON例から外し、秘密共有・答え合わせ・感想へ誘導する。
  */
-define("js/prompts/response/activeResponseContract", ["require", "exports", "js/domain/game/decisionState", "js/prompts/policies/voteResponseGuidancePolicy", "js/domain/game/factionStrategyState", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_7, voteResponseGuidancePolicy_js_1, factionStrategyState_js_7, publicAbilityClaimPolicy_js_11, responseContract_js_1) {
+define("js/prompts/response/activeResponseContract", ["require", "exports", "js/domain/game/decisionState", "js/prompts/policies/voteResponseGuidancePolicy", "js/prompts/policies/decisionPromptFieldPolicy", "js/domain/game/factionStrategyState", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_7, voteResponseGuidancePolicy_js_1, decisionPromptFieldPolicy_js_1, factionStrategyState_js_7, publicAbilityClaimPolicy_js_11, responseContract_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildActiveResponseContractExample = buildActiveResponseContractExample;
@@ -12188,6 +12398,16 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
     function selectExampleKeys(example, keys) {
         const selected = new Set(keys);
         return Object.fromEntries(Object.entries(example).filter(([key]) => selected.has(key)));
+    }
+    function activeDecisionPromptFieldKeys({ mode, reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, exampleReferences = null, } = {}) {
+        const allowed = new Set((0, responseContract_js_1.getDecisionPatchKeys)(mode));
+        return (0, decisionPromptFieldPolicy_js_1.resolveDecisionPromptFieldKeys)({
+            reasoningModeId,
+            reasoningProfile,
+            isExecutionDecisionWindow,
+            isFinalDiscussionDecisionWindow,
+            includeCorrectionReference: Boolean((0, responseContract_js_1.normalizeResponseExampleReferences)(exampleReferences).correctedSpeechRefs.length),
+        }).filter((key) => allowed.has(key));
     }
     function dynamicRequiredKeys({ mode, roleId, decisionPatchRequired, factionStrategyPolicy, wolfConversationPurpose }) {
         const keys = [];
@@ -12215,9 +12435,13 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             ...dynamicRequiredKeys(options),
         ]).filter((key) => allowedKeys.has(key));
     }
+    function promptVisibleTopLevelKeys(mode, roleId) {
+        return (0, responseContract_js_1.getRoleCompatibleResponseTopLevelKeys)(mode, roleId)
+            .filter((key) => !(mode === 'graveyard' && key === 'memoAdd'));
+    }
     function availableOptionalKeys({ mode, roleId, claimRolePolicy, requiredKeys }) {
         const required = new Set(requiredKeys);
-        return (0, responseContract_js_1.getRoleCompatibleResponseTopLevelKeys)(mode, roleId)
+        return promptVisibleTopLevelKeys(mode, roleId)
             .filter((key) => !required.has(key))
             .filter((key) => !(isSpeechMode(mode) && key === 'publicSpeech'))
             .filter((key) => key !== 'coOperation' || (0, responseContract_js_1.getCoOperationRoleIds)(claimRolePolicy).length > 0)
@@ -12241,13 +12465,13 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             const truthfulExample = (0, responseContract_js_1.buildAbilityClaimsConditionalExample)(claimRolePolicy, normalizedReferences);
             const deceptionExample = (0, responseContract_js_1.buildDeceptionAbilityClaimsConditionalExample)(claimRolePolicy, normalizedReferences);
             const hasTruthfulSource = Boolean(normalizedReferences.truthfulAbilitySourceRefs.length);
-            rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの本人P#記録をsourceRefで参照します。truthfulではroleId・resultDay・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。そのうえで、公開する能力結果の役職・対象・結果はpublicSpeechにも自然な発言として必ず含めてください。abilityClaimsは状態更新の正本、publicSpeechはプレイヤーが実際に口にする本文です。truthful / deceptionのどちらでも両者で同じ公開主張にしてください。');
+            rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。そのうえで、公開する能力結果の役職・対象・結果はpublicSpeechにも自然な発言として必ず含めてください。abilityClaimsは状態更新の正本、publicSpeechはプレイヤーが実際に口にする本文です。truthful / deceptionのどちらでも両者で同じ公開主張にしてください。');
             if (hasTruthfulSource && truthfulExample)
                 rows.push(`truthful形式: ${JSON.stringify({ abilityClaims: truthfulExample })}`);
             const resultValuesByRole = claimRolePolicy.abilityClaimRoleIds
                 .map((roleId) => `${roleId}=${((0, publicAbilityClaimPolicy_js_11.getPublicAbilityClaimDefinition)(roleId)?.results ?? []).join(' / ')}`)
                 .join('、');
-            rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・resultDay・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。`);
+            rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・actionDay・actionPhase・availableDay・availablePhase・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。`);
             if (deceptionExample)
                 rows.push(`deception形式: ${JSON.stringify({ abilityClaims: deceptionExample })}`);
         }
@@ -12312,30 +12536,31 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
         }
         return rows;
     }
-    function decisionPatchRules(mode, decisionPatchRequired) {
+    function decisionPatchRules(mode, decisionPatchRequired, decisionPromptKeys = []) {
         if (![...SPEECH_MODES, 'priority-answer', 'mason', 'vote'].includes(mode))
             return [];
-        const keys = (0, responseContract_js_1.getDecisionChangeKeys)(mode);
-        const allowedKeys = (0, responseContract_js_1.getDecisionPatchKeys)(mode);
-        const assessmentLevelRule = keys.includes('assessmentLevel')
+        const shownKeys = [...new Set((decisionPromptKeys ?? []).filter((key) => (0, responseContract_js_1.getDecisionPatchKeys)(mode).includes(key)))];
+        const assessmentLevelRule = shownKeys.includes('assessmentLevel')
             ? `decisionPatch.assessmentLevelは ${decisionState_js_7.DECISION_ASSESSMENT_LEVELS.join(' / ')} のいずれかです。`
             : '';
         if (mode === 'vote') {
-            return (0, voteResponseGuidancePolicy_js_1.buildVoteDecisionPatchGuidanceRows)(allowedKeys);
+            return (0, voteResponseGuidancePolicy_js_1.buildVoteDecisionPatchGuidanceRows)(shownKeys);
         }
         const rows = [
             decisionPatchRequired
-                ? `decisionPatchはmode/changesで包まず、許可キーを直下に指定して必ず出力してください。許可キー: ${allowedKeys.join(' / ')}。`
-                : `本人の現在判断を変更・補足・具体化できる場合、decisionPatchはmode/changesで包まず許可キーを直下に指定して追加できます。許可キー: ${allowedKeys.join(' / ')}。`,
+                ? `decisionPatchはmode/changesで包まず直下形式で出力してください。今回JSON例に表示する子項目: ${shownKeys.join(' / ') || 'なし'}。各子項目は回答任意で、使わなくてもエラーにはなりません。`
+                : `本人の現在判断を変更・補足・具体化できる場合、decisionPatchはmode/changesで包まず直下形式で追加できます。今回JSON例に表示する子項目: ${shownKeys.join(' / ') || 'なし'}。各子項目は回答任意で、使わなくてもエラーにはなりません。`,
             assessmentLevelRule,
         ].filter(Boolean);
         if (decisionPatchRequired) {
-            rows.push('前回判断が現在の候補構造では利用できないため、今回はdecisionPatchで現在判断を再構成してください。判断内容の一部が維持される場合もdecisionPatch自体を省略しません。');
+            rows.push('前回判断が現在の候補構造では利用できないため、今回はdecisionPatch自体を出力してください。ただしJSON例内の個々の子項目は必要なものだけ使用し、未回答の子項目を埋めるために内容を作りません。');
+        }
+        if (shownKeys.includes('correctedSpeechRefs') || shownKeys.includes('evidenceRefs')) {
             rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
         }
         return rows;
     }
-    function requiredModeRules({ mode, roleId, hasPreviousDecision, hasPreviousFactionStrategy, factionStrategyPolicy, partnerDispositionPolicy, freezeEstimateLimit, wolfConversationPurpose, attackAlternativeAvailable, decisionPatchRequired, requiredKeys = [], }) {
+    function requiredModeRules({ mode, roleId, hasPreviousDecision, hasPreviousFactionStrategy, factionStrategyPolicy, partnerDispositionPolicy, freezeEstimateLimit, wolfConversationPurpose, attackAlternativeAvailable, decisionPatchRequired, decisionPromptKeys = [], requiredKeys = [], }) {
         const rows = [];
         if (mode === 'discussion-opening-preference')
             rows.push('openingPreferenceはEARLY / NORMAL / WAIT_COのいずれかです。公開発言はまだ生成しません。');
@@ -12350,7 +12575,7 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
         if (mode === 'mason')
             rows.push('masonMessageは共有者相方だけに見せる秘密会話です。');
         if (mode === 'graveyard')
-            rows.push('graveyardMessageは現在の墓場参加者だけに見せる秘密会話です。死亡後の地上情報を推測・補完せず、死亡時点までの記憶と墓場で実際に共有された内容だけを使います。');
+            rows.push('graveyardMessageは現在の墓場参加者だけに見せる自然な秘密会話です。死亡時点までの記憶と墓場で実際に共有された内容を使い、生前の秘密・答え合わせ・感想を会話として表現します。');
         if (mode === 'testament')
             rows.push('publicSpeechは処刑直前に一度だけ残す完成済みの公開遺言です。質問や回答を追加せず、この発言後に議論が再開する前提で書きません。');
         if (mode === 'wolf') {
@@ -12376,14 +12601,14 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
         if (mode === 'night-action')
             rows.push('rationaleには結果判明前の時点で、他候補よりその対象を選んだ具体的理由を記録します。');
         if (decisionPatchRequired && mode !== 'vote')
-            rows.push(...decisionPatchRules(mode, decisionPatchRequired));
+            rows.push(...decisionPatchRules(mode, decisionPatchRequired, decisionPromptKeys));
         rows.push(...factionStrategyRules(roleId, factionStrategyPolicy, hasPreviousFactionStrategy, partnerDispositionPolicy, requiredKeys));
         if (!hasPreviousDecision && decisionPatchRequired && [...SPEECH_MODES, 'priority-answer', 'mason', 'vote'].includes(mode)) {
             rows.push('利用できる前回判断がないため、過去判断の維持ではなく現在の公開情報から記録してください。');
         }
         return rows;
     }
-    function recommendedModeRules({ mode, decisionPatchRequired, recommendedKeys = [] }) {
+    function recommendedModeRules({ mode, decisionPatchRequired, decisionPromptKeys = [], recommendedKeys = [] }) {
         const rows = [];
         if (isSpeechMode(mode)) {
             rows.push('heartVoiceは原則出力します。公開本文の言い換えではない、本人とGMだけが読む局面固有の本音・迷い・警戒・期待を記録してください。現在の入力から公開本文とは別の内容を適切に生成できない場合に限り省略でき、未入力でもエラーにはなりません。');
@@ -12392,10 +12617,10 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             rows.push('heartVoiceは原則出力します。本人とGMだけが読む、質問への回答時点の本音・迷い・警戒を記録してください。現在の入力から適切に生成できない場合に限り省略でき、未入力でもエラーにはなりません。');
         }
         if (mode === 'vote') {
-            rows.push(...decisionPatchRules(mode, false));
+            rows.push(...decisionPatchRules(mode, false, decisionPromptKeys));
         }
         else if (!decisionPatchRequired) {
-            rows.push(...decisionPatchRules(mode, false));
+            rows.push(...decisionPatchRules(mode, false, decisionPromptKeys));
             if ([...SPEECH_MODES, 'priority-answer', 'mason'].includes(mode)) {
                 rows.push('decisionPatchは、現在判断を変更・補足・具体化できる内容がある場合は原則として追加します。判断の変更点がない、または公開根拠が不足する場合だけ省略できます。');
             }
@@ -12440,7 +12665,7 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             return '';
         return `### ${title}\n${rows.map((row) => `- ${row}`).join('\n')}`;
     }
-    function buildActiveResponseContractExample({ mode, roleId, partnerDispositionPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, factionStrategyPolicy = null, } = {}) {
+    function buildActiveResponseContractExample({ mode, roleId, partnerDispositionPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, factionStrategyPolicy = null, reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, } = {}) {
         const completeExample = (0, responseContract_js_1.buildResponseContractExample)({
             mode,
             roleId,
@@ -12466,10 +12691,30 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
         const exampleKeys = isSpeechMode(mode)
             ? unique([...requiredKeys, 'publicSpeech', ...recommendedKeys])
             : unique([...requiredKeys, ...recommendedKeys]);
-        return selectExampleKeys(completeExample, exampleKeys);
+        const example = selectExampleKeys(completeExample, exampleKeys);
+        if (example.decisionPatch) {
+            const decisionPromptKeys = activeDecisionPromptFieldKeys({
+                mode,
+                reasoningModeId,
+                reasoningProfile,
+                isExecutionDecisionWindow,
+                isFinalDiscussionDecisionWindow,
+                exampleReferences,
+            });
+            example.decisionPatch = (0, responseContract_js_1.buildDecisionPatchExample)(mode, exampleReferences, { keys: decisionPromptKeys });
+        }
+        return example;
     }
-    function renderActiveResponseContract({ mode, roleId, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, } = {}) {
+    function renderActiveResponseContract({ mode, roleId, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, } = {}) {
         const references = (0, responseContract_js_1.normalizeResponseExampleReferences)(exampleReferences);
+        const decisionPromptKeys = activeDecisionPromptFieldKeys({
+            mode,
+            reasoningModeId,
+            reasoningProfile,
+            isExecutionDecisionWindow,
+            isFinalDiscussionDecisionWindow,
+            exampleReferences: references,
+        });
         const options = {
             mode,
             roleId,
@@ -12483,6 +12728,7 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             attackAlternativeAvailable,
             exampleReferences: references,
             decisionPatchRequired,
+            decisionPromptKeys,
         };
         const requiredKeys = promptRequiredKeysForPhase(options);
         const optionalKeys = availableOptionalKeys({ mode, roleId, claimRolePolicy, requiredKeys });
@@ -12501,15 +12747,23 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             ]
             : [];
         const blocks = [
-            renderRuleBlock('禁止', prohibitionRules(mode, (0, responseContract_js_1.getRoleCompatibleResponseTopLevelKeys)(mode, roleId))),
+            renderRuleBlock('禁止', prohibitionRules(mode, promptVisibleTopLevelKeys(mode, roleId))),
             renderRuleBlock('記載方針', fieldWritingGuidance(mode)),
             renderRuleBlock('原則出力', recommendedRows),
             renderRuleBlock('条件付き出力', conditionalRows),
         ];
         return blocks.filter(Boolean).join('\n\n');
     }
-    function renderActiveResponseFinalConfirmation({ mode, roleId, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, } = {}) {
+    function renderActiveResponseFinalConfirmation({ mode, roleId, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, } = {}) {
         const references = (0, responseContract_js_1.normalizeResponseExampleReferences)(exampleReferences);
+        const decisionPromptKeys = activeDecisionPromptFieldKeys({
+            mode,
+            reasoningModeId,
+            reasoningProfile,
+            isExecutionDecisionWindow,
+            isFinalDiscussionDecisionWindow,
+            exampleReferences: references,
+        });
         const options = {
             mode,
             roleId,
@@ -12523,6 +12777,7 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             attackAlternativeAvailable,
             exampleReferences: references,
             decisionPatchRequired,
+            decisionPromptKeys,
         };
         const requiredKeys = promptRequiredKeysForPhase(options);
         const example = buildActiveResponseContractExample({
@@ -12536,6 +12791,10 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             exampleReferences: references,
             decisionPatchRequired,
             factionStrategyPolicy,
+            reasoningModeId,
+            reasoningProfile,
+            isExecutionDecisionWindow,
+            isFinalDiscussionDecisionWindow,
         });
         const requiredRows = [
             `今回の必須出力: ${requiredKeys.join(' / ') || 'なし'}。`,
@@ -12946,7 +13205,7 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
             case 'mason-conversation':
                 return '参加者だけが閲覧できる共有者同士の夜会話です。';
             case 'graveyard-conversation':
-                return '死亡者だけが閲覧できる墓場会話です。あなたの公開知識は死亡時点で固定されています。死亡後の地上の出来事を観戦者のように補完せず、現在の墓場参加者や墓場ログから聞いた情報だけを追加で共有してください。';
+                return '死亡者だけが閲覧できる墓場会話です。墓場会話の主目的は、死亡者同士で生前の秘密を共有し、答え合わせや感想を交わすことです。自分だけが知っていた真役職、能力結果、仲間情報、騙りの意図、行動理由など、墓場でまだ共有されていない情報があれば優先して話してください。他の死亡者から新しい秘密や、自分の死亡後に地上で起きた出来事を聞いた場合は、それに対する驚き、納得、後悔、感想、生前の認識との違いなどを自然に返してください。あなたの公開知識は死亡時点で固定され、死亡後の地上情報は墓場で実際に共有された内容だけ追加で知ります。';
             case 'wolf-conversation':
                 if (wolfConversationPurpose === 'opening-strategy')
                     return renderOpeningWolfStrategyInstruction();
@@ -12991,7 +13250,7 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
         }
         return rows.join('\n');
     }
-    function renderResponseFormat({ taskType, roleId, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, }) {
+    function renderResponseFormat({ taskType, roleId, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, }) {
         const mode = (0, responseContract_js_2.getResponseModeForTask)(taskType);
         if (taskType === 'briefing')
             return '応答不要';
@@ -13008,6 +13267,10 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
             attackAlternativeAvailable,
             exampleReferences,
             decisionPatchRequired,
+            reasoningModeId,
+            reasoningProfile,
+            isExecutionDecisionWindow,
+            isFinalDiscussionDecisionWindow,
         });
     }
     function renderPublicSpeechFinalConstraint(policy, { maxChars = 450, responseLabel = '公開発言', } = {}) {
@@ -13041,7 +13304,7 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
         };
         return limitsByTask[taskType] ?? '';
     }
-    function renderFinalResponseReminder({ taskType, roleId, publicSpeechPolicy = null, maxPublicSpeechLength = 450, maxWolfMessageLength = 450, maxMasonMessageLength = 450, maxGraveyardMessageLength = 450, maxHeartVoiceLength = 120, maxResultImpressionLength, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, } = {}) {
+    function renderFinalResponseReminder({ taskType, roleId, publicSpeechPolicy = null, maxPublicSpeechLength = 450, maxWolfMessageLength = 450, maxMasonMessageLength = 450, maxGraveyardMessageLength = 450, maxHeartVoiceLength = 120, maxResultImpressionLength, hasPreviousDecision = false, hasPreviousFactionStrategy = false, partnerDispositionPolicy = null, factionStrategyPolicy = null, claimRolePolicy = null, freezeEstimateLimit = null, wolfConversationPurpose = null, attackAlternativeAvailable = true, exampleReferences = null, decisionPatchRequired = false, reasoningModeId = null, reasoningProfile = null, isExecutionDecisionWindow = false, isFinalDiscussionDecisionWindow = false, } = {}) {
         if (taskType === 'briefing')
             return '応答不要';
         const mode = (0, responseContract_js_2.getResponseModeForTask)(taskType);
@@ -13058,6 +13321,10 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
             attackAlternativeAvailable,
             exampleReferences,
             decisionPatchRequired,
+            reasoningModeId,
+            reasoningProfile,
+            isExecutionDecisionWindow,
+            isFinalDiscussionDecisionWindow,
         });
         const outputConstraints = renderFinalOutputConstraints({
             taskType,
@@ -13175,6 +13442,7 @@ ${content}`;
             model.masonConversationSection,
             model.wolfConversationSection,
             gameStateSection(model.gameStateDataBlock),
+            model.roleCompositionSituationGuideSection,
             optionalSection('前回発言との差分判定用の自分の直近公開発言', model.latestOwnSpeechDataBlock),
             optionalSection('差分送信時のあなたの直近公開発言', model.deltaSelfSpeechDataBlock),
             optionalSection(model.publicHistoryTitle, model.publicHistoryDataBlock),
@@ -13218,7 +13486,7 @@ define("js/prompts/templates/rolePromptTemplates", ["require", "exports", "js/pr
 正式通知された霊能結果は本人の確定情報です。処刑者の結果を投票、CO、能力結果主張と組み合わせてください。「非人狼」は人狼ではないことだけを示し、村人陣営とは限りません。公開する場合はCOと結果主張をそれぞれ明示構造で提出します。`,
         guard: `## あなたの役職固有の判断材料
 
-護衛対象が襲撃された場合、その襲撃死を防ぎます。ただし死亡者なしだけでは護衛成功とは断定できません。護衛履歴を公開する場合は、同じ応答で狩人COと構造化履歴を一致させます。`,
+護衛対象が襲撃された場合、その襲撃死を防ぎます。護衛履歴を公開する場合は、同じ応答で狩人COと構造化履歴を一致させます。`,
         namahage: `## あなたの役職固有の判断材料
 
 訪問結果は通知されません。「悪い子」だけに恐怖を与え、恐怖によって役職行動全体が阻害された時に恐怖は解除されます。人狼が複数いる場合は一部だけを恐怖にしても襲撃が行われ、その恐怖は維持されます。前夜と同じ相手は選べません。`,
@@ -13358,7 +13626,7 @@ ${wolfSupportKnowledgeLine(context)}投票による人狼支援、誤爆、関�
     function snowWomanDayGuidance(context) {
         return `## あなたの役職固有の判断材料
 
-雪女は生存人狼数には数えません。${snowWomanWolfKnowledgeLine(context)}凍結成功は翌朝の凍結表示で確認できます。不発時は護衛・同夜死亡${Number(context?.game?.roleComposition?.namahage ?? 0) > 0 ? '・恐怖' : ''}など原因を公開情報だけで断定しないでください。
+雪女は生存人狼数には数えません。${snowWomanWolfKnowledgeLine(context)}凍結成功は翌朝の凍結表示で確認できます。不発時は護衛・自分や対象の同夜死亡${Number(context?.game?.roleComposition?.namahage ?? 0) > 0 ? '・恐怖' : ''}など原因を公開情報だけで断定しないでください。
 
 前夜に推定した人狼候補と、その判断理由を翌日の騙り・誘導・投票でも考慮してください。判断を変える場合は、その後に増えた情報を根拠にしてください。`;
     }
@@ -13373,7 +13641,7 @@ ${wolfSupportKnowledgeLine(context)}投票による人狼支援、誤爆、関�
             : '';
         return `## あなたの役職固有の判断材料
 
-自分と前夜に選んだ相手は対象にできません。対象が護衛されるか同夜に死亡すると翌日の凍結は発生せず、成功時は翌朝に公開されます。${fearRule}
+自分と前夜に選んだ相手は対象にできません。対象が護衛されるか、自分または対象が同夜に死亡すると翌日の凍結は発生せず、成功時は翌朝に公開されます。${fearRule}
 
 まず公開情報から人狼候補を推定してください。人狼本人を凍結すると人狼陣営の発言・投票を失わせ、処刑時の遺言も封じるため、原則として避けます。次に、その人狼が今夜襲撃しそうな人物を予測してください。予想襲撃先と凍結先が重なり、襲撃で対象が死亡すると凍結効果は残らないため、重複リスクを考慮してください。
 
@@ -13419,9 +13687,9 @@ ${ownerRoleGuidance ? `${ownerRoleGuidance}
     }
     function renderRoleGuidance(context, { taskType = context?.task?.type } = {}) {
         if (taskType === 'graveyard-conversation') {
-            return `## 墓場での判断材料
+            return `## 墓場で共有できる情報
 
-死亡時点までに本人が知っていた公開・秘密情報と、実際に墓場で共有された内容だけを使って会話してください。死亡後の地上の議論・投票・能力結果を自動的に知っている前提にせず、新しく死亡した参加者が話した内容はその発言以降の共有情報として扱います。死亡したことで他人の真役職が自動開示されることはありません。自分が生前から知っていた秘密を墓場で明かすかどうかは、会話として自分で判断してください。`;
+死亡時点までに本人が知っていた公開・秘密情報と、実際に墓場で共有された内容だけを使って会話してください。死亡後の地上の議論・投票・能力結果を自動的に知っている前提にせず、新しく死亡した参加者が話した内容はその発言以降の共有情報として扱います。死亡したことで他人の真役職が自動開示されることはありません。自分が生前から知っていた真役職、能力結果、仲間情報、騙りの意図や行動理由などは、墓場でまだ共有されていなければ自然な会話として共有できます。`;
         }
         const roleId = context?.player?.roleId;
         const taskRoleId = context?.player?.strategyProfile === 'wolf' ? 'wolf' : roleId;
@@ -14089,10 +14357,10 @@ define("js/prompts/policies/characterReasoningDirector", ["require", "exports", 
     }
 });
 /**
- * 責務: AIがtruthfulとして公開する能力主張を、本人に実在する非公開の正式記録へ結び付け、対象・結果・resultDay・役職を正本から解決する。
- * 変更ルール: 公開能力履歴の一般検証や騙り内容の妥当性は扱わない。truthfulではAI入力の対象・結果を受け取らず、本人可視のprivate-resultまたは本人の正式night-actionだけを参照する。deceptionは本ポリシーの対象外とする。
+ * 責務: AIがtruthfulとして公開する能力主張を、本人に実在する非公開の正式記録へ結び付け、対象・結果・実行時点・取得時点・役職を正本から解決する。
+ * 変更ルール: 公開能力履歴の一般検証や騙り内容の妥当性は扱わない。truthfulではAI入力の対象・結果・時刻を受け取らず、本人可視のprivate-resultまたは本人の正式night-action P#を参照する。結果を別イベントで受け取る能力のnight-action P#は、同じ対象・実行夜のprivate-resultへ決定的に結び付けて正本化する。deceptionは本ポリシーの対象外とする。
  */
-define("js/domain/claims/aiAbilityClaimGroundingPolicy", ["require", "exports", "js/domain/policies/publicAbilityClaimPolicy"], function (require, exports, publicAbilityClaimPolicy_js_12) {
+define("js/domain/claims/aiAbilityClaimGroundingPolicy", ["require", "exports", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy"], function (require, exports, publicAbilityClaimPolicy_js_12, abilityClaimTimingPolicy_js_7) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.listAiTruthfulAbilityClaimSources = listAiTruthfulAbilityClaimSources;
@@ -14113,48 +14381,83 @@ define("js/domain/claims/aiAbilityClaimGroundingPolicy", ["require", "exports", 
             && (event.audience.targetIds ?? []).includes(actorId)
             && Number.isInteger(Number(event.sequence));
     }
-    function sourceDescriptor(event) {
+    function sourceDescriptor(event, { sourceRefOverride = null } = {}) {
         const actionType = String(event?.payload?.actionType ?? '');
         const roleId = ROLE_ID_BY_ACTION_TYPE[actionType] ?? null;
         if (!roleId || !(0, publicAbilityClaimPolicy_js_12.getPublicAbilityClaimDefinition)(roleId))
             return null;
         if (event.type === 'private-result' && PRIVATE_RESULT_ACTION_TYPES.has(actionType)) {
-            const observedDay = Number(event.payload?.availableFromDay ?? event.day);
+            const availableDay = Number(event.payload?.availableFromDay ?? event.day);
+            const actionDay = actionType === 'inspect'
+                ? Number(event.payload?.nightDay ?? availableDay - 1)
+                : availableDay - 1;
+            const timing = (0, abilityClaimTimingPolicy_js_7.buildAbilityClaimTiming)(roleId, actionDay);
             const result = (0, publicAbilityClaimPolicy_js_12.normalizePublicAbilityResult)(event.payload?.result);
-            if (!Number.isInteger(observedDay) || observedDay < 1)
+            if (!timing || timing.availableDay !== availableDay)
                 return null;
             if (!(0, publicAbilityClaimPolicy_js_12.getPublicAbilityClaimDefinition)(roleId)?.results?.includes(result))
                 return null;
             return {
                 sourceEventId: event.id,
-                sourceRef: Number(event.sequence),
+                sourceRef: Number(sourceRefOverride ?? event.sequence),
                 roleId,
                 actionType,
                 targetId: event.payload?.targetId ?? event.targetIds?.[0] ?? null,
                 result,
-                observedDay,
+                ...timing,
             };
         }
         if (event.type === 'night-action' && ACTION_ONLY_TYPES.has(actionType)) {
             const nightDay = Number(event.payload?.nightDay ?? event.day);
-            if (!Number.isInteger(nightDay) || nightDay < 0)
+            const timing = (0, abilityClaimTimingPolicy_js_7.buildAbilityClaimTiming)(roleId, nightDay);
+            if (!timing)
                 return null;
             return {
                 sourceEventId: event.id,
-                sourceRef: Number(event.sequence),
+                sourceRef: Number(sourceRefOverride ?? event.sequence),
                 roleId,
                 actionType,
                 targetId: event.payload?.targetId ?? event.targetIds?.[0] ?? null,
                 result: 'unknown',
-                observedDay: nightDay + 1,
+                ...timing,
             };
         }
         return null;
     }
+    function linkedPrivateResultForNightAction(events, actorId, actionEvent) {
+        const actionType = String(actionEvent?.payload?.actionType ?? '');
+        if (!PRIVATE_RESULT_ACTION_TYPES.has(actionType))
+            return null;
+        const targetId = actionEvent?.payload?.targetId ?? actionEvent?.targetIds?.[0] ?? null;
+        const nightDay = Number(actionEvent?.payload?.nightDay ?? actionEvent?.day);
+        return events
+            .filter((event) => isOwnPrivateEvent(event, actorId)
+            && event.type === 'private-result'
+            && String(event.payload?.actionType ?? '') === actionType
+            && (event.payload?.targetId ?? event.targetIds?.[0] ?? null) === targetId)
+            .find((event) => {
+            if (actionType !== 'inspect')
+                return true;
+            const availableDay = Number(event.payload?.availableFromDay ?? event.day);
+            return Number(event.payload?.nightDay ?? availableDay - 1) === nightDay;
+        }) ?? null;
+    }
     function listAiTruthfulAbilityClaimSources(state, actorId) {
-        return (state?.events ?? [])
+        const events = state?.events ?? [];
+        return events
             .filter((event) => isOwnPrivateEvent(event, actorId))
-            .map(sourceDescriptor)
+            .flatMap((event) => {
+            const direct = sourceDescriptor(event);
+            if (direct)
+                return [direct];
+            if (event.type !== 'night-action')
+                return [];
+            const linkedResult = linkedPrivateResultForNightAction(events, actorId, event);
+            const linked = linkedResult
+                ? sourceDescriptor(linkedResult, { sourceRefOverride: Number(event.sequence) })
+                : null;
+            return linked ? [linked] : [];
+        })
             .filter((item) => item?.targetId)
             .sort((left, right) => left.sourceRef - right.sourceRef);
     }
@@ -14200,8 +14503,8 @@ define("js/prompts/response/responseExampleReferences", ["require", "exports", "
         const sequence = Number(events.at(-1)?.sequence ?? 0);
         return Number.isInteger(sequence) && sequence > 0 ? [sequence] : [];
     }
-    function abilityEvidenceSequences(context, resultDay) {
-        const refs = context?.board?.abilityEvidenceCutoffs?.[resultDay]?.eligibleEvidenceRefs ?? [];
+    function abilityEvidenceSequences(context, actionDay) {
+        const refs = context?.board?.abilityEvidenceCutoffs?.[actionDay]?.eligibleEvidenceRefs ?? [];
         const normalized = [...new Set(refs
                 .map(Number)
                 .filter((sequence) => Number.isInteger(sequence) && sequence > 0))]
@@ -14225,7 +14528,8 @@ define("js/prompts/response/responseExampleReferences", ["require", "exports", "
     function buildResponseExampleReferences(stateOrContext, maybeContext) {
         const { state, context } = resolveArguments(stateOrContext, maybeContext);
         const playerId = String(context?.player?.id ?? '');
-        const resultDay = Math.max(1, Number(context?.game?.day ?? 1));
+        const currentDay = Math.max(1, Number(context?.game?.day ?? 1));
+        const actionDay = Math.max(0, currentDay - 1);
         const publicEvents = visiblePublicEvents(context);
         const visibleSequences = new Set(publicEvents.map((event) => Number(event.sequence)));
         const publicSpeeches = publicEvents.filter((event) => event.type === 'public-speech');
@@ -14238,8 +14542,9 @@ define("js/prompts/response/responseExampleReferences", ["require", "exports", "
             answerToRefs: pendingQuestionSequences.length ? [pendingQuestionSequences.at(-1)] : [],
             correctedSpeechRefs: latestSequence(publicSpeeches.filter((event) => String(event?.actorId ?? '') === playerId)),
             decisionEvidenceRefs: latestSequence(publicEvents.filter((event) => DECISION_EVIDENCE_EVENT_TYPES.has(event?.type))),
-            abilityEvidenceRefs: abilityEvidenceSequences(context, resultDay),
-            abilityResultDay: resultDay,
+            abilityEvidenceRefs: abilityEvidenceSequences(context, actionDay),
+            abilityActionDay: actionDay,
+            abilityAvailableDay: currentDay,
         };
     }
 });
@@ -14260,6 +14565,23 @@ define("js/prompts/response/structuredOutputContract", ["require", "exports", "j
         selectionDifference: Object.freeze({ type: 'string' }),
         uncertainty: Object.freeze({ type: 'string' }),
         nextDiscriminatingInformation: Object.freeze({ type: 'string' }),
+        unresolvedPoint: Object.freeze({ type: 'string' }),
+        responseImpact: Object.freeze({ type: 'string' }),
+        changePoint: Object.freeze({ type: 'string' }),
+        changeTrigger: Object.freeze({ type: 'string' }),
+        changeNaturalness: Object.freeze({ type: 'string' }),
+        conflictPoint: Object.freeze({ type: 'string' }),
+        compatibleExplanation: Object.freeze({ type: 'string' }),
+        commitmentAlignment: Object.freeze({ type: 'string' }),
+        reversalExplanation: Object.freeze({ type: 'string' }),
+        interactionAsymmetry: Object.freeze({ type: 'string' }),
+        consensusIndependence: Object.freeze({ type: 'string' }),
+        counterHypothesis: Object.freeze({ type: 'string' }),
+        comparisonAxis: Object.freeze({ type: 'string' }),
+        candidateDifference: Object.freeze({ type: 'string' }),
+        supportingSignals: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
+        counterSignals: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
+        remainingHypotheses: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
         correctedSpeechRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
         evidenceRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
     });
@@ -14381,6 +14703,23 @@ define("js/prompts/response/responseContractCatalog", ["require", "exports", "js
             selectionDifference: '最有力の別候補との今日の処刑価値の差',
             uncertainty: '残っている不確実性',
             nextDiscriminatingInformation: '次に判断を分ける情報',
+            unresolvedPoint: '現在まだ解けていない確認点',
+            responseImpact: '相手の回答で以前の評価がどう変わったか',
+            changePoint: '注目している発言・立場・投票姿勢などの変化',
+            changeTrigger: 'その変化を起こした可能性のある公開情報',
+            changeNaturalness: 'その公開情報で変化を自然に説明できるか',
+            conflictPoint: '同時には成立しにくい発言・行動',
+            compatibleExplanation: '矛盾に見える内容を自然に両立できる別解釈',
+            commitmentAlignment: '過去に示した立場と現在行動が一致しているか',
+            reversalExplanation: '立場変更を説明できる公開情報',
+            interactionAsymmetry: '二者間で確認できる反応や評価の非対称性',
+            consensusIndependence: '多数意見が独立根拠か他者への追従か',
+            counterHypothesis: '主流説以外に成立する説明',
+            comparisonAxis: '今回候補同士を比較する軸',
+            candidateDifference: '比較軸上の候補間の具体的な差',
+            supportingSignals: ['現在の仮説を支持する独立した公開材料'],
+            counterSignals: ['現在の仮説に反する公開材料'],
+            remainingHypotheses: ['まだ排除できていない説明'],
             reason: '現在の判断を支える具体的根拠',
             correctedSpeechRefs: [],
             evidenceRefs: [],
@@ -14879,7 +15218,7 @@ define("js/prompts/policies/priorPublicHistoryCompactor", ["require", "exports"]
 });
 /**
  * 責務: AI本人の前回正常回答登録位置と現在タスクから公開履歴の提示範囲を決定し、本番プロンプトと生成工程で共用する履歴選択を提供する。
- * 変更ルール: 差分境界の正本は既存decisionDeltaだけとし、本モジュールで独自カーソルを作成・更新しない。既定はcompactとし、fullは明示選択時だけ全件・全文、compactは境界以前の公開発言だけを構造的に選別して境界後は全件・全文を維持する。今回の非公開参考視点が公開イベント番号を参照する場合は、その参照先だけをcompactの保持対象およびdeltaの追加同梱対象として扱い、参考視点だけが送信履歴からぶら下がる状態を作らない。通常の夜タスクでは当日最終巡の公開発言と投票・処刑・夜明けなどの確定履歴を渡し、それ以前の通常発言は重複送信しない。墓場会話だけは死亡時点で凍結済みの公開履歴全体を継続記憶として渡すためfullを使用する。
+ * 変更ルール: 差分境界の正本は既存decisionDeltaだけとし、本モジュールで独自カーソルを作成・更新しない。既定はdeltaとし、前回正常回答登録後に増えた公開履歴だけを基本送信する。fullは明示選択時だけ全件・全文、compactは境界以前の公開発言だけを構造的に選別して境界後は全件・全文を維持する。今回の非公開参考視点が公開イベント番号を参照する場合は、その参照先だけをcompactの保持対象およびdeltaの追加同梱対象として扱い、参考視点だけが送信履歴からぶら下がる状態を作らない。通常の夜タスクでは当日最終巡の公開発言と投票・処刑・夜明けなどの確定履歴を渡し、それ以前の通常発言は重複送信しない。墓場会話だけは死亡時点で凍結済みの公開履歴全体を継続記憶として渡すためfullを使用する。
  */
 define("js/prompts/policies/publicHistoryPolicy", ["require", "exports", "js/prompts/policies/priorPublicHistoryCompactor"], function (require, exports, priorPublicHistoryCompactor_js_1) {
     "use strict";
@@ -14893,10 +15232,10 @@ define("js/prompts/policies/publicHistoryPolicy", ["require", "exports", "js/pro
     const NIGHT_HISTORY_MODES = new Set(['night', 'night-delta']);
     const PUBLIC_HISTORY_TRANSMISSION_MODES = new Set(['full', 'compact', 'delta']);
     function normalizePublicHistoryTransmissionMode(value) {
-        const mode = String(value ?? 'compact');
-        return PUBLIC_HISTORY_TRANSMISSION_MODES.has(mode) ? mode : 'compact';
+        const mode = String(value ?? 'delta');
+        return PUBLIC_HISTORY_TRANSMISSION_MODES.has(mode) ? mode : 'delta';
     }
-    function resolvePublicHistoryMode(situation, { transmissionMode = 'compact', hasHistoryCursor = false, forceFull = false, } = {}) {
+    function resolvePublicHistoryMode(situation, { transmissionMode = 'delta', hasHistoryCursor = false, forceFull = false, } = {}) {
         if (situation.isBriefing || situation.isMemo || situation.isResultImpression)
             return 'none';
         if (situation.taskType === 'graveyard-conversation')
@@ -15065,7 +15404,7 @@ define("js/prompts/policies/publicHistoryPolicy", ["require", "exports", "js/pro
 });
 /**
  * 責務: 客観的な局面フラグから、プロンプトの説明区画と詳細度をタスク別に選択する。
- * 変更ルール: 可視データ本体、公開履歴、既存説明文へ介入せず、文章を生成せず、ゲーム状態を更新しない。区画の追加・削除はタスク別の必要情報だけで判断し、同じ確定情報を複数区画へ重複表示しない。継続アンカー・当日カプセルへ依存せず、最新判断・正式本人履歴を必要タスクへ直接表示する。保存済みheartVoiceは次回プロンプトの判断材料へ再投入しない。投票の人口・同票・処刑分岐はdecisionTaskSectionへ一元化し、一般人口区画を重ねない。実行タスクは役職通知の保持を前提にせず、本人プロフィールをその都度選択する。相手別呼称は公開・秘密の会話文章を生成するタスクだけへ表示し、構造化行動タスクへ表示しない。昼の発言状況と質問可能範囲は一つの会話状況区画として選択する。回答フェーズは通常発言数を消費しないがCO可能な公開判断機会なので、役職固有判断・CO戦術・公開順序・陣営戦術を通常議論と同じ正本から表示する。判断材料を完全非表示にする変更は対応テストを追加してから行う。
+ * 変更ルール: 可視データ本体、公開履歴、既存説明文へ介入せず、文章を生成せず、ゲーム状態を更新しない。区画の追加・削除はタスク別の必要情報だけで判断し、同じ確定情報を複数区画へ重複表示しない。継続アンカー・当日カプセルへ依存せず、最新判断・正式本人履歴を必要タスクへ直接表示する。保存済みheartVoiceは次回プロンプトの判断材料へ再投入しない。投票の人口・同票・処刑分岐はdecisionTaskSectionへ一元化し、一般人口区画を重ねない。実行タスクは役職通知の保持を前提にせず、本人プロフィールをその都度選択する。相手別呼称は公開・秘密の会話文章を生成するタスクだけへ表示し、構造化行動タスクへ表示しない。昼の発言状況と質問可能範囲は一つの会話状況区画として選択する。回答フェーズは通常発言数を消費しないがCO可能な公開判断機会なので、役職固有判断・CO戦術・公開順序・陣営戦術を通常議論と同じ正本から表示する。墓場会話は生前判断の継続ではなく秘密共有・答え合わせ・感想を目的とするため、latestDecision を再投入しない。判断材料を完全非表示にする変更は対応テストを追加してから行う。
  */
 define("js/prompts/policies/promptSectionPolicy", ["require", "exports", "js/config/personalNightActionTasks", "js/config/discussionAiTaskTypes", "js/prompts/policies/publicHistoryPolicy"], function (require, exports, personalNightActionTasks_js_4, discussionAiTaskTypes_js_9, publicHistoryPolicy_js_1) {
     "use strict";
@@ -15085,7 +15424,7 @@ define("js/prompts/policies/promptSectionPolicy", ["require", "exports", "js/con
     const LATEST_DECISION_TASKS = new Set([
         ...discussionAiTaskTypes_js_9.NORMAL_SPEECH_TASK_TYPES, discussionAiTaskTypes_js_9.DISCUSSION_OPENING_PREFERENCE_TASK, 'priority-answer', 'vote',
         ...personalNightActionTasks_js_4.PERSONAL_NIGHT_ACTION_TASK_TYPES,
-        'mason-conversation', 'wolf-conversation', 'graveyard-conversation', 'wolf-attack',
+        'mason-conversation', 'wolf-conversation', 'wolf-attack',
     ]);
     const DAY_SHARED_COMMUNICATION_TASKS = new Set([...discussionAiTaskTypes_js_9.NORMAL_SPEECH_TASK_TYPES, discussionAiTaskTypes_js_9.DISCUSSION_OPENING_PREFERENCE_TASK, 'priority-answer', 'vote']);
     const WOLF_PRIVATE_TASKS = new Set(['wolf-conversation', 'wolf-attack']);
@@ -15188,7 +15527,7 @@ define("js/prompts/policies/promptSectionPolicy", ["require", "exports", "js/con
  * 責務: 本人限定情報、正式本人履歴、最新判断、ゲーム状態、公開確定時系列、人口・勝利条件をプロンプト用データへ変換する。
  * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。
  */
-define("js/prompts/sections/privateInformationSection", ["require", "exports", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/sections/promptFormatters"], function (require, exports, constants_js_25, publicAbilityClaimPolicy_js_13, promptFormatters_js_2) {
+define("js/prompts/sections/privateInformationSection", ["require", "exports", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/prompts/sections/promptFormatters"], function (require, exports, constants_js_25, publicAbilityClaimPolicy_js_13, abilityClaimTimingPolicy_js_8, promptFormatters_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.privateInformation = privateInformation;
@@ -15206,12 +15545,19 @@ define("js/prompts/sections/privateInformationSection", ["require", "exports", "
         const actionType = String(event?.payload?.actionType ?? '');
         const result = String(event?.payload?.result ?? '').trim().toLowerCase();
         const targetId = event?.payload?.targetId ?? event?.targetIds?.[0] ?? null;
+        const roleId = PRIVATE_ABILITY_ROLE_BY_ACTION[actionType] ?? null;
+        const availableDay = Number(event?.payload?.availableFromDay ?? event.day);
+        const actionDay = actionType === 'inspect'
+            ? Number(event?.payload?.nightDay ?? availableDay - 1)
+            : availableDay - 1;
+        const timing = (0, abilityClaimTimingPolicy_js_8.buildAbilityClaimTiming)(roleId, actionDay);
         return {
             ref: `P#${event.sequence}`,
             sourceRef: Number(event.sequence),
-            resultDay: Number(event?.payload?.availableFromDay ?? event.day),
+            ...(timing ?? {}),
+            timing: timing ? (0, abilityClaimTimingPolicy_js_8.formatAbilityClaimTiming)(timing) : null,
             actionType,
-            roleId: PRIVATE_ABILITY_ROLE_BY_ACTION[actionType] ?? null,
+            roleId,
             target: targetId ? (0, promptFormatters_js_2.playerName)(context, targetId) : null,
             verdict: result === 'wolf' ? 'WOLF' : result === 'not-wolf' ? 'NOT_WOLF' : String(result || 'UNKNOWN').toUpperCase(),
         };
@@ -15358,7 +15704,11 @@ define("js/prompts/sections/privateInformationSection", ["require", "exports", "
                 ? `#${publicSequenceByEventId(context, claim.sourceEventId)} D${claim.announcedDay}`
                 : null,
             role: constants_js_25.ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId,
-            resultDay: Number(claim.observedDay),
+            actionDay: Number(claim.actionDay),
+            actionPhase: claim.actionPhase,
+            availableDay: Number(claim.availableDay),
+            availablePhase: claim.availablePhase,
+            timing: (0, abilityClaimTimingPolicy_js_8.formatAbilityClaimTiming)(claim),
             target: (0, promptFormatters_js_2.playerName)(context, claim.targetId),
             result: (0, publicAbilityClaimPolicy_js_13.publicAbilityResultLabel)(claim.result, claim.claimedRoleId),
             selectionBasis: claim.selectionBasis ?? null,
@@ -15446,7 +15796,11 @@ define("js/prompts/sections/privateInformationSection", ["require", "exports", "
                 role: constants_js_25.ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId,
                 target: (0, promptFormatters_js_2.playerName)(context, claim.targetId),
                 result: (0, publicAbilityClaimPolicy_js_13.publicAbilityResultLabel)(claim.result, claim.claimedRoleId),
-                resultDay: Number(claim.observedDay),
+                actionDay: Number(claim.actionDay),
+                actionPhase: claim.actionPhase,
+                availableDay: Number(claim.availableDay),
+                availablePhase: claim.availablePhase,
+                timing: (0, abilityClaimTimingPolicy_js_8.formatAbilityClaimTiming)(claim),
                 ...(Number.isInteger(Number(claim.announcedDay)) ? { announcedDay: Number(claim.announcedDay) } : {}),
             })),
         };
@@ -16173,7 +16527,10 @@ ${(0, promptDataSerializer_js_8.renderPromptDataBlock)('wolf-partner-public-posi
         const cutoffs = displayAbilityEvidenceCutoffs(context.board.abilityEvidenceCutoffs ?? {});
         const pendingMediumRequirements = (context.board.pendingMediumClaimRequirements ?? []).map((item) => ({
             roleId: item.roleId,
-            resultDay: item.observedDay,
+            actionDay: item.actionDay,
+            actionPhase: item.actionPhase,
+            availableDay: item.availableDay,
+            availablePhase: item.availablePhase,
             target: (0, promptFormatters_js_4.playerName)(context, item.targetId),
         }));
         if (!(claimRolePolicy?.abilityClaimRoleIds ?? []).length && !pendingMediumRequirements.length)
@@ -16182,12 +16539,12 @@ ${(0, promptDataSerializer_js_8.renderPromptDataBlock)('wolf-partner-public-posi
             ? `
 ${(0, promptDataSerializer_js_8.renderPromptDataBlock)('pending-medium-claim-requirements', pendingMediumRequirements)}
 
-あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象とresultDayを対応する行へ一致させてください。selectionBasis・evidenceRefs・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
+あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象・処刑時点・結果取得時点を対応する行へ一致させてください。selectionBasis・evidenceRefs・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
             : '';
         return `## 能力履歴
 ${(0, promptDataSerializer_js_8.renderPromptDataBlock)('ability-claim-evidence-windows', cutoffs)}${forcedBlock}
 
-resultDayは結果Day（夜行動は翌Day）。public-evidenceは指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
+actionDay/actionPhaseは能力を実行・成立させた時点、availableDay/availablePhaseは結果を取得した時点です。夜能力は実行した翌朝に取得し、霊能は処刑の翌朝に取得します。public-evidenceはactionDayの能力実行時点までの指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
     }
     function tacticalOpportunitySection({ counterClaimOpportunity = null, ownerClaimCorroborationOpportunity = null } = {}) {
         return [
@@ -16211,7 +16568,7 @@ resultDayは結果Day（夜行動は翌Day）。public-evidenceは指定範囲�
 });
 /**
  * 責務: 公開会話と確定公開イベントを、LLM判断に必要な全情報を保った短い履歴データへ投影する。
- * 変更ルール: publicHistoryPolicyが選択したイベントと保存済みinteractionだけを使用し、本文の要約・切断・関係推定を行わない。連続する同一本文は参照番号・Day・発言者をまとめ、投票は集計・結論・各票を短縮表現へ変換するが、公開済み情報と時系列を欠落させない。
+ * 変更ルール: publicHistoryPolicyが選択したイベントと保存済みinteractionだけを使用し、本文の要約・切断・関係推定を行わない。公開履歴はイベント種別ごとに再配置せずsequence順の単一timelineとして表示する。連続する同一本文の公開発言だけは参照番号・Day・発言者をまとめ、投票は集計・結論・各票を短縮表現へ変換するが、公開済み情報と時系列を欠落させない。
  */
 define("js/prompts/sections/publicHistorySection", ["require", "exports", "js/prompts/sections/promptFormatters"], function (require, exports, promptFormatters_js_5) {
     "use strict";
@@ -16238,20 +16595,11 @@ define("js/prompts/sections/publicHistorySection", ["require", "exports", "js/pr
         const redundantSelfIntroduction = new RegExp(`^${speaker.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?:です|だ)[。！!]\\s*`, 'u');
         const text = rawText.replace(redundantSelfIntroduction, '');
         return {
+            kind: 'speech',
+            sequence: Number(event.sequence),
             ref: `#${event.sequence}/D${event.day}/${speaker}`,
             content: `${text}${annotations ? ` [${annotations}]` : ''}`,
         };
-    }
-    function groupIdenticalSpeeches(records) {
-        const groups = [];
-        records.forEach((record) => {
-            const previous = groups.at(-1);
-            if (previous?.content === record.content)
-                previous.refs.push(record.ref);
-            else
-                groups.push({ refs: [record.ref], content: record.content });
-        });
-        return groups.map((group) => `${group.refs.join(',')}: ${group.content}`);
     }
     function compactVoteResultLine(context, event) {
         const payload = event.payload ?? {};
@@ -16279,8 +16627,32 @@ define("js/prompts/sections/publicHistorySection", ["require", "exports", "js/pr
     function compactPublicEventLine(context, event) {
         return `#${event.sequence}/D${event.day} ${(0, promptFormatters_js_5.formatPromptEventText)(context, event)}`;
     }
+    function pushEvents(rows, events, formatter, kind) {
+        (events ?? []).forEach((event) => rows.push({
+            kind,
+            sequence: Number(event.sequence),
+            content: formatter(event),
+        }));
+    }
+    function mergeConsecutiveIdenticalSpeeches(records) {
+        const rows = [];
+        records.forEach((record) => {
+            const previous = rows.at(-1);
+            if (record.kind === 'speech' && previous?.kind === 'speech' && previous.content === record.content) {
+                previous.refs.push(record.ref);
+                return;
+            }
+            if (record.kind === 'speech') {
+                rows.push({ ...record, refs: [record.ref] });
+                return;
+            }
+            rows.push(record);
+        });
+        return rows.map((record) => (record.kind === 'speech'
+            ? `${record.refs.join(',')}: ${record.content}`
+            : record.content));
+    }
     function publicHistoryData(context, timeline, { excludeSpeechEventId = null } = {}) {
-        const history = {};
         const publicSpeechById = new Map();
         (context.board.publicTimeline?.speeches ?? []).forEach((event) => {
             const logicalIds = event.correctionLineageIds?.length
@@ -16288,33 +16660,120 @@ define("js/prompts/sections/publicHistorySection", ["require", "exports", "js/pr
                 : [event.id, event.payload?.correctsEventId].filter(Boolean);
             logicalIds.forEach((eventId) => publicSpeechById.set(eventId, event));
         });
-        const speeches = groupIdenticalSpeeches(timeline.speeches
+        const rows = (timeline.speeches ?? [])
             .filter((event) => event.id !== excludeSpeechEventId)
-            .map((event) => speechRecord(context, event, publicSpeechById)));
-        const voteResults = timeline.voteResults.map((event) => compactVoteResultLine(context, event));
-        const executions = timeline.executions.map((event) => compactPublicEventLine(context, event));
-        const dawns = timeline.dawns.map((event) => compactPublicEventLine(context, event));
-        const otherPublicFacts = [
-            ...timeline.corrections,
-            ...timeline.gameResults,
-            ...timeline.other,
-        ].map((event) => compactPublicEventLine(context, event));
-        if (speeches.length)
-            history.speeches = speeches;
-        if (voteResults.length)
-            history.voteResults = voteResults;
-        if (executions.length)
-            history.executions = executions;
-        if (dawns.length)
-            history.dawns = dawns;
-        if (otherPublicFacts.length)
-            history.otherPublicFacts = otherPublicFacts;
-        return history;
+            .map((event) => speechRecord(context, event, publicSpeechById));
+        pushEvents(rows, timeline.voteResults, (event) => compactVoteResultLine(context, event), 'vote');
+        pushEvents(rows, timeline.executions, (event) => compactPublicEventLine(context, event), 'execution');
+        pushEvents(rows, timeline.dawns, (event) => compactPublicEventLine(context, event), 'dawn');
+        pushEvents(rows, timeline.corrections, (event) => compactPublicEventLine(context, event), 'correction');
+        pushEvents(rows, timeline.gameResults, (event) => compactPublicEventLine(context, event), 'game-result');
+        pushEvents(rows, timeline.other, (event) => compactPublicEventLine(context, event), 'other');
+        rows.sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0));
+        const merged = mergeConsecutiveIdenticalSpeeches(rows);
+        return merged.length ? { timeline: merged } : {};
     }
     function selfPublicContinuityData(context, event) {
         if (!event)
             return null;
         return `#${event.sequence}/D${event.day}/${(0, promptFormatters_js_5.playerName)(context, event.actorId)}: ${String(event?.payload?.text ?? '')}`;
+    }
+});
+/**
+ * 責務: 公開された初期役職構成だけから、夜明けの死亡数・無死亡・凍結不発を解釈する際に考慮できる事象を短く提示する。
+ * 変更ルール:
+ * - 現在の生存者、死亡済み役職、CO、能力結果、内部役職情報から可能性を削除・追加しない。
+ * - 実際にどの事象が発生したかを推定・断定しない。
+ * - Day 2以降の通常昼議論第1巡だけに表示し、他タスク・他巡では表示しない。
+ * - 見出しごとに、その初期役職構成で追加の解釈候補が生じない場合は見出し自体を表示しない。
+ */
+define("js/prompts/sections/roleCompositionSituationSection", ["require", "exports", "js/config/discussionAiTaskTypes"], function (require, exports, discussionAiTaskTypes_js_11) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.buildRoleCompositionSituationGuide = buildRoleCompositionSituationGuide;
+    exports.roleCompositionSituationSection = roleCompositionSituationSection;
+    function hasRole(composition, roleId) {
+        return Number(composition?.[roleId] ?? 0) > 0;
+    }
+    function hasSeerFoxPair(composition) {
+        return hasRole(composition, 'seer') && hasRole(composition, 'fox');
+    }
+    function buildRoleCompositionSituationGuide(context, taskType) {
+        if (!(0, discussionAiTaskTypes_js_11.isNormalSpeechTask)(taskType))
+            return null;
+        if (Number(context?.game?.day ?? 0) < 2)
+            return null;
+        if (Number(context?.game?.discussion?.round ?? 0) !== 1)
+            return null;
+        if ((context?.game?.discussion?.roundKind ?? 'normal') !== 'normal')
+            return null;
+        const composition = context?.game?.roleComposition ?? {};
+        const hasGuard = hasRole(composition, 'guard');
+        const hasNamahage = hasRole(composition, 'namahage');
+        const hasSnowWoman = hasRole(composition, 'snowWoman');
+        const hasFox = hasRole(composition, 'fox');
+        const hasZashikiWarashi = hasRole(composition, 'zashikiWarashi');
+        const hasCat = hasRole(composition, 'cat');
+        const canFoxBeInspected = hasSeerFoxPair(composition);
+        const multipleDeaths = [];
+        if (canFoxBeInspected || hasZashikiWarashi || hasCat) {
+            multipleDeaths.push('人狼による襲撃');
+            if (canFoxBeInspected)
+                multipleDeaths.push('妖狐の呪殺');
+            if (hasZashikiWarashi)
+                multipleDeaths.push('座敷わらしの後追い');
+            if (hasCat)
+                multipleDeaths.push('猫又の道連れ');
+        }
+        const noDeaths = [];
+        if (hasGuard)
+            noDeaths.push('護衛による襲撃阻止');
+        if (hasNamahage)
+            noDeaths.push('なまはげの訪問による襲撃阻害');
+        if (hasFox)
+            noDeaths.push('妖狐への襲撃');
+        const noFreeze = [];
+        if (hasSnowWoman) {
+            if (hasGuard)
+                noFreeze.push('護衛による凍結阻止');
+            if (hasNamahage)
+                noFreeze.push('なまはげの訪問による凍結阻害');
+            noFreeze.push('凍結対象の同夜死亡');
+            noFreeze.push('雪女が夜開始時点ですでに死亡、または同夜死亡');
+        }
+        if (!multipleDeaths.length && !noDeaths.length && !noFreeze.length)
+            return null;
+        return {
+            multipleDeaths,
+            noDeaths,
+            noFreeze,
+            singleDeathMayCombine: multipleDeaths.length > 0,
+        };
+    }
+    function roleCompositionSituationSection(context, taskType) {
+        const guide = buildRoleCompositionSituationGuide(context, taskType);
+        if (!guide)
+            return '';
+        const rows = [
+            '## 初期役職構成から起こりうる夜明けの状況',
+            '以下は、このゲームの初期役職構成で夜明けの結果に関与しうる事象です。現在の生存役職を使って可能性を除外しておらず、実際に発生した事象を示すものでもありません。複数の事象が同じ夜に重なる場合があります。',
+        ];
+        if (guide.multipleDeaths.length) {
+            rows.push('', '死亡者が2人以上のときに考慮できる事象:');
+            guide.multipleDeaths.forEach((item) => rows.push(`- ${item}`));
+        }
+        if (guide.noDeaths.length) {
+            rows.push('', '死亡者なしのときに考慮できる事象:');
+            guide.noDeaths.forEach((item) => rows.push(`- ${item}`));
+        }
+        if (guide.noFreeze.length) {
+            rows.push('', '凍結なしのときに考慮できる事象:');
+            guide.noFreeze.forEach((item) => rows.push(`- ${item}`));
+        }
+        if (guide.singleDeathMayCombine) {
+            rows.push('', '死亡者が1人の場合でも、上記の事象が複合している可能性があります。');
+        }
+        return rows.join('\n');
     }
 });
 /**
@@ -16412,12 +16871,51 @@ ${(0, promptDataSerializer_js_9.renderPromptDataBlock)('wolf-communication', {
 });
 /**
  * 責務: 現在のAIタスクに必要な対象、質問、結果感想、秘密会話目的を最小データへ変換する。
- * 変更ルール: タスク契約にない項目を追加せず、個人夜行動では必ずcurrent-task.validTargetsを出す。対象IDは可視コンテキストの正式表示名へ変換し、雪女の推定契約で明示的にIDが必要な対象だけIDと表示名を併記する。監査専用イベントIDはプロンプトへ出さない。
+ * 変更ルール: タスク契約にない項目を追加せず、個人夜行動では必ずcurrent-task.validTargetsを出す。対象IDは可視コンテキストの正式表示名へ変換し、雪女の推定契約で明示的にIDが必要な対象だけIDと表示名を併記する。墓場会話では過去参加履歴だけから新規参加者か継続参加者かを判定し、秘密共有・答え合わせ・感想の会話目的を切り替える。監査専用イベントIDはプロンプトへ出さない。
  */
-define("js/prompts/sections/currentTaskSection", ["require", "exports", "js/config/personalNightActionTasks", "js/config/discussionAiTaskTypes", "js/domain/night/snowWomanEstimatePolicy", "js/prompts/sections/promptFormatters"], function (require, exports, personalNightActionTasks_js_5, discussionAiTaskTypes_js_11, snowWomanEstimatePolicy_js_1, promptFormatters_js_7) {
+define("js/prompts/sections/currentTaskSection", ["require", "exports", "js/config/personalNightActionTasks", "js/config/discussionAiTaskTypes", "js/domain/night/snowWomanEstimatePolicy", "js/prompts/sections/promptFormatters"], function (require, exports, personalNightActionTasks_js_5, discussionAiTaskTypes_js_12, snowWomanEstimatePolicy_js_1, promptFormatters_js_7) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.currentTaskData = currentTaskData;
+    function graveyardConversationGuidance(context) {
+        const current = context.graveyardCommunication.current;
+        const past = context.graveyardCommunication.past ?? [];
+        const priorParticipantIds = new Set(past.flatMap((session) => session.participantIds ?? []));
+        const newParticipantIds = (current?.participantIds ?? []).filter((id) => !priorParticipantIds.has(id));
+        const isNewParticipant = newParticipantIds.includes(context.player.id);
+        const newcomerMessageSpeakerIds = new Set((current?.messages ?? [])
+            .filter((message) => newParticipantIds.includes(message.speakerId))
+            .map((message) => message.speakerId));
+        const newParticipantNames = newParticipantIds.map((id) => (0, promptFormatters_js_7.playerName)(context, id));
+        const newcomerMessageSpeakers = [...newcomerMessageSpeakerIds].map((id) => (0, promptFormatters_js_7.playerName)(context, id));
+        if (isNewParticipant) {
+            return {
+                participantStatus: 'new',
+                newParticipants: newParticipantNames,
+                focus: '生前に墓場側が知らなかった秘密があれば優先して共有し、過去の墓場ログを読んだ感想や答え合わせも自然に添える。自分の真役職、能力結果、仲間情報、騙りの意図、行動理由など、まだ共有されていない重要情報を会話として話す。',
+            };
+        }
+        if (newcomerMessageSpeakers.length) {
+            return {
+                participantStatus: 'returning',
+                newParticipants: newParticipantNames,
+                newcomerMessageSpeakers,
+                focus: '新しく来た死亡者が明かした秘密や地上情報を受け、生前の予想との違い、驚き、納得、後悔などを中心に自然に返す。必要なら自分の生前の秘密や意図も共有する。',
+            };
+        }
+        if (newParticipantNames.length) {
+            return {
+                participantStatus: 'returning',
+                newParticipants: newParticipantNames,
+                focus: '前夜までの墓場会話を踏まえ、答え合わせの感想や印象を自然に話す。新しく来た死亡者がいるので、会話として必要なら自分の生前の秘密や意図も共有する。',
+            };
+        }
+        return {
+            participantStatus: 'returning',
+            newParticipants: [],
+            focus: '前夜までの墓場会話を受け、印象に残ったことや答え合わせの感想を自然に話す。必要なら自分の生前の秘密や意図も共有する。',
+        };
+    }
     function withoutAuditReferences(value) {
         if (Array.isArray(value))
             return value.map(withoutAuditReferences);
@@ -16471,7 +16969,7 @@ define("js/prompts/sections/currentTaskSection", ["require", "exports", "js/conf
                 questionText: answer.questionText ?? '',
             };
         }
-        if ((0, discussionAiTaskTypes_js_11.isNormalSpeechTask)(taskType) && context.task.normalSpeechAnswers?.length) {
+        if ((0, discussionAiTaskTypes_js_12.isNormalSpeechTask)(taskType) && context.task.normalSpeechAnswers?.length) {
             return {
                 requiredAnswers: context.task.normalSpeechAnswers.map((answer) => ({
                     questionSequence: answer.questionSequence,
@@ -16540,7 +17038,8 @@ define("js/prompts/sections/currentTaskSection", ["require", "exports", "js/conf
                 participants: (context.graveyardCommunication.current?.participantIds ?? []).map((id) => (0, promptFormatters_js_7.playerName)(context, id)),
                 knowledgeCutoffSequence: context.task.knowledgeCutoffSequence ?? null,
                 publicKnowledgeFrozenAtDeath: Boolean(context.task.publicKnowledgeFrozenAtDeath),
-                instruction: '死亡後の地上情報は自動取得しない。墓場参加者の発言で共有された情報だけ追加で知る。',
+                conversationGuidance: graveyardConversationGuidance(context),
+                informationBoundary: '死亡後の地上情報は自動取得しない。墓場参加者の発言で共有された情報だけ追加で知る。',
             };
         }
         if (taskType === 'wolf-conversation') {
@@ -16567,7 +17066,7 @@ define("js/prompts/sections/currentTaskSection", ["require", "exports", "js/conf
  * - 過去のAPI要求・生応答・継続アンカー・当日カプセルを再送せず、本人の継続情報は正式な現在状態と本人履歴から毎回導出する。
  * - delta時だけ本人の直近公開発言を一件補完し、タスク別応答契約はキャッシュ境界後へ置く。
  * - 公開履歴の順序・時系列とイベント参照番号を変更しない。
- * - 公開履歴はcompactを既定とし、fullは明示選択時だけ全件・全文、compactでは最新の正常AI登録位置以前の通常発言だけを構造的に選別して以後の履歴を全件・全文で維持する。
+ * - 公開履歴はdeltaを既定とし、前回の正常AI登録位置以後に増えた公開履歴だけを基本送信する。fullは明示選択時だけ全件・全文、compactでは最新の正常AI登録位置以前の通常発言だけを構造的に選別して以後の履歴を全件・全文で維持する。
  * - deltaの既存境界と再同期規則は変更せず、通常昼発言の非公開参考視点が参照する公開イベント番号はcompact・deltaの送信履歴へ必ず残す。
  * - 夜タスクは当日最終巡の公開発言、CO・能力結果を含む盤面、投票・処刑・夜明けの確定履歴を渡す。
  * - 公開質問先と回答元は保存済みの構造化interactionだけを表示し、公開発言本文から推定しない。
@@ -16576,17 +17075,18 @@ define("js/prompts/sections/currentTaskSection", ["require", "exports", "js/conf
  * - 前回判断後の公開イベントは本文を複製せずイベント番号だけを前回判断状態へ添える。
  * - 能力者騙りが可能な非村陣営には後発CO用の能力履歴を残す。
  * - キャラクターの推理傾向は固定コンテキストを正本とし、現在タスク側へ重複掲載しない。
+ * - decisionPatch JSON例の処刑比較表示にはpromptSituation / promptSectionPolicyの既存判定をそのまま渡し、残り発言回数やvote条件を別実装しない。
  * - 公開会話では会話種のsubjectとtoneだけを短いroleplayCueとして渡す。
  * - 次の通常発言者本人宛ての質問はcurrent-task.requiredAnswersとして通常発言へ渡し、独立回答フェーズ用の指示と重複させない。
  * - 可視情報抽出はpromptContext.js、一般局面判定はpromptSituation.js、表示選択はpromptSectionPolicy.js、個別データ文章化はsections配下、最終文章化はpromptTemplates.jsを使用する。
  */
-define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants", "generated/buildInfo", "js/domain/game/decisionContext", "js/domain/game/aiTurnRegistrationPolicy", "js/domain/claims/claimRolePolicy", "js/domain/claims/counterClaimOpportunityPolicy", "js/domain/claims/ownerClaimCorroborationPolicy", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/game/factionStrategyPolicy", "js/domain/night/snowWomanEstimatePolicy", "js/prompts/policies/promptAccessPolicy", "js/prompts/context/promptContext", "js/prompts/promptEnvelopeBuilder", "js/prompts/context/characterPromptProfile", "js/prompts/templates/promptTemplates", "js/domain/memory/memoryLedger", "js/domain/policies/publicSpeechLengthPolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/serialization/promptDataSerializer", "js/prompts/templates/rolePromptTemplates", "js/prompts/templates/reasoningPolicyTemplates", "js/prompts/policies/taskInstructionPolicy", "js/prompts/templates/characterReasoningDirectiveTemplates", "js/prompts/policies/characterReasoningDirector", "js/prompts/response/responseContract", "js/config/discussionAiTaskTypes", "js/prompts/response/responseExampleReferences", "js/prompts/response/structuredOutputContract", "js/prompts/response/responseContractCatalog", "js/prompts/policies/characterConversationPolicy", "js/prompts/policies/characterRoleplayCuePolicy", "js/prompts/policies/promptSituation", "js/prompts/policies/promptSectionPolicy", "js/prompts/policies/publicHistoryPolicy", "js/prompts/policies/openingSpeechPolicy", "js/prompts/sections/promptFormatters", "js/prompts/sections/privateInformationSection", "js/prompts/sections/decisionSection", "js/prompts/sections/conversationSection", "js/prompts/sections/publicHistorySection", "js/prompts/sections/privateConversationSection", "js/prompts/sections/currentTaskSection"], function (require, exports, constants_js_28, buildInfo_js_3, decisionContext_js_1, aiTurnRegistrationPolicy_js_1, claimRolePolicy_js_1, counterClaimOpportunityPolicy_js_1, ownerClaimCorroborationPolicy_js_1, wolfPartnerDispositionPolicy_js_6, factionStrategyPolicy_js_1, snowWomanEstimatePolicy_js_2, promptAccessPolicy_js_2, promptContext_js_1, promptEnvelopeBuilder_js_1, characterPromptProfile_js_2, promptTemplates_js_2, memoryLedger_js_4, publicSpeechLengthPolicy_js_3, publicAbilityClaimPolicy_js_14, promptDataSerializer_js_10, rolePromptTemplates_js_1, reasoningPolicyTemplates_js_1, taskInstructionPolicy_js_2, characterReasoningDirectiveTemplates_js_1, characterReasoningDirector_js_1, responseContract_js_5, discussionAiTaskTypes_js_12, responseExampleReferences_js_1, structuredOutputContract_js_1, responseContractCatalog_js_1, characterConversationPolicy_js_1, characterRoleplayCuePolicy_js_1, promptSituation_js_1, promptSectionPolicy_js_1, publicHistoryPolicy_js_2, openingSpeechPolicy_js_5, promptFormatters_js_8, privateInformationSection_js_1, decisionSection_js_1, conversationSection_js_1, publicHistorySection_js_1, privateConversationSection_js_1, currentTaskSection_js_1) {
+define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants", "generated/buildInfo", "js/domain/game/decisionContext", "js/domain/game/aiTurnRegistrationPolicy", "js/domain/claims/claimRolePolicy", "js/domain/claims/counterClaimOpportunityPolicy", "js/domain/claims/ownerClaimCorroborationPolicy", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/game/factionStrategyPolicy", "js/domain/night/snowWomanEstimatePolicy", "js/prompts/policies/promptAccessPolicy", "js/prompts/context/promptContext", "js/prompts/promptEnvelopeBuilder", "js/prompts/context/characterPromptProfile", "js/prompts/templates/promptTemplates", "js/domain/memory/memoryLedger", "js/domain/policies/publicSpeechLengthPolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/serialization/promptDataSerializer", "js/prompts/templates/rolePromptTemplates", "js/prompts/templates/reasoningPolicyTemplates", "js/prompts/policies/taskInstructionPolicy", "js/prompts/templates/characterReasoningDirectiveTemplates", "js/prompts/policies/characterReasoningDirector", "js/prompts/response/responseContract", "js/config/discussionAiTaskTypes", "js/prompts/response/responseExampleReferences", "js/prompts/response/structuredOutputContract", "js/prompts/response/responseContractCatalog", "js/prompts/policies/characterConversationPolicy", "js/prompts/policies/characterRoleplayCuePolicy", "js/prompts/policies/promptSituation", "js/prompts/policies/promptSectionPolicy", "js/prompts/policies/publicHistoryPolicy", "js/prompts/policies/openingSpeechPolicy", "js/prompts/sections/promptFormatters", "js/prompts/sections/privateInformationSection", "js/prompts/sections/decisionSection", "js/prompts/sections/conversationSection", "js/prompts/sections/publicHistorySection", "js/prompts/sections/roleCompositionSituationSection", "js/prompts/sections/privateConversationSection", "js/prompts/sections/currentTaskSection"], function (require, exports, constants_js_28, buildInfo_js_3, decisionContext_js_1, aiTurnRegistrationPolicy_js_1, claimRolePolicy_js_1, counterClaimOpportunityPolicy_js_1, ownerClaimCorroborationPolicy_js_1, wolfPartnerDispositionPolicy_js_6, factionStrategyPolicy_js_1, snowWomanEstimatePolicy_js_2, promptAccessPolicy_js_2, promptContext_js_1, promptEnvelopeBuilder_js_1, characterPromptProfile_js_2, promptTemplates_js_2, memoryLedger_js_4, publicSpeechLengthPolicy_js_3, publicAbilityClaimPolicy_js_14, promptDataSerializer_js_10, rolePromptTemplates_js_1, reasoningPolicyTemplates_js_1, taskInstructionPolicy_js_2, characterReasoningDirectiveTemplates_js_1, characterReasoningDirector_js_1, responseContract_js_5, discussionAiTaskTypes_js_13, responseExampleReferences_js_1, structuredOutputContract_js_1, responseContractCatalog_js_1, characterConversationPolicy_js_1, characterRoleplayCuePolicy_js_1, promptSituation_js_1, promptSectionPolicy_js_1, publicHistoryPolicy_js_2, openingSpeechPolicy_js_5, promptFormatters_js_8, privateInformationSection_js_1, decisionSection_js_1, conversationSection_js_1, publicHistorySection_js_1, roleCompositionSituationSection_js_1, privateConversationSection_js_1, currentTaskSection_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildPromptModel = buildPromptModel;
     exports.buildPromptContext = buildPromptContext;
     function buildResponseClaimRolePolicy(context, situation, basePolicy, { counterClaimOpportunity = null, ownerClaimCorroborationOpportunity = null, } = {}) {
-        if (!((0, discussionAiTaskTypes_js_12.isNormalSpeechTask)(situation.taskType) || situation.taskType === 'priority-answer'))
+        if (!((0, discussionAiTaskTypes_js_13.isNormalSpeechTask)(situation.taskType) || situation.taskType === 'priority-answer'))
             return basePolicy;
         const player = context.player;
         const activeClaimRoleId = context.board.claims.find((claim) => claim.actorId === player.id)?.roleId ?? null;
@@ -16727,6 +17227,7 @@ define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants",
             gameStateDataBlock: sectionPolicy.gameStateMode !== 'none'
                 ? (0, promptDataSerializer_js_10.renderPromptDataBlock)('game-state', (0, promptFormatters_js_8.compactPromptValue)((0, privateInformationSection_js_1.gameStateData)(context, { mode: sectionPolicy.gameStateMode })))
                 : '',
+            roleCompositionSituationGuideSection: (0, roleCompositionSituationSection_js_1.roleCompositionSituationSection)(context, taskType),
             publicHistoryTitle: sectionPolicy.publicHistoryMode === 'delta'
                 ? '前回の正常登録後に増えた公開会話・確定公開履歴'
                 : sectionPolicy.publicHistoryMode === 'compact'
@@ -16868,6 +17369,11 @@ define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants",
                     : true,
                 exampleReferences: responseExampleReferences,
                 decisionPatchRequired: Boolean(player.decisionInvalidation?.requiresReevaluation),
+                reasoningModeId: internalReasoningDirective?.modeId ?? null,
+                reasoningProfile: player.character?.reasoningProfile ?? null,
+                // 処刑判断の表示タイミングは既存の局面判定を正本とし、応答契約側で再判定しない。
+                isExecutionDecisionWindow: Boolean(sectionPolicy.showExecutionValuePolicy),
+                isFinalDiscussionDecisionWindow: Boolean(situation.isFinalDiscussionDecisionWindow),
             },
         };
     }
@@ -16878,7 +17384,7 @@ define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants",
         delete model.responseFormatOptions;
         return model;
     }
-    function buildPromptContext(state, playerId, { taskType = 'speech', validTargetIds = [], slotId = '', publicHistoryTransmissionMode = 'compact', forceFullPublicHistory = false, } = {}) {
+    function buildPromptContext(state, playerId, { taskType = 'speech', validTargetIds = [], slotId = '', publicHistoryTransmissionMode = 'delta', forceFullPublicHistory = false, } = {}) {
         const context = (0, promptContext_js_1.buildPlayerVisibleContext)(state, playerId, { taskType, validTargetIds, slotId });
         const player = context.player;
         const preValidation = (0, promptAccessPolicy_js_2.validatePromptVisibility)(context);
@@ -16911,10 +17417,10 @@ define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants",
             sinceSequence: historyCursorSequence,
         });
         const decision = (0, decisionContext_js_1.buildDecisionContext)(context, taskType, { historyCursorSequence });
-        const conversationMode = (0, discussionAiTaskTypes_js_12.isNormalSpeechTask)(taskType)
+        const conversationMode = (0, discussionAiTaskTypes_js_13.isNormalSpeechTask)(taskType)
             ? (0, openingSpeechPolicy_js_5.resolveOpeningConversationMode)(context)
             : openingSpeechPolicy_js_5.OPENING_CONVERSATION_MODES.NORMAL;
-        const internalReasoningDirective = (0, discussionAiTaskTypes_js_12.isNormalSpeechTask)(taskType)
+        const internalReasoningDirective = (0, discussionAiTaskTypes_js_13.isNormalSpeechTask)(taskType)
             ? (0, characterReasoningDirector_js_1.resolveInternalReasoningDirective)(state, context, { conversationMode })
             : null;
         const factionStrategyPolicy = (0, factionStrategyPolicy_js_1.resolveFactionStrategyPolicy)(state, {
@@ -16994,6 +17500,9 @@ define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants",
                 ownPublicClaimConsistency: model.ownPublicClaimConsistencySection,
                 otherPublicClaimContradictions: model.otherPublicClaimContradictionsSection,
                 ...(model.publicSpeechGuidance ? { publicSpeechGuidance: model.publicSpeechGuidance } : {}),
+                ...(taskType === 'graveyard-conversation'
+                    ? { graveyardConversationGuidance: structuredClone((0, currentTaskSection_js_1.currentTaskData)(context, taskType, { decision })?.conversationGuidance ?? {}) }
+                    : {}),
             }),
             diagnostics: {
                 appVersion: constants_js_28.APP_VERSION,
@@ -17013,7 +17522,7 @@ define("js/prompts/promptBuilder", ["require", "exports", "js/config/constants",
 });
 /**
  * 責務: AI応答の単一JSONオブジェクトを、公開発言・CO操作・能力結果主張・判断差分・判断根拠参照・陣営戦略差分・秘密会話・襲撃判断・雪女の推定候補・夜行動理由・心の声・内部メモへ厳密に構文分解する。
- * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、再帰解析によるRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。
+ * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、再帰解析によるRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。推理モード固有のdecisionPatch項目は解析済みターン内の思考整理情報として受理し、永続判断状態へ保存するかどうかはresponseValidator.js側の状態責務へ委譲する。
  */
 define("js/prompts/response/responseParser", ["require", "exports", "js/domain/game/decisionState", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_9, responseContract_js_6) {
     "use strict";
@@ -17027,6 +17536,17 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
     const FACTION_STRATEGY_KEYS = new Set([
         'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
         'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
+    ]);
+    const TURN_LOCAL_DECISION_TEXT_KEYS = Object.freeze([
+        'unresolvedPoint', 'responseImpact',
+        'changePoint', 'changeTrigger', 'changeNaturalness',
+        'conflictPoint', 'compatibleExplanation',
+        'commitmentAlignment', 'reversalExplanation',
+        'interactionAsymmetry', 'consensusIndependence', 'counterHypothesis',
+        'comparisonAxis', 'candidateDifference',
+    ]);
+    const TURN_LOCAL_DECISION_LIST_KEYS = Object.freeze([
+        'supportingSignals', 'counterSignals', 'remainingHypotheses',
     ]);
     function parseStrictJson(text) {
         let index = 0;
@@ -17371,21 +17891,23 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
                 const selectionReasonAtTime = parseOptionalStringField(item, 'selectionReasonAtTime', `${label}.selectionReasonAtTime`, errors);
                 return { intent, sourceRef, selectionBasis, evidenceRefs, selectionReasonAtTime };
             }
-            const commonKeys = ['intent', 'roleId', 'resultDay', 'target', 'result'];
+            const commonKeys = ['intent', 'roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'];
             const item = validateExactKeys(claim, label, [...commonKeys, ...optionalSelectionKeys], commonKeys, errors);
             if (!item)
                 return null;
             const roleId = parseString(item.roleId, `${label}.roleId`, errors);
-            let resultDay = null;
-            if (Object.hasOwn(item, 'resultDay') && item.resultDay !== null) {
-                resultDay = Number.isInteger(item.resultDay) && item.resultDay >= 1 ? item.resultDay : null;
-                if (resultDay === null)
-                    errors.push(`${label}.resultDayは1以上の整数で指定してください。`);
-            }
+            const actionDay = Number.isInteger(item.actionDay) && item.actionDay >= 0 ? item.actionDay : null;
+            if (actionDay === null)
+                errors.push(`${label}.actionDayは0以上の整数で指定してください。`);
+            const actionPhase = parseString(item.actionPhase, `${label}.actionPhase`, errors);
+            const availableDay = Number.isInteger(item.availableDay) && item.availableDay >= 1 ? item.availableDay : null;
+            if (availableDay === null)
+                errors.push(`${label}.availableDayは1以上の整数で指定してください。`);
+            const availablePhase = parseString(item.availablePhase, `${label}.availablePhase`, errors);
             const targetName = parseString(item.target, `${label}.target`, errors);
             const result = parseString(item.result, `${label}.result`, errors);
             if (roleId === 'medium') {
-                return { intent, roleId, resultDay, targetName, result, selectionBasis: '', evidenceRefs: [], selectionReasonAtTime: '' };
+                return { intent, roleId, actionDay, actionPhase, availableDay, availablePhase, targetName, result, selectionBasis: '', evidenceRefs: [], selectionReasonAtTime: '' };
             }
             let evidenceRefs = [];
             if (hasUsableOptionalValue(item, 'evidenceRefs')) {
@@ -17404,7 +17926,7 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
                     ? 'public-evidence'
                     : 'no-public-information';
             const selectionReasonAtTime = parseOptionalStringField(item, 'selectionReasonAtTime', `${label}.selectionReasonAtTime`, errors);
-            return { intent, roleId, resultDay, targetName, result, selectionBasis, evidenceRefs, selectionReasonAtTime };
+            return { intent, roleId, actionDay, actionPhase, availableDay, availablePhase, targetName, result, selectionBasis, evidenceRefs, selectionReasonAtTime };
         }).filter(Boolean);
         if (!claims.length)
             return null;
@@ -17453,6 +17975,15 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
         if (allowedChangeKeys.includes('nextDiscriminatingInformation') && hasUsableOptionalValue(object, 'nextDiscriminatingInformation')) {
             changes.nextDiscriminatingInformation = text('nextDiscriminatingInformation');
         }
+        TURN_LOCAL_DECISION_TEXT_KEYS.forEach((key) => {
+            if (allowedChangeKeys.includes(key) && hasUsableOptionalValue(object, key))
+                changes[key] = text(key);
+        });
+        TURN_LOCAL_DECISION_LIST_KEYS.forEach((key) => {
+            if (allowedChangeKeys.includes(key) && hasUsableOptionalValue(object, key)) {
+                changes[key] = parseStringArray(object[key], `decisionPatch.${key}`, errors);
+            }
+        });
         if (!Object.keys(changes).length)
             return null;
         const correctedSpeechRefs = hasUsableOptionalValue(object, 'correctedSpeechRefs')
@@ -17700,7 +18231,7 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
  * 責務: 発言希望制の発言希望正規化、同優先度内抽選、DONEによる通常発言終了を決定する。
  * 変更ルール: 1巡目開始前はDONEを受理せず、希望値はGM内部制御だけに使用して公開履歴へ変換しない。
  */
-define("js/domain/discussion/freeDiscussionPolicy", ["require", "exports", "js/config/discussionAiTaskTypes"], function (require, exports, discussionAiTaskTypes_js_13) {
+define("js/domain/discussion/freeDiscussionPolicy", ["require", "exports", "js/config/discussionAiTaskTypes"], function (require, exports, discussionAiTaskTypes_js_14) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.normalizeFreeDiscussionPreference = normalizeFreeDiscussionPreference;
@@ -17710,7 +18241,7 @@ define("js/domain/discussion/freeDiscussionPolicy", ["require", "exports", "js/c
     const PREFERENCE_PRIORITY = Object.freeze(['EARLY', 'NORMAL', 'WAIT_CO']);
     function normalizeFreeDiscussionPreference(value, { opening = false } = {}) {
         const normalized = String(value ?? '').trim().toUpperCase();
-        const allowed = opening ? discussionAiTaskTypes_js_13.FREE_DISCUSSION_OPENING_PREFERENCES : discussionAiTaskTypes_js_13.FREE_DISCUSSION_PREFERENCES;
+        const allowed = opening ? discussionAiTaskTypes_js_14.FREE_DISCUSSION_OPENING_PREFERENCES : discussionAiTaskTypes_js_14.FREE_DISCUSSION_PREFERENCES;
         if (allowed.includes(normalized))
             return normalized;
         return 'NORMAL';
@@ -17744,7 +18275,7 @@ define("js/domain/discussion/freeDiscussionPolicy", ["require", "exports", "js/c
  * 責務: 解析済みAI応答を現在タスク・候補・公開権限・明示構造化CO・判断差分・陣営戦略差分・襲撃価値・雪女の戦術候補と照合し、エラーと警告を返す。
  * 変更ルール: 状態を書き換えない。通常発言はpublicSpeech必須だけを構造で検証し、publicSpeechの人物・疑い・CO・能力結果・禁止表現を本文から推定しない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は省略可能とし、出力された欄だけを構造化人物名・対象可否・公開根拠参照・権限・フェーズ・明示構造同士の整合へ厳密に照合する。任意項目の劣化判定へ渡すissue.pathはトップレベル責務を失わないよう構造名へ正規化する。対象失効で利用不能になった前回判断はkeepを許可せず、現在候補への再評価を要求する。heartVoiceの長さ検証は文字数上限だけを正本とし、文数は制約・警告に使用しない。
  */
-define("js/prompts/response/responseValidator", ["require", "exports", "js/config/constants", "js/config/personalNightActionTasks", "js/config/discussionAiTaskTypes", "js/domain/discussion/freeDiscussionPolicy", "js/shared/utils", "js/domain/claims/claimRolePolicy", "js/domain/claims/aiAbilityClaimGroundingPolicy", "js/domain/game/standardRules", "js/domain/roles/roleAttributes", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/game/decisionState", "js/domain/game/factionStrategyState", "js/domain/game/factionStrategyPolicy", "js/domain/events/eventStore", "js/domain/game/decisionTargetPolicy", "js/domain/game/wolfPartnerDispositionPolicy", "js/prompts/response/responseContract", "js/domain/night/snowWomanEstimatePolicy", "js/domain/discussion/publicQuestionResolution"], function (require, exports, constants_js_29, personalNightActionTasks_js_6, discussionAiTaskTypes_js_14, freeDiscussionPolicy_js_1, utils_js_14, claimRolePolicy_js_2, aiAbilityClaimGroundingPolicy_js_2, standardRules_js_12, roleAttributes_js_19, publicAbilityClaimPolicy_js_15, abilityClaimTimelinePolicy_js_4, decisionState_js_10, factionStrategyState_js_9, factionStrategyPolicy_js_2, eventStore_js_4, decisionTargetPolicy_js_3, wolfPartnerDispositionPolicy_js_7, responseContract_js_7, snowWomanEstimatePolicy_js_3, publicQuestionResolution_js_3) {
+define("js/prompts/response/responseValidator", ["require", "exports", "js/config/constants", "js/config/personalNightActionTasks", "js/config/discussionAiTaskTypes", "js/domain/discussion/freeDiscussionPolicy", "js/shared/utils", "js/domain/claims/claimRolePolicy", "js/domain/claims/aiAbilityClaimGroundingPolicy", "js/domain/game/standardRules", "js/domain/game/playerStatus", "js/domain/roles/roleAttributes", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/game/decisionState", "js/domain/game/factionStrategyState", "js/domain/game/factionStrategyPolicy", "js/domain/events/eventStore", "js/domain/game/decisionTargetPolicy", "js/domain/game/wolfPartnerDispositionPolicy", "js/prompts/response/responseContract", "js/domain/night/snowWomanEstimatePolicy", "js/domain/discussion/publicQuestionResolution"], function (require, exports, constants_js_29, personalNightActionTasks_js_6, discussionAiTaskTypes_js_15, freeDiscussionPolicy_js_1, utils_js_14, claimRolePolicy_js_2, aiAbilityClaimGroundingPolicy_js_2, standardRules_js_12, playerStatus_js_6, roleAttributes_js_19, publicAbilityClaimPolicy_js_15, abilityClaimTimelinePolicy_js_4, decisionState_js_10, factionStrategyState_js_9, factionStrategyPolicy_js_2, eventStore_js_4, decisionTargetPolicy_js_3, wolfPartnerDispositionPolicy_js_7, responseContract_js_7, snowWomanEstimatePolicy_js_3, publicQuestionResolution_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.resolvePlayerName = resolvePlayerName;
@@ -17832,7 +18363,7 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
             const label = `能力履歴${index + 1}`;
             let roleId = '';
             let target = null;
-            let resultDay = null;
+            let timing = null;
             let result = '';
             if (claim.intent === 'truthful') {
                 const grounded = (0, aiAbilityClaimGroundingPolicy_js_2.resolveAiTruthfulAbilityClaimSource)(state, {
@@ -17845,7 +18376,12 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
                 }
                 roleId = grounded.source.roleId;
                 target = (0, standardRules_js_12.getPlayer)(state, grounded.source.targetId);
-                resultDay = grounded.source.observedDay;
+                timing = {
+                    actionDay: grounded.source.actionDay,
+                    actionPhase: grounded.source.actionPhase,
+                    availableDay: grounded.source.availableDay,
+                    availablePhase: grounded.source.availablePhase,
+                };
                 result = grounded.source.result;
                 if (!target) {
                     errors.push(`${label}: truthful参照の対象が現在のゲーム状態に存在しません。`);
@@ -17862,7 +18398,12 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
                 if (resolvedTarget.certainty !== 'exact')
                     warnings.push(`${label}の「${claim.targetName}」を${resolvedTarget.player.name}として解釈しました。`);
                 target = resolvedTarget.player;
-                resultDay = Number(claim.resultDay);
+                timing = {
+                    actionDay: Number(claim.actionDay),
+                    actionPhase: String(claim.actionPhase ?? ''),
+                    availableDay: Number(claim.availableDay),
+                    availablePhase: String(claim.availablePhase ?? ''),
+                };
                 result = (0, publicAbilityClaimPolicy_js_15.normalizePublicAbilityResult)(claim.result);
             }
             if (!(0, claimRolePolicy_js_2.isAbilityClaimRoleAllowed)(claimRolePolicy, roleId)) {
@@ -17874,12 +18415,12 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
             }
             const forced = (0, publicAbilityClaimPolicy_js_15.resolvePublicAbilityClaimRequirements)(state, {
                 roleId,
-                observedDay: resultDay,
+                actionDay: timing.actionDay,
                 targetId: target.id,
             });
             const evidence = roleId === 'medium'
                 ? { errors: [], resolved: forced.requiredEvidenceEventIds.map((eventId) => state.events.find((event) => event.id === eventId)).filter(Boolean) }
-                : (0, abilityClaimTimelinePolicy_js_4.resolveAbilityEvidenceRefs)(state, claim.evidenceRefs, resultDay);
+                : (0, abilityClaimTimelinePolicy_js_4.resolveAbilityEvidenceRefs)(state, claim.evidenceRefs, timing.actionDay);
             errors.push(...evidence.errors.map((message) => `${label}: ${message}`));
             const resolved = {
                 action: 'publish',
@@ -17888,7 +18429,7 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
                 actionType: (0, publicAbilityClaimPolicy_js_15.getPublicAbilityClaimDefinition)(roleId)?.actionType ?? null,
                 targetId: target.id,
                 result,
-                observedDay: resultDay,
+                ...timing,
                 selectionBasis: roleId === 'medium' ? forced.selectionBasis : claim.selectionBasis,
                 evidenceEventIds: evidence.resolved.map((event) => event.id),
                 selectionReasonAtTime: roleId === 'medium' ? forced.selectionReasonAtTime : claim.selectionReasonAtTime,
@@ -17903,7 +18444,7 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
             resolvedClaims.push(resolved);
             canonicalClaims.push({
                 roleId,
-                resultDay,
+                ...timing,
                 targetName: target.name,
                 result,
                 selectionBasis: roleId === 'medium' ? '' : claim.selectionBasis,
@@ -17956,6 +18497,10 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
             }
             if (!aliveIds.has(target.id)) {
                 errors.push(`speechInteraction.questionTargetsの${target.name}は現在生存していません。`);
+                return;
+            }
+            if (!(0, playerStatus_js_6.canSpeakDuringDay)(state, target.id)) {
+                errors.push(`speechInteraction.questionTargets[${index}]の${target.name}は現在昼会話できません。`);
                 return;
             }
             if (!questionTargetIds.includes(target.id))
@@ -18065,6 +18610,8 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
         }
         if (taskType === 'vote' && action)
             changes.intendedVoteId = action.id;
+        // 継続判断状態へ保存するのは既存の状態項目だけ。推理モード固有のdecisionPatch項目は
+        // JSON例で今回の思考を誘導するターン内情報としてparsedDecisionUpdateへ残し、次ターンへ累積させない。
         [
             'assessmentLevel',
             'leaveAliveBenefit',
@@ -18269,7 +18816,7 @@ define("js/prompts/response/responseValidator", ["require", "exports", "js/confi
         const errors = [...(parseResult?.diagnostics?.errors ?? [])];
         const warnings = [...(parseResult?.diagnostics?.warnings ?? [])];
         const player = (0, standardRules_js_12.getPlayer)(state, playerId);
-        const semanticTaskType = (0, discussionAiTaskTypes_js_14.isNormalSpeechTask)(taskType) ? 'speech' : taskType;
+        const semanticTaskType = (0, discussionAiTaskTypes_js_15.isNormalSpeechTask)(taskType) ? 'speech' : taskType;
         if (!player)
             errors.push('対象プレイヤーが存在しません。');
         if (promptFingerprint && currentFingerprint && promptFingerprint !== currentFingerprint) {
@@ -19143,32 +19690,119 @@ define("js/prompts/response/repair/repairUtilities", ["require", "exports", "js/
     }
 });
 /**
- * 責務: speechInteractionを自動修復対象から隔離し、質問先・回答参照の意味をパーサーと検証器へそのまま渡す。
- * 変更ルール: 公開本文を解析しない。外部契約にないキー、空構造、対象名、公開イベント参照を削除・置換・補完せず、不正時は必ず再生成対象にする。
+ * 責務: speechInteractionの補助制御情報だけを、現在の公開状態から決定的に安全化する。
+ * 変更ルール: publicSpeech本文は解析・変更しない。質問先・回答参照のうち現在利用不能なものだけを監査操作付きで除去し、他のAI生成結果は保持する。判断・能力主張など別責務の構造化情報は扱わない。
  */
-define("js/prompts/response/repair/speechInteractionRepair", ["require", "exports"], function (require, exports) {
+define("js/prompts/response/repair/speechInteractionRepair", ["require", "exports", "js/domain/game/playerStatus", "js/domain/discussion/publicQuestionResolution", "js/shared/utils", "js/prompts/response/repair/jsonObjectRecovery"], function (require, exports, playerStatus_js_7, publicQuestionResolution_js_4, utils_js_16, jsonObjectRecovery_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairSpeechInteraction = repairSpeechInteraction;
-    function repairSpeechInteraction(_state, _playerId, _payload, _operations) {
-        // 質問・回答関係はゲーム進行へ影響するため、決定的に見える補正でも意味変更になり得る。
-        // 本モジュールでは一切書き換えず、responseParser / responseValidatorを正本とする。
+    const ALLOWED_KEYS = new Set(['questionTargets', 'answerToRefs']);
+    function exactPlayerByDisplayName(state, value) {
+        const normalized = (0, utils_js_16.normalizeName)(value);
+        if (!normalized)
+            return null;
+        return (state?.players ?? []).find((player) => (0, utils_js_16.normalizeName)(player.name) === normalized) ?? null;
+    }
+    function validAnswerEvent(state, actorId, sequence) {
+        const event = (state?.events ?? []).find((item) => Number(item.sequence) === Number(sequence));
+        if (!event || event.type !== 'public-speech' || event.status !== 'published')
+            return false;
+        if (event.actorId === actorId)
+            return false;
+        if (!(event.payload?.structured?.interaction?.questionTargetIds ?? []).includes(actorId))
+            return false;
+        if ((0, publicQuestionResolution_js_4.isPublicQuestionAnswered)(state, event, actorId))
+            return false;
+        if ((0, publicQuestionResolution_js_4.isPublicQuestionSkipped)(state, event, actorId))
+            return false;
+        return true;
+    }
+    function repairQuestionTargets(state, playerId, interaction, operations) {
+        if (!Object.hasOwn(interaction, 'questionTargets'))
+            return;
+        if (!Array.isArray(interaction.questionTargets)) {
+            delete interaction.questionTargets;
+            (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_SPEECH_CONTROL_DISCARDED', 'speechInteraction.questionTargets', 'questionTargetsが配列ではないため質問先制御だけを未指定扱いにしました。');
+            return;
+        }
+        const seenIds = new Set();
+        const kept = [];
+        interaction.questionTargets.forEach((value, index) => {
+            const target = exactPlayerByDisplayName(state, value);
+            const valid = target
+                && target.id !== playerId
+                && (0, playerStatus_js_7.canSpeakDuringDay)(state, target.id)
+                && !seenIds.has(target.id);
+            if (!valid) {
+                (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_SPEECH_CONTROL_DISCARDED', `speechInteraction.questionTargets[${index}]`, '現在利用できない個人質問先を除去し、publicSpeechを含む他のAI生成結果を保持しました。');
+                return;
+            }
+            seenIds.add(target.id);
+            kept.push(String(value));
+        });
+        interaction.questionTargets = kept;
+    }
+    function repairAnswerRefs(state, playerId, interaction, operations) {
+        if (!Object.hasOwn(interaction, 'answerToRefs'))
+            return;
+        if (!Array.isArray(interaction.answerToRefs)) {
+            delete interaction.answerToRefs;
+            (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_SPEECH_CONTROL_DISCARDED', 'speechInteraction.answerToRefs', 'answerToRefsが配列ではないため回答参照制御だけを未指定扱いにしました。');
+            return;
+        }
+        const seen = new Set();
+        const kept = [];
+        interaction.answerToRefs.forEach((value, index) => {
+            const sequence = Number(value);
+            const valid = Number.isInteger(sequence)
+                && sequence > 0
+                && !seen.has(sequence)
+                && validAnswerEvent(state, playerId, sequence);
+            if (!valid) {
+                (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_SPEECH_CONTROL_DISCARDED', `speechInteraction.answerToRefs[${index}]`, '現在利用できない回答参照を除去し、publicSpeechを含む他のAI生成結果を保持しました。');
+                return;
+            }
+            seen.add(sequence);
+            kept.push(sequence);
+        });
+        interaction.answerToRefs = kept;
+    }
+    function repairSpeechInteraction(state, playerId, payload, operations) {
+        if (!Object.hasOwn(payload, 'speechInteraction'))
+            return;
+        const interaction = payload.speechInteraction;
+        if (!interaction || typeof interaction !== 'object' || Array.isArray(interaction)) {
+            delete payload.speechInteraction;
+            (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_SPEECH_CONTROL_DISCARDED', 'speechInteraction', 'speechInteractionがオブジェクトではないため補助制御だけを未指定扱いにしました。');
+            return;
+        }
+        Object.keys(interaction).forEach((key) => {
+            if (ALLOWED_KEYS.has(key))
+                return;
+            delete interaction[key];
+            (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_SPEECH_CONTROL_DISCARDED', `speechInteraction.${key}`, `未定義の補助制御speechInteraction.${key}を除去しました。`);
+        });
+        repairQuestionTargets(state, playerId, interaction, operations);
+        repairAnswerRefs(state, playerId, interaction, operations);
+        if (!Object.keys(interaction).length)
+            delete payload.speechInteraction;
     }
 });
 /**
  * 責務: 任意CO操作を現在の公開CO状態と役職構成に照らして補正する。
  * 変更ルール: 新しいCO意思決定を生成せず、表記・既存状態・公開配役構成から得た許可役職だけを検査する。役職IDは許可役職集合からcanonical IDへ正規化し、役職欠け後の実配役を公開CO補正へ使用しない。
  */
-define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "js/domain/claims/claimRolePolicy", "js/domain/roles/roleComposition", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, claimRolePolicy_js_3, roleComposition_js_3, jsonObjectRecovery_js_2, repairUtilities_js_1) {
+define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "js/domain/claims/claimRolePolicy", "js/domain/roles/roleComposition", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, claimRolePolicy_js_3, roleComposition_js_3, jsonObjectRecovery_js_3, repairUtilities_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairCoOperation = repairCoOperation;
     function repairCoOperation(state, playerId, payload, operations) {
         if (!Object.hasOwn(payload, 'coOperation'))
             return;
-        if (!(0, jsonObjectRecovery_js_2.isPlainObject)(payload.coOperation)) {
+        if (!(0, jsonObjectRecovery_js_3.isPlainObject)(payload.coOperation)) {
             delete payload.coOperation;
-            (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'coOperation', 'オブジェクトでないcoOperationを省略しました。');
+            (0, jsonObjectRecovery_js_3.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'coOperation', 'オブジェクトでないcoOperationを省略しました。');
             return;
         }
         const value = (0, repairUtilities_js_1.repairExactKeys)(payload.coOperation, 'coOperation', ['action', 'roleId'], operations);
@@ -19180,48 +19814,48 @@ define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "j
         const action = String(value.action ?? '');
         if (!['declare', 'change', 'withdraw'].includes(action)) {
             delete payload.coOperation;
-            (0, jsonObjectRecovery_js_2.operation)(operations, 'INCOMPLETE_OPTIONAL_SECTION_REMOVED', 'coOperation', '有効なCO操作ではないためcoOperationを省略しました。');
+            (0, jsonObjectRecovery_js_3.operation)(operations, 'INCOMPLETE_OPTIONAL_SECTION_REMOVED', 'coOperation', '有効なCO操作ではないためcoOperationを省略しました。');
             return;
         }
         const activeRoleId = state.claims?.find((claim) => claim.actorId === playerId && claim.status === 'active')?.roleId ?? null;
         if (action === 'withdraw') {
             if (Object.hasOwn(value, 'roleId')) {
                 delete value.roleId;
-                (0, jsonObjectRecovery_js_2.operation)(operations, 'UNNEEDED_OPTIONAL_FIELD_REMOVED', 'coOperation.roleId', 'withdrawでは不要なroleIdを省略しました。');
+                (0, jsonObjectRecovery_js_3.operation)(operations, 'UNNEEDED_OPTIONAL_FIELD_REMOVED', 'coOperation.roleId', 'withdrawでは不要なroleIdを省略しました。');
             }
             if (!activeRoleId) {
                 delete payload.coOperation;
-                (0, jsonObjectRecovery_js_2.operation)(operations, 'REDUNDANT_CO_OPERATION_REMOVED', 'coOperation', '撤回対象がないwithdrawを省略しました。');
+                (0, jsonObjectRecovery_js_3.operation)(operations, 'REDUNDANT_CO_OPERATION_REMOVED', 'coOperation', '撤回対象がないwithdrawを省略しました。');
             }
             return;
         }
         if (!String(value.roleId ?? '').trim()) {
             delete payload.coOperation;
-            (0, jsonObjectRecovery_js_2.operation)(operations, 'INCOMPLETE_OPTIONAL_SECTION_REMOVED', 'coOperation', '役職を確定できないCO操作を省略しました。');
+            (0, jsonObjectRecovery_js_3.operation)(operations, 'INCOMPLETE_OPTIONAL_SECTION_REMOVED', 'coOperation', '役職を確定できないCO操作を省略しました。');
             return;
         }
         if (!allowedRoleIds.has(String(value.roleId))) {
             delete payload.coOperation;
-            (0, jsonObjectRecovery_js_2.operation)(operations, 'INVALID_CO_ROLE_REMOVED', 'coOperation', '現在許可されないCO役職の操作を省略しました。');
+            (0, jsonObjectRecovery_js_3.operation)(operations, 'INVALID_CO_ROLE_REMOVED', 'coOperation', '現在許可されないCO役職の操作を省略しました。');
             return;
         }
         if (action === 'declare' && activeRoleId) {
             if (activeRoleId === value.roleId) {
                 delete payload.coOperation;
-                (0, jsonObjectRecovery_js_2.operation)(operations, 'REDUNDANT_CO_OPERATION_REMOVED', 'coOperation', '現在と同一のCO宣言を省略しました。');
+                (0, jsonObjectRecovery_js_3.operation)(operations, 'REDUNDANT_CO_OPERATION_REMOVED', 'coOperation', '現在と同一のCO宣言を省略しました。');
             }
             else {
                 value.action = 'change';
-                (0, jsonObjectRecovery_js_2.operation)(operations, 'CO_TRANSITION_NORMALIZED', 'coOperation.action', '現在のCO状態に合わせてdeclareをchangeへ補正しました。');
+                (0, jsonObjectRecovery_js_3.operation)(operations, 'CO_TRANSITION_NORMALIZED', 'coOperation.action', '現在のCO状態に合わせてdeclareをchangeへ補正しました。');
             }
         }
         else if (action === 'change' && !activeRoleId) {
             value.action = 'declare';
-            (0, jsonObjectRecovery_js_2.operation)(operations, 'CO_TRANSITION_NORMALIZED', 'coOperation.action', '未CO状態のchangeをdeclareへ補正しました。');
+            (0, jsonObjectRecovery_js_3.operation)(operations, 'CO_TRANSITION_NORMALIZED', 'coOperation.action', '未CO状態のchangeをdeclareへ補正しました。');
         }
         else if (action === 'change' && activeRoleId === value.roleId) {
             delete payload.coOperation;
-            (0, jsonObjectRecovery_js_2.operation)(operations, 'REDUNDANT_CO_OPERATION_REMOVED', 'coOperation', '現在と同一役職へのchangeを省略しました。');
+            (0, jsonObjectRecovery_js_3.operation)(operations, 'REDUNDANT_CO_OPERATION_REMOVED', 'coOperation', '現在と同一役職へのchangeを省略しました。');
         }
     }
 });
@@ -19229,110 +19863,114 @@ define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "j
  * 責務: 任意能力結果主張のキー、対象名、根拠参照、時点理由を公開可能範囲へ補正する。
  * 変更ルール: 能力結果そのものを推定・生成せず、入力済み主張の形式と参照だけを扱う。
  */
-define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, abilityClaimTimelinePolicy_js_5, publicAbilityClaimPolicy_js_16, jsonObjectRecovery_js_3, repairUtilities_js_2) {
+define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, abilityClaimTimelinePolicy_js_5, publicAbilityClaimPolicy_js_16, jsonObjectRecovery_js_4, repairUtilities_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairAbilityClaims = repairAbilityClaims;
     function repairAbilityClaims(state, payload, operations) {
         if (!Object.hasOwn(payload, 'abilityClaims'))
             return;
-        if ((0, jsonObjectRecovery_js_3.isPlainObject)(payload.abilityClaims)) {
+        if ((0, jsonObjectRecovery_js_4.isPlainObject)(payload.abilityClaims)) {
             payload.abilityClaims = [payload.abilityClaims];
-            (0, jsonObjectRecovery_js_3.operation)(operations, 'SINGLE_VALUE_WRAPPED', 'abilityClaims', '単一能力結果をabilityClaims配列へ変換しました。');
+            (0, jsonObjectRecovery_js_4.operation)(operations, 'SINGLE_VALUE_WRAPPED', 'abilityClaims', '単一能力結果をabilityClaims配列へ変換しました。');
         }
         if (!Array.isArray(payload.abilityClaims)) {
             delete payload.abilityClaims;
-            (0, jsonObjectRecovery_js_3.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'abilityClaims', '配列でないabilityClaimsを省略しました。');
+            (0, jsonObjectRecovery_js_4.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'abilityClaims', '配列でないabilityClaimsを省略しました。');
             return;
         }
-        payload.abilityClaims = payload.abilityClaims.filter(jsonObjectRecovery_js_3.isPlainObject).map((claim, index) => {
+        payload.abilityClaims = payload.abilityClaims.filter(jsonObjectRecovery_js_4.isPlainObject).map((claim, index) => {
             const path = `abilityClaims[${index}]`;
             (0, repairUtilities_js_2.normalizeEnumField)(claim, 'intent', path, operations);
             if (!['truthful', 'deception'].includes(claim.intent)) {
-                (0, jsonObjectRecovery_js_3.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}.intentがtruthful/deceptionではないため省略しました。`);
+                (0, jsonObjectRecovery_js_4.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}.intentがtruthful/deceptionではないため省略しました。`);
                 return null;
             }
             if (claim.intent === 'truthful') {
                 (0, repairUtilities_js_2.repairExactKeys)(claim, path, ['intent', 'sourceRef', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
                 if (typeof claim.sourceRef === 'string' && /^\d+$/u.test(claim.sourceRef.trim())) {
                     claim.sourceRef = Number(claim.sourceRef);
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'NUMBER_STRING_NORMALIZED', `${path}.sourceRef`, `${path}.sourceRefを整数へ変換しました。`);
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'NUMBER_STRING_NORMALIZED', `${path}.sourceRef`, `${path}.sourceRefを整数へ変換しました。`);
                 }
                 if (!Number.isInteger(claim.sourceRef) || claim.sourceRef < 1) {
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}.sourceRefが有効なP#番号ではないため省略しました。`);
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}.sourceRefが有効なP#番号ではないため省略しました。`);
                     return null;
                 }
                 (0, repairUtilities_js_2.normalizeEnumField)(claim, 'selectionBasis', path, operations);
                 (0, repairUtilities_js_2.normalizePositiveIntegerRefs)(claim, 'evidenceRefs', path, operations);
                 if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceRefs?.length)) {
                     claim.selectionBasis = 'no-public-information';
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
                 }
                 if (claim.selectionBasis === 'no-public-information' && claim.evidenceRefs?.length) {
                     claim.selectionBasis = 'public-evidence';
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照があるためselectionBasisをpublic-evidenceへ修正しました。');
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照があるためselectionBasisをpublic-evidenceへ修正しました。');
                 }
                 return claim;
             }
-            (0, repairUtilities_js_2.repairExactKeys)(claim, path, ['intent', 'roleId', 'resultDay', 'target', 'result', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
-            (0, repairUtilities_js_2.removeNullOptionalFields)(claim, ['roleId', 'resultDay', 'target', 'result'], path, operations);
+            (0, repairUtilities_js_2.repairExactKeys)(claim, path, ['intent', 'roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
+            (0, repairUtilities_js_2.removeNullOptionalFields)(claim, ['roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'], path, operations);
             (0, repairUtilities_js_2.normalizeEnumField)(claim, 'roleId', path, operations);
             (0, repairUtilities_js_2.normalizeEnumField)(claim, 'result', path, operations);
             (0, repairUtilities_js_2.normalizeEnumField)(claim, 'selectionBasis', path, operations);
-            if (typeof claim.resultDay === 'string' && /^\d+$/u.test(claim.resultDay.trim())) {
-                claim.resultDay = Number(claim.resultDay);
-                (0, jsonObjectRecovery_js_3.operation)(operations, 'NUMBER_STRING_NORMALIZED', `${path}.resultDay`, `${path}.resultDayを整数へ変換しました。`);
+            for (const key of ['actionDay', 'availableDay']) {
+                if (typeof claim[key] === 'string' && /^\d+$/u.test(claim[key].trim())) {
+                    claim[key] = Number(claim[key]);
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'NUMBER_STRING_NORMALIZED', `${path}.${key}`, `${path}.${key}を整数へ変換しました。`);
+                }
             }
+            (0, repairUtilities_js_2.normalizeEnumField)(claim, 'actionPhase', path, operations);
+            (0, repairUtilities_js_2.normalizeEnumField)(claim, 'availablePhase', path, operations);
             if (typeof claim.target === 'string') {
                 const player = (0, repairUtilities_js_2.resolvePlayer)(state, claim.target);
                 if (player && player.name !== claim.target) {
                     claim.target = player.name;
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', `${path}.target`, `${path}.targetを正式表示名へ修正しました。`);
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', `${path}.target`, `${path}.targetを正式表示名へ修正しました。`);
                 }
             }
             (0, repairUtilities_js_2.normalizePositiveIntegerRefs)(claim, 'evidenceRefs', path, operations);
-            const requiredKeys = ['roleId', 'resultDay', 'target', 'result'];
+            const requiredKeys = ['roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'];
             if (requiredKeys.some((key) => !Object.hasOwn(claim, key) || claim[key] === null || claim[key] === '')) {
-                (0, jsonObjectRecovery_js_3.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は騙り能力結果を確定できないため省略しました。`);
+                (0, jsonObjectRecovery_js_4.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は騙り能力結果を確定できないため省略しました。`);
                 return null;
             }
-            if (claim.roleId === 'medium' && Number.isInteger(claim.resultDay) && typeof claim.target === 'string') {
+            if (claim.roleId === 'medium' && Number.isInteger(claim.actionDay) && typeof claim.target === 'string') {
                 const target = (0, repairUtilities_js_2.resolvePlayer)(state, claim.target);
                 const requirements = target ? (0, publicAbilityClaimPolicy_js_16.resolvePublicAbilityClaimRequirements)(state, {
-                    roleId: 'medium', observedDay: claim.resultDay, targetId: target.id,
+                    roleId: 'medium', actionDay: claim.actionDay, targetId: target.id,
                 }) : null;
                 if (requirements?.requiredEvidenceRefs?.length) {
                     claim.selectionBasis = 'rule-forced';
                     claim.evidenceRefs = [...requirements.requiredEvidenceRefs];
                     delete claim.selectionReasonAtTime;
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'MEDIUM_TIMELINE_NORMALIZED', path, '霊能結果の選定根拠を対応する処刑履歴へ固定しました。');
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'MEDIUM_TIMELINE_NORMALIZED', path, '霊能結果の選定根拠を対応する処刑履歴へ固定しました。');
                 }
             }
             else {
-                const allowedRefs = new Set((0, abilityClaimTimelinePolicy_js_5.getAbilityEvidenceWindow)(state, claim.resultDay).map((event) => Number(event.sequence)));
+                const allowedRefs = new Set((0, abilityClaimTimelinePolicy_js_5.getAbilityEvidenceWindow)(state, claim.actionDay).map((event) => Number(event.sequence)));
                 if (Array.isArray(claim.evidenceRefs)) {
                     const validRefs = claim.evidenceRefs.filter((ref) => allowedRefs.has(Number(ref)));
                     if (!(0, repairUtilities_js_2.deepEqual)(validRefs, claim.evidenceRefs)) {
                         claim.evidenceRefs = validRefs;
-                        (0, jsonObjectRecovery_js_3.operation)(operations, 'INVALID_ABILITY_EVENT_SEQUENCES_REMOVED', `${path}.evidenceRefs`, '能力決定時点で利用できない公開参照を除外しました。');
+                        (0, jsonObjectRecovery_js_4.operation)(operations, 'INVALID_ABILITY_EVENT_SEQUENCES_REMOVED', `${path}.evidenceRefs`, '能力決定時点で利用できない公開参照を除外しました。');
                     }
                 }
                 if (['guard', 'namahage', 'snowWoman'].includes(claim.roleId) && claim.result !== 'unknown') {
                     claim.result = 'unknown';
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'UNOBSERVABLE_RESULT_NORMALIZED', `${path}.result`, '個別成否が通知されない役職のresultをunknownへ固定しました。');
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'UNOBSERVABLE_RESULT_NORMALIZED', `${path}.result`, '個別成否が通知されない役職のresultをunknownへ固定しました。');
                 }
                 if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceRefs?.length)) {
                     claim.selectionBasis = 'no-public-information';
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
                 }
                 if (claim.selectionBasis === 'no-public-information' && claim.evidenceRefs?.length) {
                     claim.selectionBasis = 'public-evidence';
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照があるためselectionBasisをpublic-evidenceへ修正しました。');
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照があるためselectionBasisをpublic-evidenceへ修正しました。');
                 }
                 const unlistedReasonSequences = (0, abilityClaimTimelinePolicy_js_5.getUnlistedAbilityReasonSequences)(claim.selectionReasonAtTime, claim.evidenceRefs);
                 if (unlistedReasonSequences.length) {
                     delete claim.selectionReasonAtTime;
-                    (0, jsonObjectRecovery_js_3.operation)(operations, 'INVALID_ABILITY_REASON_REFERENCES_REMOVED', `${path}.selectionReasonAtTime`, `構造化根拠にない公開番号（${unlistedReasonSequences.map((sequence) => `#${sequence}`).join('、')}）を含む選定理由を未入力化しました。`);
+                    (0, jsonObjectRecovery_js_4.operation)(operations, 'INVALID_ABILITY_REASON_REFERENCES_REMOVED', `${path}.selectionReasonAtTime`, `構造化根拠にない公開番号（${unlistedReasonSequences.map((sequence) => `#${sequence}`).join('、')}）を含む選定理由を未入力化しました。`);
                 }
             }
             return claim;
@@ -19340,24 +19978,27 @@ define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "
         payload.abilityClaims = (0, repairUtilities_js_2.uniqueBy)(payload.abilityClaims, (claim) => JSON.stringify(claim));
         if (!payload.abilityClaims.length) {
             delete payload.abilityClaims;
-            (0, jsonObjectRecovery_js_3.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'abilityClaims', '公開対象がないabilityClaimsを省略しました。');
+            (0, jsonObjectRecovery_js_4.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'abilityClaims', '公開対象がないabilityClaimsを省略しました。');
         }
     }
 });
 /**
  * 責務: 任意判断差分の対象者名・列挙値・参照配列の構文を現在の候補集合へ正規化する。
- * 変更ルール: 判断内容を新規生成しない。decisionPatch.correctedSpeechRefs / evidenceRefs の公開可視性・イベント種別は意味を持つ根拠なので黙って削除せず、responseValidator.jsへ渡して再生成対象として検証する。
+ * 変更ルール: 判断内容を新規生成しない。decisionPatch.correctedSpeechRefs / evidenceRefs の公開可視性・イベント種別は意味を持つ根拠なので黙って削除せず、responseValidator.jsへ渡して再生成対象として検証する。推理モード固有の配列項目は任意回答として文字列配列だけへ正規化し、空なら省略する。
  */
-define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports", "js/domain/game/decisionTargetPolicy", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, decisionTargetPolicy_js_4, responseContract_js_8, jsonObjectRecovery_js_4, repairUtilities_js_3) {
+define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports", "js/domain/game/decisionTargetPolicy", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, decisionTargetPolicy_js_4, responseContract_js_8, jsonObjectRecovery_js_5, repairUtilities_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairDecisionUpdate = repairDecisionUpdate;
+    const TURN_LOCAL_DECISION_LIST_KEYS = Object.freeze([
+        'supportingSignals', 'counterSignals', 'remainingHypotheses',
+    ]);
     function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, operations) {
         if (!Object.hasOwn(payload, 'decisionPatch'))
             return;
-        if (!(0, jsonObjectRecovery_js_4.isPlainObject)(payload.decisionPatch)) {
+        if (!(0, jsonObjectRecovery_js_5.isPlainObject)(payload.decisionPatch)) {
             delete payload.decisionPatch;
-            (0, jsonObjectRecovery_js_4.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'decisionPatch', 'オブジェクトでないdecisionPatchを省略しました。');
+            (0, jsonObjectRecovery_js_5.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'decisionPatch', 'オブジェクトでないdecisionPatchを省略しました。');
             return;
         }
         const responseMode = taskType === 'mason-conversation' ? 'mason' : taskType;
@@ -19382,27 +20023,36 @@ define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports",
                 if (player) {
                     if (player.name !== patch.intendedVote) {
                         patch.intendedVote = player.name;
-                        (0, jsonObjectRecovery_js_4.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', 'decisionPatch.intendedVote', '暫定投票予定を正式表示名へ修正しました。');
+                        (0, jsonObjectRecovery_js_5.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', 'decisionPatch.intendedVote', '暫定投票予定を正式表示名へ修正しました。');
                     }
                 }
                 else {
                     delete patch.intendedVote;
-                    (0, jsonObjectRecovery_js_4.operation)(operations, 'INVALID_OPTIONAL_TARGET_REMOVED', 'decisionPatch.intendedVote', '無効な暫定投票予定を除外しました。');
+                    (0, jsonObjectRecovery_js_5.operation)(operations, 'INVALID_OPTIONAL_TARGET_REMOVED', 'decisionPatch.intendedVote', '無効な暫定投票予定を除外しました。');
                 }
             }
             else {
                 delete patch.intendedVote;
-                (0, jsonObjectRecovery_js_4.operation)(operations, 'INVALID_OPTIONAL_TARGET_REMOVED', 'decisionPatch.intendedVote', '文字列またはnullでない暫定投票予定を除外しました。');
+                (0, jsonObjectRecovery_js_5.operation)(operations, 'INVALID_OPTIONAL_TARGET_REMOVED', 'decisionPatch.intendedVote', '文字列またはnullでない暫定投票予定を除外しました。');
             }
         }
         (0, repairUtilities_js_3.normalizeEnumField)(patch, 'assessmentLevel', 'decisionPatch', operations);
+        TURN_LOCAL_DECISION_LIST_KEYS.forEach((key) => {
+            if (!Object.hasOwn(patch, key))
+                return;
+            const values = (0, repairUtilities_js_3.normalizeStringArray)(patch, key, 'decisionPatch', operations);
+            if (values.length)
+                return;
+            delete patch[key];
+            (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', `decisionPatch.${key}`, `空のdecisionPatch.${key}を省略しました。`);
+        });
         for (const key of Object.keys(patch)) {
             if (['correctedSpeechRefs', 'evidenceRefs'].includes(key))
                 continue;
             if (typeof patch[key] === 'string') {
                 if (!patch[key].trim()) {
                     delete patch[key];
-                    (0, jsonObjectRecovery_js_4.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', `decisionPatch.${key}`, `空のdecisionPatch.${key}を省略しました。`);
+                    (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', `decisionPatch.${key}`, `空のdecisionPatch.${key}を省略しました。`);
                 }
                 else
                     patch[key] = patch[key].trim();
@@ -19412,7 +20062,7 @@ define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports",
         (0, repairUtilities_js_3.normalizePositiveIntegerRefs)(patch, 'evidenceRefs', 'decisionPatch', operations);
         if (!Object.keys(patch).length) {
             delete payload.decisionPatch;
-            (0, jsonObjectRecovery_js_4.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'decisionPatch', '有効な判断変更がないdecisionPatchを省略しました。');
+            (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'decisionPatch', '有効な判断変更がないdecisionPatchを省略しました。');
         }
     }
 });
@@ -19462,32 +20112,32 @@ define("js/prompts/response/repair/repairConstants", ["require", "exports"], fun
  * 責務: 人狼共有戦略差分を許可キーと開始夜制約へ合わせて補正する。
  * 変更ルール: 共有戦略を生成せず、keep/patch形式と入力済みキーだけを扱う。
  */
-define("js/prompts/response/repair/sharedStrategyRepair", ["require", "exports", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities", "js/prompts/response/repair/repairConstants"], function (require, exports, jsonObjectRecovery_js_5, repairUtilities_js_4, repairConstants_js_1) {
+define("js/prompts/response/repair/sharedStrategyRepair", ["require", "exports", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities", "js/prompts/response/repair/repairConstants"], function (require, exports, jsonObjectRecovery_js_6, repairUtilities_js_4, repairConstants_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairSharedStrategy = repairSharedStrategy;
     function repairSharedStrategy(state, payload, operations) {
         if (!Object.hasOwn(payload, 'sharedStrategy'))
             return;
-        if (!(0, jsonObjectRecovery_js_5.isPlainObject)(payload.sharedStrategy)) {
+        if (!(0, jsonObjectRecovery_js_6.isPlainObject)(payload.sharedStrategy)) {
             delete payload.sharedStrategy;
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', 'オブジェクトでないsharedStrategyを省略しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', 'オブジェクトでないsharedStrategyを省略しました。');
             return;
         }
         const update = (0, repairUtilities_js_4.repairExactKeys)(payload.sharedStrategy, 'sharedStrategy', ['mode', 'changes'], operations);
         (0, repairUtilities_js_4.normalizeEnumField)(update, 'mode', 'sharedStrategy', operations);
         if (!Object.hasOwn(update, 'changes'))
             update.changes = {};
-        if (!(0, jsonObjectRecovery_js_5.isPlainObject)(update.changes)) {
+        if (!(0, jsonObjectRecovery_js_6.isPlainObject)(update.changes)) {
             delete payload.sharedStrategy;
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', 'changesがオブジェクトでないsharedStrategyを省略しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', 'changesがオブジェクトでないsharedStrategyを省略しました。');
             return;
         }
         (0, repairUtilities_js_4.repairExactKeys)(update.changes, 'sharedStrategy.changes', repairConstants_js_1.SHARED_STRATEGY_KEYS, operations);
         Object.keys(update.changes).forEach((key) => {
             if (typeof update.changes[key] !== 'string' || !update.changes[key].trim()) {
                 delete update.changes[key];
-                (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', `sharedStrategy.changes.${key}`, `空の共有戦略${key}を省略しました。`);
+                (0, jsonObjectRecovery_js_6.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', `sharedStrategy.changes.${key}`, `空の共有戦略${key}を省略しました。`);
             }
             else {
                 update.changes[key] = update.changes[key].trim();
@@ -19496,34 +20146,34 @@ define("js/prompts/response/repair/sharedStrategyRepair", ["require", "exports",
         const opening = state.night?.plan?.wolfConversationPurpose === 'opening-strategy';
         if (opening && Object.hasOwn(update.changes, 'attackPlan')) {
             delete update.changes.attackPlan;
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'DAY0_ATTACK_PLAN_REMOVED', 'sharedStrategy.changes.attackPlan', 'Day 0では無効なattackPlanを除外しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'DAY0_ATTACK_PLAN_REMOVED', 'sharedStrategy.changes.attackPlan', 'Day 0では無効なattackPlanを除外しました。');
         }
         if (!update.mode && Object.keys(update.changes).length) {
             update.mode = 'patch';
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'MISSING_OPTIONAL_MODE_INFERRED', 'sharedStrategy.mode', '有効なchangesからsharedStrategy.modeをpatchへ補正しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'MISSING_OPTIONAL_MODE_INFERRED', 'sharedStrategy.mode', '有効なchangesからsharedStrategy.modeをpatchへ補正しました。');
         }
         if (!update.mode && !Object.keys(update.changes).length) {
             delete payload.sharedStrategy;
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', '有効な共有戦略更新がないsharedStrategyを省略しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', '有効な共有戦略更新がないsharedStrategyを省略しました。');
             return;
         }
         if (update.mode === 'keep' && Object.keys(update.changes).length) {
             update.mode = 'patch';
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'KEEP_WITH_CHANGES_NORMALIZED', 'sharedStrategy.mode', 'changesがあるためsharedStrategy.modeをpatchへ修正しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'KEEP_WITH_CHANGES_NORMALIZED', 'sharedStrategy.mode', 'changesがあるためsharedStrategy.modeをpatchへ修正しました。');
         }
         if (update.mode === 'patch' && !Object.keys(update.changes).length) {
             if (opening) {
                 delete payload.sharedStrategy;
-                (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', 'Day 0で有効な変更がないsharedStrategyを省略しました。');
+                (0, jsonObjectRecovery_js_6.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'sharedStrategy', 'Day 0で有効な変更がないsharedStrategyを省略しました。');
             }
             else {
                 update.mode = 'keep';
-                (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_PATCH_NORMALIZED', 'sharedStrategy.mode', '変更のないpatchをkeepへ修正しました。');
+                (0, jsonObjectRecovery_js_6.operation)(operations, 'EMPTY_PATCH_NORMALIZED', 'sharedStrategy.mode', '変更のないpatchをkeepへ修正しました。');
             }
         }
         if (opening && update.mode === 'keep') {
             delete payload.sharedStrategy;
-            (0, jsonObjectRecovery_js_5.operation)(operations, 'INAPPLICABLE_KEEP_REMOVED', 'sharedStrategy', '初夜の共有作戦で意味を持たないkeepを省略しました。');
+            (0, jsonObjectRecovery_js_6.operation)(operations, 'INAPPLICABLE_KEEP_REMOVED', 'sharedStrategy', '初夜の共有作戦で意味を持たないkeepを省略しました。');
         }
     }
 });
@@ -19531,16 +20181,16 @@ define("js/prompts/response/repair/sharedStrategyRepair", ["require", "exports",
  * 責務: 襲撃比較評価の列挙値と代替対象名を現在の候補集合へ補正する。
  * 変更ルール: 襲撃判断を生成せず、任意評価項目の表記と対象整合だけを扱う。
  */
-define("js/prompts/response/repair/attackAssessmentRepair", ["require", "exports", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities", "js/prompts/response/repair/repairConstants"], function (require, exports, jsonObjectRecovery_js_6, repairUtilities_js_5, repairConstants_js_2) {
+define("js/prompts/response/repair/attackAssessmentRepair", ["require", "exports", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities", "js/prompts/response/repair/repairConstants"], function (require, exports, jsonObjectRecovery_js_7, repairUtilities_js_5, repairConstants_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairAttackAssessment = repairAttackAssessment;
     function repairAttackAssessment(state, taskType, candidateIds, payload, operations) {
         if (!Object.hasOwn(payload, 'attackAssessment'))
             return;
-        if (!(0, jsonObjectRecovery_js_6.isPlainObject)(payload.attackAssessment)) {
+        if (!(0, jsonObjectRecovery_js_7.isPlainObject)(payload.attackAssessment)) {
             delete payload.attackAssessment;
-            (0, jsonObjectRecovery_js_6.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'attackAssessment', 'オブジェクトでないattackAssessmentを省略しました。');
+            (0, jsonObjectRecovery_js_7.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'attackAssessment', 'オブジェクトでないattackAssessmentを省略しました。');
             return;
         }
         const assessment = (0, repairUtilities_js_5.repairExactKeys)(payload.attackAssessment, 'attackAssessment', repairConstants_js_2.ATTACK_ASSESSMENT_KEYS, operations);
@@ -19556,16 +20206,16 @@ define("js/prompts/response/repair/attackAssessmentRepair", ["require", "exports
             if (!alternative || (expectedTargetId && alternative.id === expectedTargetId)) {
                 delete assessment.otherTarget;
                 delete assessment.otherGuardRisk;
-                (0, jsonObjectRecovery_js_6.operation)(operations, 'INVALID_ALTERNATIVE_ASSESSMENT_REMOVED', 'attackAssessment.otherTarget', '無効または実対象と同一の比較候補を除外しました。');
+                (0, jsonObjectRecovery_js_7.operation)(operations, 'INVALID_ALTERNATIVE_ASSESSMENT_REMOVED', 'attackAssessment.otherTarget', '無効または実対象と同一の比較候補を除外しました。');
             }
             else if (alternative.name !== assessment.otherTarget) {
                 assessment.otherTarget = alternative.name;
-                (0, jsonObjectRecovery_js_6.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', 'attackAssessment.otherTarget', '比較候補を正式表示名へ修正しました。');
+                (0, jsonObjectRecovery_js_7.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', 'attackAssessment.otherTarget', '比較候補を正式表示名へ修正しました。');
             }
         }
         if (!Object.keys(assessment).length) {
             delete payload.attackAssessment;
-            (0, jsonObjectRecovery_js_6.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'attackAssessment', '有効項目がないattackAssessmentを省略しました。');
+            (0, jsonObjectRecovery_js_7.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'attackAssessment', '有効項目がないattackAssessmentを省略しました。');
         }
     }
 });
@@ -19573,16 +20223,16 @@ define("js/prompts/response/repair/attackAssessmentRepair", ["require", "exports
  * 責務: 雪女の本人限定推定ID配列を生存者・自己除外・役職条件へ合わせて補正する。
  * 変更ルール: 推定対象を追加生成せず、入力済みIDの重複除去と不正参照除去だけを行う。
  */
-define("js/prompts/response/repair/freezeEstimateRepair", ["require", "exports", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, jsonObjectRecovery_js_7, repairUtilities_js_6) {
+define("js/prompts/response/repair/freezeEstimateRepair", ["require", "exports", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, jsonObjectRecovery_js_8, repairUtilities_js_6) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairFreezeEstimates = repairFreezeEstimates;
     function repairFreezeEstimates(state, playerId, payload, operations) {
         if (!Object.hasOwn(payload, 'estimate'))
             return;
-        if (!(0, jsonObjectRecovery_js_7.isPlainObject)(payload.estimate)) {
+        if (!(0, jsonObjectRecovery_js_8.isPlainObject)(payload.estimate)) {
             delete payload.estimate;
-            (0, jsonObjectRecovery_js_7.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'estimate', 'オブジェクトでないestimateを省略しました。');
+            (0, jsonObjectRecovery_js_8.operation)(operations, 'INVALID_OPTIONAL_SECTION_REMOVED', 'estimate', 'オブジェクトでないestimateを省略しました。');
             return;
         }
         const estimate = (0, repairUtilities_js_6.repairExactKeys)(payload.estimate, 'estimate', ['wolfCandidateIds', 'predictedAttackTargetIds'], operations);
@@ -19591,7 +20241,7 @@ define("js/prompts/response/repair/freezeEstimateRepair", ["require", "exports",
                 continue;
             if (typeof estimate[key] === 'string') {
                 estimate[key] = [estimate[key]];
-                (0, jsonObjectRecovery_js_7.operation)(operations, 'SINGLE_VALUE_WRAPPED', `estimate.${key}`, `estimate.${key}の単一IDを配列へ変換しました。`);
+                (0, jsonObjectRecovery_js_8.operation)(operations, 'SINGLE_VALUE_WRAPPED', `estimate.${key}`, `estimate.${key}の単一IDを配列へ変換しました。`);
             }
             if (!Array.isArray(estimate[key]))
                 continue;
@@ -19601,7 +20251,7 @@ define("js/prompts/response/repair/freezeEstimateRepair", ["require", "exports",
             });
             if (!(0, repairUtilities_js_6.deepEqual)(valid, estimate[key])) {
                 estimate[key] = valid;
-                (0, jsonObjectRecovery_js_7.operation)(operations, 'INVALID_ESTIMATE_IDS_REMOVED', `estimate.${key}`, `estimate.${key}から死亡者・本人・重複IDを除外しました。`);
+                (0, jsonObjectRecovery_js_8.operation)(operations, 'INVALID_ESTIMATE_IDS_REMOVED', `estimate.${key}`, `estimate.${key}から死亡者・本人・重複IDを除外しました。`);
             }
         }
         if (!Object.keys(estimate).length)
@@ -19612,7 +20262,7 @@ define("js/prompts/response/repair/freezeEstimateRepair", ["require", "exports",
  * 責務: 行動理由、内部メモ、トップレベルキーの決定的な長さ・空値・表記補正を行う。
  * 変更ルール: 必須本文や行動対象を補完せず、任意テキストと契約キーだけを扱う。
  */
-define("js/prompts/response/repair/responseValueRepair", ["require", "exports", "js/config/constants", "js/config/personalNightActionTasks", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, constants_js_30, personalNightActionTasks_js_7, responseContract_js_9, jsonObjectRecovery_js_8, repairUtilities_js_7) {
+define("js/prompts/response/repair/responseValueRepair", ["require", "exports", "js/config/constants", "js/config/personalNightActionTasks", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, constants_js_30, personalNightActionTasks_js_7, responseContract_js_9, jsonObjectRecovery_js_9, repairUtilities_js_7) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairSelectionRationale = repairSelectionRationale;
@@ -19635,14 +20285,14 @@ define("js/prompts/response/repair/responseValueRepair", ["require", "exports", 
         if (payload.rationale.trim().length <= limit)
             return;
         payload.rationale = truncateAtSentenceBoundary(payload.rationale, limit);
-        (0, jsonObjectRecovery_js_8.operation)(operations, 'OPTIONAL_TEXT_TRUNCATED', 'rationale', `rationaleを${limit}文字以内へ短縮しました。`);
+        (0, jsonObjectRecovery_js_9.operation)(operations, 'OPTIONAL_TEXT_TRUNCATED', 'rationale', `rationaleを${limit}文字以内へ短縮しました。`);
     }
     function repairInternalMemo(payload, operations) {
         if (!Object.hasOwn(payload, 'memoAdd'))
             return;
         if (typeof payload.memoAdd !== 'string' || !payload.memoAdd.trim()) {
             delete payload.memoAdd;
-            (0, jsonObjectRecovery_js_8.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', 'memoAdd', '空または文字列でないmemoAddを省略しました。');
+            (0, jsonObjectRecovery_js_9.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', 'memoAdd', '空または文字列でないmemoAddを省略しました。');
             return;
         }
         payload.memoAdd = payload.memoAdd.trim();
@@ -19655,21 +20305,21 @@ define("js/prompts/response/repair/responseValueRepair", ["require", "exports", 
             if (required.has(key) || typeof payload[key] !== 'string' || payload[key].trim())
                 return;
             delete payload[key];
-            (0, jsonObjectRecovery_js_8.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', key, `空の任意項目${key}を省略しました。`);
+            (0, jsonObjectRecovery_js_9.operation)(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', key, `空の任意項目${key}を省略しました。`);
         });
     }
 });
 /**
  * 責務: 構文回復と項目別の決定的修復を順に適用し、再検証用候補と監査操作を返す公開窓口である。
- * 変更ルール: 項目固有の修復規則を実装せず、repair配下の各責務を呼び分ける。必須値を新規生成しない。質問・回答関係・判断根拠のように意味を持つ構造化項目は、不正時に黙って破棄せず再生成対象として保持する。ただし投票では有効なactionAnswerを進行上の正本として保護し、意味を変えない任意項目だけを監査操作付きで破棄できる。
+ * 変更ルール: 項目固有の修復規則を実装せず、repair配下の各責務を呼び分ける。必須値を新規生成しない。判断根拠・陣営戦略のように意味を持つ構造化項目は、不正時に黙って破棄せず再生成対象として保持する。speechInteractionは公開本文とは独立した補助制御として専用修復後も不正なら未指定扱いにできる。投票では有効なactionAnswerを進行上の正本として保護し、意味を変えない任意項目だけを監査操作付きで破棄できる。
  */
-define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities", "js/prompts/response/repair/speechInteractionRepair", "js/prompts/response/repair/coOperationRepair", "js/prompts/response/repair/abilityClaimRepair", "js/prompts/response/repair/decisionUpdateRepair", "js/prompts/response/repair/factionStrategyRepair", "js/prompts/response/repair/sharedStrategyRepair", "js/prompts/response/repair/attackAssessmentRepair", "js/prompts/response/repair/freezeEstimateRepair", "js/prompts/response/repair/responseValueRepair"], function (require, exports, responseContract_js_10, jsonObjectRecovery_js_9, repairUtilities_js_8, speechInteractionRepair_js_1, coOperationRepair_js_1, abilityClaimRepair_js_1, decisionUpdateRepair_js_1, factionStrategyRepair_js_1, sharedStrategyRepair_js_1, attackAssessmentRepair_js_1, freezeEstimateRepair_js_1, responseValueRepair_js_1) {
+define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities", "js/prompts/response/repair/speechInteractionRepair", "js/prompts/response/repair/coOperationRepair", "js/prompts/response/repair/abilityClaimRepair", "js/prompts/response/repair/decisionUpdateRepair", "js/prompts/response/repair/factionStrategyRepair", "js/prompts/response/repair/sharedStrategyRepair", "js/prompts/response/repair/attackAssessmentRepair", "js/prompts/response/repair/freezeEstimateRepair", "js/prompts/response/repair/responseValueRepair"], function (require, exports, responseContract_js_10, jsonObjectRecovery_js_10, repairUtilities_js_8, speechInteractionRepair_js_1, coOperationRepair_js_1, abilityClaimRepair_js_1, decisionUpdateRepair_js_1, factionStrategyRepair_js_1, sharedStrategyRepair_js_1, attackAssessmentRepair_js_1, freezeEstimateRepair_js_1, responseValueRepair_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairAiResponseCandidate = repairAiResponseCandidate;
     exports.discardInvalidOptionalResponseFields = discardInvalidOptionalResponseFields;
     exports.autoRepairIssues = autoRepairIssues;
-    const NON_DISCARDABLE_SEMANTIC_OPTIONAL_KEYS = new Set(['speechInteraction', 'decisionPatch', 'factionStrategy']);
+    const NON_DISCARDABLE_SEMANTIC_OPTIONAL_KEYS = new Set(['decisionPatch', 'factionStrategy']);
     function isDiscardProtectedOptionalKey(topLevelKey, taskType) {
         if (String(taskType ?? '') === 'vote')
             return topLevelKey === 'speechInteraction';
@@ -19677,11 +20327,11 @@ define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prom
     }
     function repairAiResponseCandidate(state, taskArtifact, rawResponse) {
         const operations = [];
-        const extracted = (0, jsonObjectRecovery_js_9.extractJsonObjectText)(rawResponse, operations);
+        const extracted = (0, jsonObjectRecovery_js_10.extractJsonObjectText)(rawResponse, operations);
         let payload;
         const mode = String(taskArtifact?.mode ?? '');
         try {
-            payload = (0, jsonObjectRecovery_js_9.parseJsonObjectStrict)(extracted, operations);
+            payload = (0, jsonObjectRecovery_js_10.parseJsonObjectStrict)(extracted, operations);
         }
         catch (error) {
             if (error?.code === 'AMBIGUOUS_DUPLICATE_KEY') {
@@ -19693,7 +20343,7 @@ define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prom
                     blockedReason: error.code,
                 };
             }
-            payload = (0, jsonObjectRecovery_js_9.parseCompleteTopLevelFields)(rawResponse, (0, responseContract_js_10.getResponseTopLevelKeys)(mode), operations);
+            payload = (0, jsonObjectRecovery_js_10.parseCompleteTopLevelFields)(rawResponse, (0, responseContract_js_10.getResponseTopLevelKeys)(mode), operations);
             if (!payload) {
                 return {
                     applied: false,
@@ -19732,7 +20382,7 @@ define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prom
         const operations = [];
         let payload;
         try {
-            payload = (0, jsonObjectRecovery_js_9.parseJsonObjectStrict)(String(rawResponse ?? '').trim(), operations);
+            payload = (0, jsonObjectRecovery_js_10.parseJsonObjectStrict)(String(rawResponse ?? '').trim(), operations);
         }
         catch (error) {
             return {
@@ -19753,7 +20403,7 @@ define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prom
             if (!allowed.has(topLevelKey)) {
                 if (Object.hasOwn(payload, topLevelKey)) {
                     delete payload[topLevelKey];
-                    (0, jsonObjectRecovery_js_9.operation)(operations, 'INVALID_OPTIONAL_FIELD_DISCARDED', topLevelKey, `未定義の任意項目${topLevelKey}を未入力扱いにしました。`);
+                    (0, jsonObjectRecovery_js_10.operation)(operations, 'INVALID_OPTIONAL_FIELD_DISCARDED', topLevelKey, `未定義の任意項目${topLevelKey}を未入力扱いにしました。`);
                 }
                 continue;
             }
@@ -19761,7 +20411,7 @@ define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prom
             if (!deleted && Object.hasOwn(payload, topLevelKey))
                 delete payload[topLevelKey];
             if (deleted || !Object.hasOwn(payload, topLevelKey)) {
-                (0, jsonObjectRecovery_js_9.operation)(operations, 'INVALID_OPTIONAL_FIELD_DISCARDED', (0, repairUtilities_js_8.normalizeIssuePath)(issue?.path) || topLevelKey, `${(0, repairUtilities_js_8.normalizeIssuePath)(issue?.path) || topLevelKey}を未入力扱いにし、他のAI生成結果を保持しました。`);
+                (0, jsonObjectRecovery_js_10.operation)(operations, 'INVALID_OPTIONAL_FIELD_DISCARDED', (0, repairUtilities_js_8.normalizeIssuePath)(issue?.path) || topLevelKey, `${(0, repairUtilities_js_8.normalizeIssuePath)(issue?.path) || topLevelKey}を未入力扱いにし、他のAI生成結果を保持しました。`);
                 (0, repairUtilities_js_8.removeEmptyOptionalAncestors)(payload, topLevelKey);
             }
         }
@@ -19786,9 +20436,10 @@ define("js/prompts/response/responseAutoRepair", ["require", "exports", "js/prom
  * 責務: buildPromptContext()の構造化結果とタスク固有決定値から、工程プロンプト投影専用のstageSourceと、AIへ送信しない文章境界検査参照を決定的に構築する。
  * 変更ルール:
  * - 通常昼発言の構造草案へ、直接生成と同じ解決済み非公開参考視点を引き継ぐ。参考視点の再選択・再解釈は行わず、そのanchorEventSequencesが参照する公開イベントも本番と同じ履歴選択へ必ず残す。
+ * - Day 2以降の通常昼議論第1巡では、直接生成と同じ初期公開役職構成由来の夜明け状況ガイドを草案工程へ引き継ぎ、現在の生存・死亡・CO等で候補を絞らない。
  * - 元プロンプト文字列を解析せず、API通信、DOM、ゲーム状態更新を行わない。公開履歴は本番プロンプトと同じ履歴ポリシーとpublicHistorySection.jsの射影を正本とし、draftへ生イベントを渡さない。未登録キーをstageSourceへ通さず、内部UUIDは工程プロンプトへ直接掲載しない。保存済みheartVoiceは生成・監査用状態に残してもstageSourceへ再投影しない。公開発言の文字数目安・上限は工程プロンプト末尾の最終確認だけで使える構造値として保持し、人間向け発言量ラベルや不透明な長さ区分を中間コンテキストへ投影しない。会話開始・序盤反応の意味がある追加指示はroleTaskData.promptGuidanceを正本とする。characterExpressionには工程で実際に使用する口調・呼称だけを投影する。safetyReferencesとrecentPublicTimelineはローカル検査・参照変換専用とし、draftへ直接投影しない。
  */
-define("js/prompts/context/generationStageSource", ["require", "exports", "js/config/discussionAiTaskTypes", "js/prompts/policies/openingSpeechPolicy", "js/prompts/policies/publicHistoryPolicy", "js/domain/policies/publicSpeechLengthPolicy", "js/config/constants", "js/prompts/sections/publicHistorySection"], function (require, exports, discussionAiTaskTypes_js_15, openingSpeechPolicy_js_6, publicHistoryPolicy_js_3, publicSpeechLengthPolicy_js_4, constants_js_31, publicHistorySection_js_2) {
+define("js/prompts/context/generationStageSource", ["require", "exports", "js/config/discussionAiTaskTypes", "js/prompts/policies/openingSpeechPolicy", "js/prompts/policies/publicHistoryPolicy", "js/domain/policies/publicSpeechLengthPolicy", "js/config/constants", "js/prompts/sections/publicHistorySection", "js/prompts/sections/roleCompositionSituationSection"], function (require, exports, discussionAiTaskTypes_js_16, openingSpeechPolicy_js_6, publicHistoryPolicy_js_3, publicSpeechLengthPolicy_js_4, constants_js_31, publicHistorySection_js_2, roleCompositionSituationSection_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildGenerationStageSource = buildGenerationStageSource;
@@ -19886,12 +20537,12 @@ define("js/prompts/context/generationStageSource", ["require", "exports", "js/co
             content: String(message?.content ?? ''),
         })).filter((item) => item.content);
     }
-    function buildGenerationStageSource({ context, decision, taskType, playerId, slotId, validTargetIds, publicHistoryMode = 'compact', responseContract, generationGuidance = null, internalReasoningDirective = null, }) {
+    function buildGenerationStageSource({ context, decision, taskType, playerId, slotId, validTargetIds, publicHistoryMode = 'delta', responseContract, generationGuidance = null, internalReasoningDirective = null, }) {
         const player = context?.player ?? {};
-        const conversationMode = (0, discussionAiTaskTypes_js_15.isNormalSpeechTask)(taskType) ? (0, openingSpeechPolicy_js_6.resolveOpeningConversationMode)(context) : null;
-        const speechPolicy = ((0, discussionAiTaskTypes_js_15.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType))
+        const conversationMode = (0, discussionAiTaskTypes_js_16.isNormalSpeechTask)(taskType) ? (0, openingSpeechPolicy_js_6.resolveOpeningConversationMode)(context) : null;
+        const speechPolicy = ((0, discussionAiTaskTypes_js_16.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType))
             ? (0, publicSpeechLengthPolicy_js_4.resolvePublicSpeechLengthPolicy)(player?.character?.speechLength, {
-                conversationMode: (0, discussionAiTaskTypes_js_15.isNormalSpeechTask)(taskType) ? conversationMode : 'normal',
+                conversationMode: (0, discussionAiTaskTypes_js_16.isNormalSpeechTask)(taskType) ? conversationMode : 'normal',
             })
             : null;
         const aiRules = context?.game?.rules?.ai ?? {};
@@ -19926,6 +20577,7 @@ define("js/prompts/context/generationStageSource", ["require", "exports", "js/co
                 },
                 currentVoteState: clone(context?.game?.vote, null),
                 recentOutcomeSummary: recentOutcomeSummary(context),
+                roleCompositionSituationGuide: clone((0, roleCompositionSituationSection_js_2.buildRoleCompositionSituationGuide)(context, taskType), null),
             },
             privateState: {
                 ownRole: {
@@ -19960,7 +20612,7 @@ define("js/prompts/context/generationStageSource", ["require", "exports", "js/co
                 reasoningProfile: clone(player?.character?.reasoningProfile, {}),
                 discussionBehavior: String(player?.character?.discussionBehavior ?? ''),
             },
-            internalReasoningDirective: (0, discussionAiTaskTypes_js_15.isNormalSpeechTask)(taskType)
+            internalReasoningDirective: (0, discussionAiTaskTypes_js_16.isNormalSpeechTask)(taskType)
                 ? clone(internalReasoningDirective, null)
                 : null,
             characterExpression: {
@@ -19990,7 +20642,7 @@ define("js/prompts/context/generationStageSource", ["require", "exports", "js/co
                 },
             },
             histories: {
-                publicHistoryMode: String(publicHistoryMode ?? 'compact'),
+                publicHistoryMode: String(publicHistoryMode ?? 'delta'),
                 publicHistoryProjection,
                 ownPublicHistoryProjection,
                 recentPublicTimeline,
@@ -20022,7 +20674,7 @@ define("js/prompts/context/generationStageSource", ["require", "exports", "js/co
  * 責務: 昼のAI公開発言について、他プレイヤーの公開発言全文または本人可視の秘密会話文を機械的に流用した回答を、意味解析なしの文字列比較で検出する。
  * 変更ルール: 公開発言から人物・役職・CO・能力結果・投票意思・秘密らしさを抽出または推定しない。stageSource.safetyReferencesだけを参照し、ゲーム状態、候補、履歴を変更しない。短い定型句は拒否しない。
  */
-define("js/prompts/stages/generationTextBoundary", ["require", "exports", "js/config/discussionAiTaskTypes"], function (require, exports, discussionAiTaskTypes_js_16) {
+define("js/prompts/stages/generationTextBoundary", ["require", "exports", "js/config/discussionAiTaskTypes"], function (require, exports, discussionAiTaskTypes_js_17) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.normalizeBoundaryText = normalizeBoundaryText;
@@ -20100,7 +20752,7 @@ define("js/prompts/stages/generationTextBoundary", ["require", "exports", "js/co
     }
     function validateGeneratedTextBoundary({ taskArtifact, candidateObject } = {}) {
         const taskType = String(taskArtifact?.taskType ?? '');
-        if (!((0, discussionAiTaskTypes_js_16.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType))) {
+        if (!((0, discussionAiTaskTypes_js_17.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType))) {
             return { ok: true, issues: [] };
         }
         const publicSpeech = candidateObject?.publicSpeech;
@@ -20116,7 +20768,7 @@ define("js/prompts/stages/generationTextBoundary", ["require", "exports", "js/co
 });
 /**
  * 責務: AIタスクの本番プロンプト、固定共通システム指示、候補回答の項目単位回収・決定的自動補正・解析・検証、文章流用境界検査、生成工程用の完全機械契約例をUIと自動実行へ共通提供する。
- * 変更ルール: ゲーム状態を更新せず、DOM、API通信、設定保存を行わない。画面へ表示するフェーズ契約を生成工程用完全契約へ置き換えない。手動送信用テキストはAPI送信と同じ常時システム契約を先頭へ結合し、通常プロンプトへ固定原則を重複掲載しない。正常なAI生成項目を保持し、単純な任意項目の不正だけを未入力化する。質問・回答関係と陣営戦略の意味を持つ構造化項目は原則として黙って破棄しないが、投票では有効なactionAnswerを優先し、不正な任意項目だけを監査操作付きで未入力化する。必須項目は本サービスで創作・代替せず、補正後も既存responseParser・responseValidatorと文字列境界検査を必ず再実行する。
+ * 変更ルール: ゲーム状態を更新せず、DOM、API通信、設定保存を行わない。画面へ表示するフェーズ契約を生成工程用完全契約へ置き換えない。手動送信用テキストはAPI送信と同じ常時システム契約を先頭へ結合し、通常プロンプトへ固定原則を重複掲載しない。正常なAI生成項目を保持し、単純な任意項目の不正だけを未入力化する。speechInteractionは公開本文とは独立した補助制御として利用不能部分を監査付きで破棄できるが、判断・陣営戦略など意味を持つ構造化項目は原則として黙って破棄しない。投票では有効なactionAnswerを優先し、不正な任意項目だけを監査操作付きで未入力化する。必須項目は本サービスで創作・代替せず、補正後も既存responseParser・responseValidatorと文字列境界検査を必ず再実行する。
  */
 define("js/services/aiTaskService", ["require", "exports", "js/config/personalNightActionTasks", "js/domain/claims/claimRolePolicy", "js/domain/night/snowWomanEstimatePolicy", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/game/standardRules", "js/prompts/promptBuilder", "js/prompts/response/responseContract", "js/prompts/response/responseParser", "js/prompts/response/responseValidator", "js/prompts/response/responseAutoRepair", "js/prompts/context/generationStageSource", "js/prompts/response/responseExampleReferences", "js/prompts/stages/generationTextBoundary"], function (require, exports, personalNightActionTasks_js_8, claimRolePolicy_js_4, snowWomanEstimatePolicy_js_4, wolfPartnerDispositionPolicy_js_8, standardRules_js_13, promptBuilder_js_1, responseContract_js_11, responseParser_js_1, responseValidator_js_1, responseAutoRepair_js_1, generationStageSource_js_1, responseExampleReferences_js_2, generationTextBoundary_js_1) {
     "use strict";
@@ -20218,7 +20870,7 @@ ${prompt}`;
             conditionalExamples,
         };
     }
-    function prepareAiTask(state, { playerId, taskType, slotId = '', publicHistoryTransmissionMode = 'compact', forceFullPublicHistory = false, } = {}) {
+    function prepareAiTask(state, { playerId, taskType, slotId = '', publicHistoryTransmissionMode = 'delta', forceFullPublicHistory = false, } = {}) {
         const validTargetIds = resolveAiTaskValidTargetIds(state, taskType, playerId);
         const built = (0, promptBuilder_js_1.buildPromptContext)(state, playerId, {
             taskType,
@@ -20241,7 +20893,7 @@ ${prompt}`;
             includeInitial: built.includeInitial,
             publicSequenceAtGeneration: built.publicSequenceAtGeneration,
             publicHistoryMode: built.publicHistoryMode,
-            publicHistoryTransmissionMode: String(publicHistoryTransmissionMode ?? 'compact'),
+            publicHistoryTransmissionMode: String(publicHistoryTransmissionMode ?? 'delta'),
             forceFullPublicHistory: Boolean(forceFullPublicHistory),
             context: built.context,
             decision: built.decision,
@@ -20344,7 +20996,7 @@ ${prompt}`;
             taskType: taskArtifact.taskType,
             validTargetIds: taskArtifact.validTargetIds,
             slotId: taskArtifact.slotId,
-            publicHistoryTransmissionMode: taskArtifact.publicHistoryTransmissionMode ?? (['compact', 'delta'].includes(taskArtifact.publicHistoryMode) ? taskArtifact.publicHistoryMode : 'compact'),
+            publicHistoryTransmissionMode: taskArtifact.publicHistoryTransmissionMode ?? (['full', 'compact', 'delta'].includes(taskArtifact.publicHistoryMode) ? taskArtifact.publicHistoryMode : 'delta'),
             forceFullPublicHistory: Boolean(taskArtifact.forceFullPublicHistory),
         });
         const initial = evaluateCandidateOnce(state, taskArtifact, originalRawResponse, current.fingerprint);
@@ -20475,7 +21127,7 @@ define("js/state/selectors", ["require", "exports", "js/config/constants", "js/d
  * 責務: 公開画面へ渡してよい情報だけを含む専用スナップショットを生成し、公開イベント1件の安全な表示射影を現在表示と観戦リプレイで共有し、当日生存中の凍結表示、通常発言・回答フェーズ・勝敗後感想の話者情報、機密表示時だけ許可された役職・心の声を表示用領域へ関連付ける。
  * 変更ルール: 元状態の参照を返さない。通常生成では秘密情報を含めず、機密会話は結果公開で明示許可された本文だけを射影する。真の役職と発言別の心の声はincludeConfidential指定時だけpayload外のconfidential領域へ複製する。公開イベントpayloadの射影規則はbuildPublicEventSnapshotを正本とし、観戦リプレイ側で複製しない。通常生成・回答フェーズ・AI代替の心の声は、登録イベントIDを正本として同じ関連付け規則で扱う。
  */
-define("js/public/publicSnapshot", ["require", "exports", "js/config/constants", "js/domain/events/eventStore", "js/domain/memory/memoryLedger", "js/domain/game/playerStatus"], function (require, exports, constants_js_33, eventStore_js_5, memoryLedger_js_5, playerStatus_js_6) {
+define("js/public/publicSnapshot", ["require", "exports", "js/config/constants", "js/domain/events/eventStore", "js/domain/memory/memoryLedger", "js/domain/game/playerStatus"], function (require, exports, constants_js_33, eventStore_js_5, memoryLedger_js_5, playerStatus_js_8) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildPublicEventSnapshot = buildPublicEventSnapshot;
@@ -20483,7 +21135,7 @@ define("js/public/publicSnapshot", ["require", "exports", "js/config/constants",
     function publicPlayer(state, player) {
         const frozen = player.alive
             && !['result', 'ended'].includes(state.game.phase)
-            && (0, playerStatus_js_6.isFrozenOnDay)(state, player.id, state.game.day);
+            && (0, playerStatus_js_8.isFrozenOnDay)(state, player.id, state.game.day);
         return {
             id: player.id,
             name: player.name,
@@ -20669,7 +21321,10 @@ define("js/public/publicSnapshot", ["require", "exports", "js/config/constants",
                 actionType: claim.actionType,
                 targetId: claim.targetId,
                 result: claim.result,
-                observedDay: claim.observedDay,
+                actionDay: claim.actionDay,
+                actionPhase: claim.actionPhase,
+                availableDay: claim.availableDay,
+                availablePhase: claim.availablePhase,
                 announcedDay: claim.announcedDay,
                 selectionBasis: claim.selectionBasis,
                 evidenceEventIds: [...(claim.evidenceEventIds ?? [])],
@@ -20823,11 +21478,11 @@ define("js/domain/claims/publicClaimCommitPolicy", ["require", "exports", "js/do
     }
     function normalizeAbilityClaim(state, playerId, claim, claimedRoleAfter) {
         const claimedRoleId = claim.claimedRoleId ?? claim.roleId ?? claimedRoleAfter;
-        const observedDay = Number(claim.observedDay ?? claim.resultDay ?? state.game.day);
+        const actionDay = Number(claim.actionDay);
         const targetId = claim.targetId ?? null;
         const forced = (0, publicAbilityClaimPolicy_js_17.resolvePublicAbilityClaimRequirements)(state, {
             roleId: claimedRoleId,
-            observedDay,
+            actionDay,
             targetId,
         });
         return {
@@ -20837,7 +21492,10 @@ define("js/domain/claims/publicClaimCommitPolicy", ["require", "exports", "js/do
             actionType: claim.actionType ?? (0, publicAbilityClaimPolicy_js_17.getPublicAbilityClaimDefinition)(claimedRoleId)?.actionType ?? null,
             targetId,
             result: claim.result,
-            observedDay,
+            actionDay,
+            actionPhase: String(claim.actionPhase ?? ''),
+            availableDay: Number(claim.availableDay),
+            availablePhase: String(claim.availablePhase ?? ''),
             selectionBasis: claimedRoleId === 'medium'
                 ? forced.selectionBasis
                 : String(claim.selectionBasis ?? ''),
@@ -20958,7 +21616,7 @@ define("js/config/generationTaskCategories", ["require", "exports", "js/config/p
  * 責務: ゲーム状態遷移で共有するコマンド結果、フェーズ更新、AIターン監査、判断・戦略・心の声更新、開始時知識固定を提供する。
  * 変更ルール: 共有の原子的更新だけを扱い、夜・議論・投票・結果・訂正の進行規則を追加しない。AI公開本文の保存契約を変更しない。AIターンの生成カテゴリは生成タスク正本と監査専用種別の明示対応だけから解決し、未知種別をnightActionへフォールバックしない。
  */
-define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/constants", "js/config/generationTaskCategories", "generated/buildInfo", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/shared/utils", "js/domain/game/decisionState", "js/domain/game/decisionTargetPolicy", "js/domain/game/factionStrategyState", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/roles/roleAttributes"], function (require, exports, constants_js_34, generationTaskCategories_js_1, buildInfo_js_4, standardRules_js_15, eventStore_js_6, utils_js_16, decisionState_js_11, decisionTargetPolicy_js_5, factionStrategyState_js_10, wolfPartnerDispositionPolicy_js_9, roleAttributes_js_20) {
+define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/constants", "js/config/generationTaskCategories", "generated/buildInfo", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/shared/utils", "js/domain/game/decisionState", "js/domain/game/decisionTargetPolicy", "js/domain/game/factionStrategyState", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/roles/roleAttributes"], function (require, exports, constants_js_34, generationTaskCategories_js_1, buildInfo_js_4, standardRules_js_15, eventStore_js_6, utils_js_17, decisionState_js_11, decisionTargetPolicy_js_5, factionStrategyState_js_10, wolfPartnerDispositionPolicy_js_9, roleAttributes_js_20) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.result = result;
@@ -21018,7 +21676,7 @@ define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/con
     }
     function setPhase(state, phase) {
         state.game.phase = phase;
-        state.game.phaseStartedAt = (0, utils_js_16.nowIso)();
+        state.game.phaseStartedAt = (0, utils_js_17.nowIso)();
     }
     function setHeartVoice(state, playerId, heartVoice, source = 'ai') {
         const player = (0, standardRules_js_15.getPlayer)(state, playerId);
@@ -21028,7 +21686,7 @@ define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/con
             player.heartVoiceHistory.push({ heartVoice: player.heartVoice, updatedAt: player.heartVoiceUpdatedAt, source });
         }
         player.heartVoice = String(heartVoice).trim();
-        player.heartVoiceUpdatedAt = (0, utils_js_16.nowIso)();
+        player.heartVoiceUpdatedAt = (0, utils_js_17.nowIso)();
     }
     function resolveDecisionUpdateForCommit(state, playerId, decisionUpdate, { taskType = 'speech', candidateIds = null, } = {}) {
         if (!decisionUpdate)
@@ -21149,7 +21807,7 @@ define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/con
         if (!player)
             return;
         player.factionStrategyState = (0, factionStrategyState_js_10.createFactionStrategyState)((0, roleAttributes_js_20.getFactionStrategyProfile)(state, player), update, {
-            updatedAt: (0, utils_js_16.nowIso)(),
+            updatedAt: (0, utils_js_17.nowIso)(),
             sourceAiTurnId,
         });
     }
@@ -21188,7 +21846,7 @@ define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/con
     }
     function recordAiTurn(state, payload) {
         const turn = {
-            id: (0, utils_js_16.createId)('ai-turn'),
+            id: (0, utils_js_17.createId)('ai-turn'),
             day: state.game.day,
             phase: state.game.phase,
             stateRevision: state.game.stateRevision ?? state.revision,
@@ -21237,7 +21895,7 @@ define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/con
             promptSpecVersion: constants_js_34.PROMPT_SPEC_VERSION,
             taskType: payload.taskType,
             playerId: payload.playerId,
-            timestamp: (0, utils_js_16.nowIso)(),
+            timestamp: (0, utils_js_17.nowIso)(),
             generationRun: cloneGenerationRun(payload.generationRun, payload),
         };
         state.aiTurns.push(turn);
@@ -21267,7 +21925,7 @@ define("js/domain/game/gameRuntimeShared", ["require", "exports", "js/config/con
  * 責務: 昼議論、通常発言、優先回答、発言順、再検討、公開CO・能力結果主張の原子的登録を実行する。
  * 変更ルール: 正常AI公開本文を変更せず、質問回答関係は保存済み構造化interactionだけで処理する。通常発言回数は議論方式を問わずspeechCountPerDayを上限とし、発言希望制はDONEまたは残回数0で次巡対象から外す。人間入力・AI入力はいずれも公開コマンド境界で許可キーを限定し、未知項目を黙って破棄しない。
  */
-define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/config/discussionAiTaskTypes", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/policies/publicAbilityClaimNarrative", "js/domain/discussion/discussionOpportunity", "js/domain/claims/publicClaimCommitPolicy", "js/domain/discussion/priorityAnswerPolicy", "js/domain/memory/memoryLedger", "js/domain/discussion/designatedDiscussionPolicy", "js/domain/discussion/freeDiscussionPolicy", "js/domain/game/playerStatus", "js/domain/game/gameRuntimeShared"], function (require, exports, discussionAiTaskTypes_js_17, standardRules_js_16, eventStore_js_7, utils_js_17, publicDerivation_js_3, publicAbilityClaimNarrative_js_2, discussionOpportunity_js_2, publicClaimCommitPolicy_js_1, priorityAnswerPolicy_js_3, memoryLedger_js_6, designatedDiscussionPolicy_js_1, freeDiscussionPolicy_js_2, playerStatus_js_7, gameRuntimeShared_js_1) {
+define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/config/discussionAiTaskTypes", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/policies/publicAbilityClaimNarrative", "js/domain/discussion/discussionOpportunity", "js/domain/claims/publicClaimCommitPolicy", "js/domain/discussion/priorityAnswerPolicy", "js/domain/memory/memoryLedger", "js/domain/discussion/designatedDiscussionPolicy", "js/domain/discussion/freeDiscussionPolicy", "js/domain/game/playerStatus", "js/domain/game/gameRuntimeShared"], function (require, exports, discussionAiTaskTypes_js_18, standardRules_js_16, eventStore_js_7, utils_js_18, publicDerivation_js_3, publicAbilityClaimNarrative_js_2, discussionOpportunity_js_2, publicClaimCommitPolicy_js_1, priorityAnswerPolicy_js_3, memoryLedger_js_6, designatedDiscussionPolicy_js_1, freeDiscussionPolicy_js_2, playerStatus_js_9, gameRuntimeShared_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.initializeDiscussion = initializeDiscussion;
@@ -21298,7 +21956,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
     function initializeDiscussion(state) {
         // 日付更新規則: AI回答の永続判断状態は変更せず、利用側がsourceDayから現在盤面向けへ射影する。
         (0, gameRuntimeShared_js_1.setPhase)(state, 'discussion');
-        const aliveIds = (0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state);
+        const aliveIds = (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state);
         const mode = state.game.rules.discussion.mode;
         state.discussion = {
             day: state.game.day,
@@ -21335,7 +21993,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
     }
     function beginDiscussionRound(state, { playerIds, kind = 'normal' }) {
         const discussion = state.discussion;
-        const targets = (0, utils_js_17.unique)(playerIds ?? []);
+        const targets = (0, utils_js_18.unique)(playerIds ?? []);
         discussion.round = Number(discussion.round ?? 0) + 1;
         discussion.roundKind = kind;
         discussion.roundStartedAtSequence = Number(state.game.eventSequence ?? 0);
@@ -21349,14 +22007,14 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         discussion.completed = false;
     }
     function orderAlivePlayerIds(state, playerIds) {
-        const targetIds = new Set((0, utils_js_17.unique)(playerIds ?? []));
+        const targetIds = new Set((0, utils_js_18.unique)(playerIds ?? []));
         return (0, standardRules_js_16.getAlivePlayers)(state)
             .filter((player) => targetIds.has(player.id))
             .map((player) => player.id);
     }
     function orderedEligibleIds(state) {
         const discussion = state.discussion;
-        return (0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state).filter((id) => (discussion.remainingByPlayer[id] ?? 0) > 0);
+        return (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state).filter((id) => (discussion.remainingByPlayer[id] ?? 0) > 0);
     }
     function advanceOrderedDiscussion(state) {
         const discussion = state.discussion;
@@ -21383,7 +22041,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         if (discussion?.mode !== 'free' || discussion.modeControl?.type !== 'free' || discussion.modeControl.stage !== 'opening-preference')
             return null;
         const submitted = discussion.modeControl.openingPreferenceByPlayerId ?? {};
-        return (0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state).find((id) => !Object.hasOwn(submitted, id)) ?? null;
+        return (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state).find((id) => !Object.hasOwn(submitted, id)) ?? null;
     }
     function recordDiscussionOpeningPreference(state, { playerId, preference } = {}) {
         const guard = (0, gameRuntimeShared_js_1.commandGuard)(state, { phases: ['discussion'] });
@@ -21394,14 +22052,14 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
             return (0, gameRuntimeShared_js_1.result)(false, '発言希望制でのみ開始時の発言希望を登録できます。');
         if (discussion.modeControl.stage !== 'opening-preference')
             return (0, gameRuntimeShared_js_1.result)(false, '発言希望制の開始時希望受付は完了しています。');
-        if (!(0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state).includes(playerId))
+        if (!(0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state).includes(playerId))
             return (0, gameRuntimeShared_js_1.result)(false, '現在の昼議論参加者を指定してください。');
         if (Object.hasOwn(discussion.modeControl.openingPreferenceByPlayerId, playerId))
             return (0, gameRuntimeShared_js_1.result)(false, 'このプレイヤーの開始時希望は登録済みです。');
         discussion.modeControl.openingPreferenceByPlayerId[playerId] = (0, freeDiscussionPolicy_js_2.normalizeFreeDiscussionPreference)(preference, { opening: true });
         const pendingId = getPendingDiscussionOpeningPreferencePlayerId(state);
         if (!pendingId) {
-            const eligibleIds = (0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state);
+            const eligibleIds = (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state);
             discussion.queue = (0, freeDiscussionPolicy_js_2.buildFreeDiscussionQueue)(eligibleIds, discussion.modeControl.openingPreferenceByPlayerId, { opening: true });
             discussion.currentIndex = 0;
             discussion.designatedPlayerId = discussion.queue[0] ?? null;
@@ -21443,7 +22101,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
             discussion.designatedPlayerId = discussion.queue[discussion.currentIndex] ?? null;
             return;
         }
-        const eligible = (0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state).filter((id) => Number(discussion.remainingByPlayer[id] ?? 0) > 0);
+        const eligible = (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state).filter((id) => Number(discussion.remainingByPlayer[id] ?? 0) > 0);
         if (!eligible.length) {
             discussion.designatedPlayerId = null;
             discussion.completed = true;
@@ -21467,7 +22125,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
             discussion.designatedPlayerId = discussion.queue[discussion.currentIndex] ?? null;
             return;
         }
-        const eligible = (0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state).filter((id) => (discussion.remainingByPlayer[id] ?? 0) > 0 && !(0, freeDiscussionPolicy_js_2.isFreeDiscussionDone)(control, id));
+        const eligible = (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state).filter((id) => (discussion.remainingByPlayer[id] ?? 0) > 0 && !(0, freeDiscussionPolicy_js_2.isFreeDiscussionDone)(control, id));
         if (!eligible.length) {
             discussion.designatedPlayerId = null;
             discussion.completed = true;
@@ -21492,7 +22150,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         const player = (0, standardRules_js_16.getPlayer)(state, playerId);
         if (!player?.alive)
             return (0, gameRuntimeShared_js_1.result)(false, '生存者を指定してください。');
-        if (!(0, playerStatus_js_7.canSpeakDuringDay)(state, playerId))
+        if (!(0, playerStatus_js_9.canSpeakDuringDay)(state, playerId))
             return (0, gameRuntimeShared_js_1.result)(false, '凍結中のため昼会話には参加できません。');
         if (discussion.mode === 'free')
             return (0, gameRuntimeShared_js_1.result)(false, '発言希望制では発言者を直接指定できません。');
@@ -21570,7 +22228,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
             return interaction;
         return {
             ...interaction,
-            answersEventIds: (0, utils_js_17.unique)([...interaction.answersEventIds, ...requiredAnswerEventIds]),
+            answersEventIds: (0, utils_js_18.unique)([...interaction.answersEventIds, ...requiredAnswerEventIds]),
         };
     }
     function recordSkippedNormalSpeechAnswers(state, answerTasks, sourceType) {
@@ -21603,7 +22261,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         const speaker = (0, standardRules_js_16.getPlayer)(state, playerId);
         if (!speaker?.alive)
             return (0, gameRuntimeShared_js_1.result)(false, '死亡者は発言できません。');
-        if (!(0, playerStatus_js_7.canSpeakDuringDay)(state, playerId))
+        if (!(0, playerStatus_js_9.canSpeakDuringDay)(state, playerId))
             return (0, gameRuntimeShared_js_1.result)(false, '凍結中のため昼会話には参加できません。');
         const expectedId = discussion.mode === 'ordered'
             ? discussion.queue[discussion.currentIndex]
@@ -21622,8 +22280,8 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         if (discussion.mode === 'free' && nextSpeakerPreference !== null)
             return (0, gameRuntimeShared_js_1.result)(false, '発言希望制では指名制の次発言者希望を指定できません。');
         if (['ai', 'ai-fallback'].includes(sourceType)) {
-            const expectedTaskType = (0, discussionAiTaskTypes_js_17.speechTaskTypeForDiscussionMode)(discussion.mode);
-            if (!(0, discussionAiTaskTypes_js_17.isNormalSpeechTask)(aiTaskType) || aiTaskType !== expectedTaskType)
+            const expectedTaskType = (0, discussionAiTaskTypes_js_18.speechTaskTypeForDiscussionMode)(discussion.mode);
+            if (!(0, discussionAiTaskTypes_js_18.isNormalSpeechTask)(aiTaskType) || aiTaskType !== expectedTaskType)
                 return (0, gameRuntimeShared_js_1.result)(false, '現在の昼議論方式とAI発言タスク種別が一致しません。');
         }
         const aiLikeSource = ['ai', 'ai-fallback'].includes(sourceType);
@@ -21664,7 +22322,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         const committedSpeechInteraction = interactionValidation.interaction;
         if (state.game.rules.discussion.answerPriorityEnabled === true && committedSpeechInteraction.questionTargetIds.length === 1) {
             const targetId = committedSpeechInteraction.questionTargetIds[0];
-            if (!(0, playerStatus_js_7.canSpeakDuringDay)(state, targetId))
+            if (!(0, playerStatus_js_9.canSpeakDuringDay)(state, targetId))
                 return (0, gameRuntimeShared_js_1.result)(false, '回答優先モードでは、現在昼会話できない相手を個人質問先に指定できません。');
         }
         const committedDecisionUpdate = aiLikeSource
@@ -21800,7 +22458,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         const speaker = (0, standardRules_js_16.getPlayer)(state, playerId);
         if (!speaker?.alive)
             return (0, gameRuntimeShared_js_1.result)(false, '死亡者は回答できません。');
-        if (!(0, playerStatus_js_7.canSpeakDuringDay)(state, playerId))
+        if (!(0, playerStatus_js_9.canSpeakDuringDay)(state, playerId))
             return (0, gameRuntimeShared_js_1.result)(false, '凍結中のため昼会話には参加できません。');
         const submittedText = String(content ?? '');
         if (!submittedText.trim())
@@ -22037,7 +22695,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         if (!reconsideration?.pending)
             return (0, gameRuntimeShared_js_1.result)(false, '3巡目のCO後に追加発言が必要な対象者はいません。');
         const requested = playerIds?.length ? playerIds : reconsideration.affectedPlayerIds;
-        const eligibleIds = new Set((0, playerStatus_js_7.getDiscussionEligiblePlayerIds)(state));
+        const eligibleIds = new Set((0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state));
         // 保存済み状態や明示指定の並びに依存せず、現在発言できる人物だけを通常巡と同じ順へ正規化する。
         const targets = orderAlivePlayerIds(state, (requested ?? []).filter((id) => eligibleIds.has(id)));
         if (!targets.length)
@@ -22049,7 +22707,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
         reconsideration.pending = false;
         reconsideration.active = true;
         reconsideration.handledRound = discussion.round;
-        reconsideration.updatedAt = (0, utils_js_17.nowIso)();
+        reconsideration.updatedAt = (0, utils_js_18.nowIso)();
         return (0, gameRuntimeShared_js_1.result)(true, `${targets.length}人へCO再検討発言を1回ずつ許可しました。`, { playerIds: targets });
     }
     function skipPriorityAnswer(state, { questionEventId, reason } = {}) {
@@ -22094,7 +22752,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
  * 責務: 現在の状態から、人間GMが次に行うべき一つのタスクを導出する。
  * 変更ルール: 状態変更を行わず、局面判定に必要な状態参照はstate/selectors.jsと各domainの専用規則モジュールを正本とする。内部メモ整理推奨は通常フェーズを進める前の独立タスクとして一人ずつ返す。
  */
-define("js/domain/game/workflow", ["require", "exports", "js/config/constants", "js/config/discussionAiTaskTypes", "js/domain/discussion/discussionRuntime", "js/domain/result/resultImpressions", "js/state/selectors"], function (require, exports, constants_js_35, discussionAiTaskTypes_js_18, discussionRuntime_js_1, resultImpressions_js_2, selectors_js_1) {
+define("js/domain/game/workflow", ["require", "exports", "js/config/constants", "js/config/discussionAiTaskTypes", "js/domain/discussion/discussionRuntime", "js/domain/result/resultImpressions", "js/state/selectors"], function (require, exports, constants_js_35, discussionAiTaskTypes_js_19, discussionRuntime_js_1, resultImpressions_js_2, selectors_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getCurrentGmTask = getCurrentGmTask;
@@ -22182,7 +22840,7 @@ define("js/domain/game/workflow", ["require", "exports", "js/config/constants", 
                     return task('unknown', { label: '発言希望制の発言キューを確認してください' });
                 return task('discussion-designate');
             }
-            return task((0, discussionAiTaskTypes_js_18.speechTaskTypeForDiscussionMode)(state.discussion.mode), { playerId: player.id });
+            return task((0, discussionAiTaskTypes_js_19.speechTaskTypeForDiscussionMode)(state.discussion.mode), { playerId: player.id });
         }
         if (phase === 'vote' || phase === 'runoff') {
             if (state.voteSession?.status === 'input') {
@@ -22221,28 +22879,28 @@ define("js/domain/game/workflow", ["require", "exports", "js/config/constants", 
  * 責務: 各画面で共有する選択肢、役職表示、プレイヤー表示などの純粋HTML部品を生成する。
  * 変更ルール: 状態更新・イベント登録・ゲーム規則判定を行わない。
  */
-define("js/ui/components/components", ["require", "exports", "js/config/constants", "js/shared/utils"], function (require, exports, constants_js_36, utils_js_18) {
+define("js/ui/components/components", ["require", "exports", "js/config/constants", "js/shared/utils"], function (require, exports, constants_js_36, utils_js_19) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.option = option;
     exports.roleOptions = roleOptions;
     exports.playerOptions = playerOptions;
     function option(value, label, current, disabled = false) {
-        return `<option value="${(0, utils_js_18.escapeHtml)(value)}"${(0, utils_js_18.selected)(current, value)}${disabled ? ' disabled' : ''}>${(0, utils_js_18.escapeHtml)(label)}</option>`;
+        return `<option value="${(0, utils_js_19.escapeHtml)(value)}"${(0, utils_js_19.selected)(current, value)}${disabled ? ' disabled' : ''}>${(0, utils_js_19.escapeHtml)(label)}</option>`;
     }
     function roleOptions(current) {
         return constants_js_36.ROLE_IDS.map((id) => option(id, constants_js_36.ROLE_DEFINITIONS[id].name, current)).join('');
     }
     function playerOptions(players, current = '', placeholder = '選択してください', { allowAbstain = false } = {}) {
         const abstain = allowAbstain ? option('abstain', '棄権', current) : '';
-        return `<option value="">${(0, utils_js_18.escapeHtml)(placeholder)}</option>${abstain}${players.map((player) => option(player.id, player.name, current)).join('')}`;
+        return `<option value="">${(0, utils_js_19.escapeHtml)(placeholder)}</option>${abstain}${players.map((player) => option(player.id, player.name, current)).join('')}`;
     }
 });
 /**
  * 責務: ゲーム準備画面の参加者1行とキャラクターカード選択肢のHTML生成を所有する。
  * 変更ルール: 状態更新やDOM局所同期を行わず、受け取った参加者状態だけをエスケープして描画する。準備画面の局所更新契約で使用するdata-player-field / data-player-id / data-character-card属性は本ファイルを正本とする。
  */
-define("js/ui/views/setup/setupPlayerRowView", ["require", "exports", "js/characters/catalog/characterCatalog", "js/domain/policies/playerIdentityPolicy", "js/shared/utils", "js/ui/components/components"], function (require, exports, characterCatalog_js_5, playerIdentityPolicy_js_3, utils_js_19, components_js_1) {
+define("js/ui/views/setup/setupPlayerRowView", ["require", "exports", "js/characters/catalog/characterCatalog", "js/domain/policies/playerIdentityPolicy", "js/shared/utils", "js/ui/components/components"], function (require, exports, characterCatalog_js_5, playerIdentityPolicy_js_3, utils_js_20, components_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.characterCardOptions = characterCardOptions;
@@ -22261,19 +22919,19 @@ define("js/ui/views/setup/setupPlayerRowView", ["require", "exports", "js/charac
                 const unavailable = assignedToOthers.has(card.id) || (!group.enabled && card.id !== player.characterCardId);
                 const disabled = unavailable ? ' disabled' : '';
                 const suffix = group.enabled ? '' : '（使用停止中）';
-                return `<option value="${(0, utils_js_19.escapeHtml)(card.id)}"${(0, utils_js_19.selected)(player.characterCardId, card.id)}${disabled}>${(0, utils_js_19.escapeHtml)(card.name)}${suffix}</option>`;
+                return `<option value="${(0, utils_js_20.escapeHtml)(card.id)}"${(0, utils_js_20.selected)(player.characterCardId, card.id)}${disabled}>${(0, utils_js_20.escapeHtml)(card.name)}${suffix}</option>`;
             }).join('');
             const groupSuffix = group.enabled ? '' : '（使用停止中）';
-            return `<optgroup label="${(0, utils_js_19.escapeHtml)(group.name)}${groupSuffix}">${options}</optgroup>`;
+            return `<optgroup label="${(0, utils_js_20.escapeHtml)(group.name)}${groupSuffix}">${options}</optgroup>`;
         }).join('');
         const missingCurrent = player.characterCardId && !characterCatalog_js_5.CHARACTER_CARD_BY_ID.has(player.characterCardId)
-            ? `<option value="${(0, utils_js_19.escapeHtml)(player.characterCardId)}" selected disabled>削除済みカード（現在の設定を保持）</option>`
+            ? `<option value="${(0, utils_js_20.escapeHtml)(player.characterCardId)}" selected disabled>削除済みカード（現在の設定を保持）</option>`
             : '';
-        return `<option value=""${(0, utils_js_19.selected)(player.characterCardId, null)}>手動設定</option>${missingCurrent}${groups}`;
+        return `<option value=""${(0, utils_js_20.selected)(player.characterCardId, null)}>手動設定</option>${missingCurrent}${groups}`;
     }
     function renderSetupPlayerRow({ players, player, index, locked }) {
-        const playerId = (0, utils_js_19.escapeHtml)(player.id);
-        const playerName = (0, utils_js_19.escapeHtml)(player.name);
+        const playerId = (0, utils_js_20.escapeHtml)(player.id);
+        const playerName = (0, utils_js_20.escapeHtml)(player.name);
         const disabled = locked ? 'disabled' : '';
         return `<div class="player-editor">
     <span class="player-number">${index + 1}</span>
@@ -22293,7 +22951,7 @@ define("js/ui/views/setup/setupPlayerRowView", ["require", "exports", "js/charac
  * 責務: ゲーム準備画面のHTML生成と、入力変更後に必要な派生表示だけをDOM上で局所同期する。
  * 変更ルール: 状態更新・配役検証・ゲーム開始処理・ゲームデータ転送を行わず、渡された検証結果と状態だけを描画する。ゲームデータ読込／出力と新しいゲームはゲーム準備ヘッダーの同一操作領域へ集約する。参加者1行のHTMLはsetupPlayerRowView.jsを正本とし、入力中DOMを維持するため局所同期ではページ全体や参加者一覧全体を置換しない。
  */
-define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/setup/playerCountPolicy", "js/domain/roles/roleAttributes", "js/ui/components/components", "js/ui/views/setup/setupPlayerRowView"], function (require, exports, constants_js_37, utils_js_20, playerCountPolicy_js_2, roleAttributes_js_21, components_js_2, setupPlayerRowView_js_1) {
+define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/setup/playerCountPolicy", "js/domain/roles/roleAttributes", "js/ui/components/components", "js/ui/views/setup/setupPlayerRowView"], function (require, exports, constants_js_37, utils_js_21, playerCountPolicy_js_2, roleAttributes_js_21, components_js_2, setupPlayerRowView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.refreshSetupViewDom = refreshSetupViewDom;
@@ -22308,13 +22966,13 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
         if (inactive)
             classes.push('is-inactive');
         const status = inactiveLabel
-            ? `<small data-setup-inactive-label${inactive ? '' : ' hidden'}>${(0, utils_js_20.escapeHtml)(inactiveLabel)}未選択</small>`
+            ? `<small data-setup-inactive-label${inactive ? '' : ' hidden'}>${(0, utils_js_21.escapeHtml)(inactiveLabel)}未選択</small>`
             : '';
-        const keyAttribute = key ? ` data-setup-rule-category="${(0, utils_js_20.escapeHtml)(key)}"` : '';
-        return `<fieldset class="${classes.join(' ')}"${keyAttribute}><legend><span>${(0, utils_js_20.escapeHtml)(title)}</span>${status}</legend><div class="form-grid">${content}</div></fieldset>`;
+        const keyAttribute = key ? ` data-setup-rule-category="${(0, utils_js_21.escapeHtml)(key)}"` : '';
+        return `<fieldset class="${classes.join(' ')}"${keyAttribute}><legend><span>${(0, utils_js_21.escapeHtml)(title)}</span>${status}</legend><div class="form-grid">${content}</div></fieldset>`;
     }
     function renderSetupValidation(validation, locked) {
-        return `${validation.errors.map((item) => `<div class="validation error">× ${(0, utils_js_20.escapeHtml)(item)}</div>`).join('')}${validation.warnings.map((item) => `<div class="validation warning">! ${(0, utils_js_20.escapeHtml)(item)}</div>`).join('')}${validation.ok ? '<div class="validation success">✓ 開始可能な構成です。</div>' : ''}${!locked ? `<button class="button primary wide" data-action="start-game" ${validation.ok ? '' : 'disabled'} type="button">配役を確定してゲーム開始</button>` : '<button class="button primary wide" data-action="go-workbench" type="button">進行卓へ戻る</button>'}`;
+        return `${validation.errors.map((item) => `<div class="validation error">× ${(0, utils_js_21.escapeHtml)(item)}</div>`).join('')}${validation.warnings.map((item) => `<div class="validation warning">! ${(0, utils_js_21.escapeHtml)(item)}</div>`).join('')}${validation.ok ? '<div class="validation success">✓ 開始可能な構成です。</div>' : ''}${!locked ? `<button class="button primary wide" data-action="start-game" ${validation.ok ? '' : 'disabled'} type="button">配役を確定してゲーム開始</button>` : '<button class="button primary wide" data-action="go-workbench" type="button">進行卓へ戻る</button>'}`;
     }
     function ruleValue(rules, path) {
         if (path === 'wolfCommunication.mode') {
@@ -22430,12 +23088,12 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
     ${locked ? '<div class="alert warning">ゲーム開始後の配役・主要ルールは固定されています。</div>' : ''}
     <div class="setup-layout">
       <div class="panel"><h3>基本設定</h3><div class="form-grid">
-        <label class="field full"><span>ゲーム名</span><input data-setup="title" value="${(0, utils_js_20.escapeHtml)(state.game.title)}" ${locked ? 'disabled' : ''}></label>
+        <label class="field full"><span>ゲーム名</span><input data-setup="title" value="${(0, utils_js_21.escapeHtml)(state.game.title)}" ${locked ? 'disabled' : ''}></label>
         <label class="field"><span>参加人数</span><select data-setup="player-count" ${locked ? 'disabled' : ''}>${constants_js_37.SUPPORTED_PLAYER_COUNTS.map((count) => (0, components_js_2.option)(String(count), `${count}人`, String(state.players.length))).join('')}</select></label>
         <div class="field"><span>推奨配役</span><button class="button" data-action="apply-preset" ${locked ? 'disabled' : ''} type="button">${state.players.length}人プリセットを適用</button></div>
-      </div><p class="help">${(0, utils_js_20.escapeHtml)((0, playerCountPolicy_js_2.getPresetNoteForPlayerCount)(state.players.length))}</p></div>
+      </div><p class="help">${(0, utils_js_21.escapeHtml)((0, playerCountPolicy_js_2.getPresetNoteForPlayerCount)(state.players.length))}</p></div>
 
-      <div class="panel"><div class="panel-title-row setup-player-title"><div><h3>参加者・キャラクター・配役</h3><span data-setup-role-summary>${(0, utils_js_20.escapeHtml)(roleSummaryText)}</span></div>${!locked ? '<div class="setup-random-actions"><button class="button ghost" data-action="randomize-characters" type="button">キャラクターをランダム配置</button><button class="button ghost" data-action="shuffle-roles" type="button">役職をランダム配置</button><button class="button ghost" data-action="shuffle-player-order" type="button">並び順をシャッフル</button></div>' : ''}</div><div class="player-editor-list"><div class="player-editor player-editor-head" aria-hidden="true"><span>順番</span><span>キャラクターカード</span><span>表示名</span><span>担当</span><span>役職</span><span>並び順</span><span>詳細</span></div>${state.players.map((player, index) => (0, setupPlayerRowView_js_1.renderSetupPlayerRow)({ players: state.players, player, index, locked })).join('')}</div></div>
+      <div class="panel"><div class="panel-title-row setup-player-title"><div><h3>参加者・キャラクター・配役</h3><span data-setup-role-summary>${(0, utils_js_21.escapeHtml)(roleSummaryText)}</span></div>${!locked ? '<div class="setup-random-actions"><button class="button ghost" data-action="randomize-characters" type="button">キャラクターをランダム配置</button><button class="button ghost" data-action="shuffle-roles" type="button">役職をランダム配置</button><button class="button ghost" data-action="shuffle-player-order" type="button">並び順をシャッフル</button></div>' : ''}</div><div class="player-editor-list"><div class="player-editor player-editor-head" aria-hidden="true"><span>順番</span><span>キャラクターカード</span><span>表示名</span><span>担当</span><span>役職</span><span>並び順</span><span>詳細</span></div>${state.players.map((player, index) => (0, setupPlayerRowView_js_1.renderSetupPlayerRow)({ players: state.players, player, index, locked })).join('')}</div></div>
 
       <div class="panel"><h3>主要ルール</h3><div class="rule-category-list">
         ${renderRuleCategory({
@@ -22443,8 +23101,8 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             wide: true,
             content: `
             <div class="setup-rule-check-grid full">
-              <label class="check-row"><input type="checkbox" data-rule="roleAssignment.shuffleOnStart" ${(0, utils_js_20.checked)(rules.roleAssignment.shuffleOnStart === true)} ${disabledAttr(locked)}>ゲーム開始時に役職をシャッフルする</label>
-              <label class="check-row"><input type="checkbox" data-rule="roleAssignment.roleMissingEnabled" ${(0, utils_js_20.checked)(rules.roleAssignment.roleMissingEnabled === true)} ${disabledAttr(locked)}>役職欠けあり</label>
+              <label class="check-row"><input type="checkbox" data-rule="roleAssignment.shuffleOnStart" ${(0, utils_js_21.checked)(rules.roleAssignment.shuffleOnStart === true)} ${disabledAttr(locked)}>ゲーム開始時に役職をシャッフルする</label>
+              <label class="check-row"><input type="checkbox" data-rule="roleAssignment.roleMissingEnabled" ${(0, utils_js_21.checked)(rules.roleAssignment.roleMissingEnabled === true)} ${disabledAttr(locked)}>役職欠けあり</label>
             </div>
           `,
         })}
@@ -22455,10 +23113,10 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             <label class="field"><span>1日あたり発言回数</span><input type="number" min="1" max="10" data-rule="speechCountPerDay" value="${rules.speechCountPerDay}" ${disabledAttr(locked)}></label>
             <label class="field"><span>昼議論方式</span><select data-rule="discussion.mode" ${disabledAttr(locked)}>${(0, components_js_2.option)('ordered', '順番制', rules.discussion.mode)}${(0, components_js_2.option)('designated', '指名制', rules.discussion.mode)}${(0, components_js_2.option)('free', '発言希望制', rules.discussion.mode)}</select></label>
             <div class="setup-rule-check-help-item">
-              <label class="check-row"><input type="checkbox" data-rule="discussion.answerPriorityEnabled" ${(0, utils_js_20.checked)(rules.discussion.answerPriorityEnabled === true)} ${disabledAttr(locked)}>回答優先モード</label>
+              <label class="check-row"><input type="checkbox" data-rule="discussion.answerPriorityEnabled" ${(0, utils_js_21.checked)(rules.discussion.answerPriorityEnabled === true)} ${disabledAttr(locked)}>回答優先モード</label>
               <p class="help">指名質問では対象者の回答を優先し、通常発言数は消費しません。</p>
             </div>
-            <label class="check-row setup-rule-check-top"><input type="checkbox" data-rule="callNames.enabled" ${(0, utils_js_20.checked)(rules.callNames?.enabled !== false)} ${disabledAttr(locked)}>相手別呼称を使用する</label>
+            <label class="check-row setup-rule-check-top"><input type="checkbox" data-rule="callNames.enabled" ${(0, utils_js_21.checked)(rules.callNames?.enabled !== false)} ${disabledAttr(locked)}>相手別呼称を使用する</label>
           `,
         })}
         ${renderRuleCategory({
@@ -22470,10 +23128,10 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             <label class="field"><span>決選投票上限</span><input type="number" min="0" max="5" data-rule="vote.runoffLimit" value="${rules.vote.runoffLimit}" ${disabledAttr(locked)}></label>
             <label class="field"><span>決選投票上限後の同票処理</span><select data-rule="vote.tieResolution" ${disabledAttr(locked)}>${(0, components_js_2.option)('random-execution', 'ランダム吊り', rules.vote.tieResolution)}${(0, components_js_2.option)('no-execution', '吊りなし', rules.vote.tieResolution)}</select></label>
             <div class="setup-rule-check-grid full">
-              <label class="check-row"><input type="checkbox" data-rule="vote.selfVoteAllowed" ${(0, utils_js_20.checked)(rules.vote.selfVoteAllowed)} ${disabledAttr(locked)}>自己投票を許可</label>
-              <label class="check-row"><input type="checkbox" data-rule="vote.abstentionAllowed" ${(0, utils_js_20.checked)(rules.vote.abstentionAllowed)} ${disabledAttr(locked)}>棄権を許可</label>
-              <label class="check-row"><input type="checkbox" data-rule="vote.revealExecutedRole" ${(0, utils_js_20.checked)(rules.vote.revealExecutedRole)} ${disabledAttr(locked)}>処刑者の役職を公開</label>
-              <label class="check-row"><input type="checkbox" data-rule="testament.enabled" ${(0, utils_js_20.checked)(rules.testament?.enabled === true)} ${disabledAttr(locked)}>遺言を有効にする</label>
+              <label class="check-row"><input type="checkbox" data-rule="vote.selfVoteAllowed" ${(0, utils_js_21.checked)(rules.vote.selfVoteAllowed)} ${disabledAttr(locked)}>自己投票を許可</label>
+              <label class="check-row"><input type="checkbox" data-rule="vote.abstentionAllowed" ${(0, utils_js_21.checked)(rules.vote.abstentionAllowed)} ${disabledAttr(locked)}>棄権を許可</label>
+              <label class="check-row"><input type="checkbox" data-rule="vote.revealExecutedRole" ${(0, utils_js_21.checked)(rules.vote.revealExecutedRole)} ${disabledAttr(locked)}>処刑者の役職を公開</label>
+              <label class="check-row"><input type="checkbox" data-rule="testament.enabled" ${(0, utils_js_21.checked)(rules.testament?.enabled === true)} ${disabledAttr(locked)}>遺言を有効にする</label>
               <p class="help setup-rule-check-help">処刑対象の確定後、死亡処理前に1回だけ公開発言できます。</p>
             </div>
           `,
@@ -22485,7 +23143,7 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             inactiveLabel: '占い師',
             content: `
             <label class="field"><span>初日占い</span><select data-rule="firstNight.seerMode" ${disabledAttr(locked, !hasSeer)}>${(0, components_js_2.option)('choose', '対象を選ぶ', rules.firstNight.seerMode)}${(0, components_js_2.option)('random-non-wolf', 'ランダム白', rules.firstNight.seerMode)}${(0, components_js_2.option)('disabled', 'なし', rules.firstNight.seerMode)}</select></label>
-            <label class="check-row setup-rule-control-align"><input type="checkbox" data-rule="nightResolution.deliverPrivateResultToDeadPlayer" ${(0, utils_js_20.checked)(rules.nightResolution.deliverPrivateResultToDeadPlayer)} ${disabledAttr(locked, !hasSeer)}>同夜に死亡した占い師にも結果を通知</label>
+            <label class="check-row setup-rule-control-align"><input type="checkbox" data-rule="nightResolution.deliverPrivateResultToDeadPlayer" ${(0, utils_js_21.checked)(rules.nightResolution.deliverPrivateResultToDeadPlayer)} ${disabledAttr(locked, !hasSeer)}>同夜に死亡した占い師にも結果を通知</label>
           `,
         })}
         ${renderRuleCategory({
@@ -22494,9 +23152,9 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             inactive: !hasGuard,
             inactiveLabel: '狩人',
             content: `
-            <label class="check-row"><input type="checkbox" data-rule="guard.selfGuardAllowed" ${(0, utils_js_20.checked)(rules.guard.selfGuardAllowed)} ${disabledAttr(locked, !hasGuard)}>自己護衛可</label>
-            <label class="check-row"><input type="checkbox" data-rule="guard.consecutiveGuardAllowed" ${(0, utils_js_20.checked)(rules.guard.consecutiveGuardAllowed)} ${disabledAttr(locked, !hasGuard)}>連続護衛可</label>
-            <label class="check-row"><input type="checkbox" data-rule="firstNight.guardEnabled" ${(0, utils_js_20.checked)(rules.firstNight.guardEnabled)} ${disabledAttr(locked, !hasGuard)}>初日護衛あり</label>
+            <label class="check-row"><input type="checkbox" data-rule="guard.selfGuardAllowed" ${(0, utils_js_21.checked)(rules.guard.selfGuardAllowed)} ${disabledAttr(locked, !hasGuard)}>自己護衛可</label>
+            <label class="check-row"><input type="checkbox" data-rule="guard.consecutiveGuardAllowed" ${(0, utils_js_21.checked)(rules.guard.consecutiveGuardAllowed)} ${disabledAttr(locked, !hasGuard)}>連続護衛可</label>
+            <label class="check-row"><input type="checkbox" data-rule="firstNight.guardEnabled" ${(0, utils_js_21.checked)(rules.firstNight.guardEnabled)} ${disabledAttr(locked, !hasGuard)}>初日護衛あり</label>
           `,
         })}
         ${renderRuleCategory({
@@ -22505,7 +23163,7 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             inactive: !hasMason,
             inactiveLabel: '共有者',
             content: `
-            <label class="check-row"><input type="checkbox" data-rule="masonCommunication.enabled" ${(0, utils_js_20.checked)(rules.masonCommunication.enabled)} ${disabledAttr(locked, !hasMason)}>共有者共有会話を有効にする</label>
+            <label class="check-row"><input type="checkbox" data-rule="masonCommunication.enabled" ${(0, utils_js_21.checked)(rules.masonCommunication.enabled)} ${disabledAttr(locked, !hasMason)}>共有者共有会話を有効にする</label>
             <label class="field"><span>共有者共有会話・1人あたり発言回数</span><input type="number" min="1" max="10" data-rule="masonCommunication.speechCountPerNight" value="${rules.masonCommunication.speechCountPerNight}" ${disabledAttr(locked, !hasMason, !rules.masonCommunication.enabled)}></label>
           `,
         })}
@@ -22516,9 +23174,9 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             inactive: !hasWolf,
             inactiveLabel: '人狼',
             content: `
-            <label class="check-row"><input type="checkbox" data-rule="firstNight.wolfAttackEnabled" ${(0, utils_js_20.checked)(rules.firstNight.wolfAttackEnabled)} ${disabledAttr(locked, !hasWolf)}>初日襲撃あり</label>
+            <label class="check-row"><input type="checkbox" data-rule="firstNight.wolfAttackEnabled" ${(0, utils_js_21.checked)(rules.firstNight.wolfAttackEnabled)} ${disabledAttr(locked, !hasWolf)}>初日襲撃あり</label>
             <label class="field"><span>人狼共有会話</span><select data-rule="wolfCommunication.mode" ${disabledAttr(locked, !hasWolf)}>${(0, components_js_2.option)('none', 'なし', wolfConversationMode)}${(0, components_js_2.option)('wolves-only', '人狼のみ', wolfConversationMode)}${(0, components_js_2.option)('wolves-and-madman', '人狼＋狂人（特殊）', wolfConversationMode)}</select></label>
-            <label class="check-row"><input type="checkbox" data-rule="firstNight.wolfCommunicationEnabled" ${(0, utils_js_20.checked)(rules.firstNight.wolfCommunicationEnabled)} ${disabledAttr(locked, !hasWolf, !rules.wolfCommunication.enabled)}>初日人狼会話あり</label>
+            <label class="check-row"><input type="checkbox" data-rule="firstNight.wolfCommunicationEnabled" ${(0, utils_js_21.checked)(rules.firstNight.wolfCommunicationEnabled)} ${disabledAttr(locked, !hasWolf, !rules.wolfCommunication.enabled)}>初日人狼会話あり</label>
             <label class="field"><span>人狼共有会話・1人あたり発言回数</span><input type="number" min="1" max="10" data-rule="wolfCommunication.speechCountPerNight" value="${rules.wolfCommunication.speechCountPerNight}" ${disabledAttr(locked, !hasWolf, !rules.wolfCommunication.enabled)}></label>
           `,
         })}
@@ -22526,7 +23184,7 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
             title: '墓場',
             wide: true,
             content: `
-            <label class="check-row"><input type="checkbox" data-rule="graveyardCommunication.enabled" ${(0, utils_js_20.checked)(rules.graveyardCommunication?.enabled === true)} ${disabledAttr(locked)}>墓場会話を有効にする</label>
+            <label class="check-row"><input type="checkbox" data-rule="graveyardCommunication.enabled" ${(0, utils_js_21.checked)(rules.graveyardCommunication?.enabled === true)} ${disabledAttr(locked)}>墓場会話を有効にする</label>
             <label class="field"><span>墓場会話・1人あたり発言回数</span><input type="number" min="1" max="10" data-rule="graveyardCommunication.speechCountPerNight" value="${rules.graveyardCommunication?.speechCountPerNight ?? 1}" ${disabledAttr(locked, !rules.graveyardCommunication?.enabled)}></label>
             <p class="help">各夜の開始時点ですでに死亡している2人以上で会話します。過去の墓場会話は継承されますが、死亡後の地上情報は自動共有されません。</p>
           `,
@@ -22543,7 +23201,7 @@ define("js/ui/views/setup/setupView", ["require", "exports", "js/config/constant
  * 責務: ゲーム準備の詳細設定とキャラクター管理で共用する、キャラクタープロフィール編集項目のHTMLを生成する。
  * 変更ルール: 項目名・入力形式・補足説明は両画面で共通化し、保存処理・状態更新・キャラクター固有値は持たない。キャラクター名以外のプロフィール項目は任意入力とし、未入力をUI検証で拒否しない。文字数上限は共有characterTextPolicyだけを正本とする。基本語尾・避ける表現は各1行を占有し、入力欄も行幅いっぱいにして短文項目を横並びへ戻さない。
  */
-define("js/ui/views/characters/characterProfileFormView", ["require", "exports", "js/config/constants", "js/characters/config/characterTextPolicyAdapter", "js/domain/policies/publicSpeechLengthPolicy", "js/shared/utils", "js/ui/components/components"], function (require, exports, constants_js_38, characterTextPolicyAdapter_js_3, publicSpeechLengthPolicy_js_5, utils_js_21, components_js_3) {
+define("js/ui/views/characters/characterProfileFormView", ["require", "exports", "js/config/constants", "js/characters/config/characterTextPolicyAdapter", "js/domain/policies/publicSpeechLengthPolicy", "js/shared/utils", "js/ui/components/components"], function (require, exports, constants_js_38, characterTextPolicyAdapter_js_3, publicSpeechLengthPolicy_js_5, utils_js_22, components_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderCharacterProfileSections = renderCharacterProfileSections;
@@ -22572,7 +23230,7 @@ define("js/ui/views/characters/characterProfileFormView", ["require", "exports",
     <div class="form-grid">
       <label class="field full">
         <span>${limitLabel('性格・人物設定', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.profile)}</span>
-        <textarea name="profile" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.profile}"${readonlyAttribute}>${(0, utils_js_21.escapeHtml)(character.profile ?? '')}</textarea>
+        <textarea name="profile" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.profile}"${readonlyAttribute}>${(0, utils_js_22.escapeHtml)(character.profile ?? '')}</textarea>
         <small>${profileHelp}</small>
       </label>
     </div>
@@ -22583,28 +23241,28 @@ define("js/ui/views/characters/characterProfileFormView", ["require", "exports",
     <div class="form-grid">
       <label class="field">
         <span>${limitLabel('一人称', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.firstPerson)}</span>
-        <input name="firstPerson" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.firstPerson}" value="${(0, utils_js_21.escapeHtml)(character.firstPerson ?? '')}"${readonlyAttribute}>
+        <input name="firstPerson" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.firstPerson}" value="${(0, utils_js_22.escapeHtml)(character.firstPerson ?? '')}"${readonlyAttribute}>
       </label>
 
       <label class="field">
         <span>${limitLabel('汎用二人称', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.genericSecondPerson)}</span>
-        <input name="genericSecondPerson" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.genericSecondPerson}" value="${(0, utils_js_21.escapeHtml)(character.genericSecondPerson ?? '')}"${readonlyAttribute}>
+        <input name="genericSecondPerson" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.genericSecondPerson}" value="${(0, utils_js_22.escapeHtml)(character.genericSecondPerson ?? '')}"${readonlyAttribute}>
       </label>
 
       <label class="field full">
         <span>${limitLabel('話し方の特徴', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.speakingStyle)}</span>
-        <textarea name="speakingStyle" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.speakingStyle}"${readonlyAttribute}>${(0, utils_js_21.escapeHtml)(character.speakingStyle ?? '')}</textarea>
+        <textarea name="speakingStyle" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.speakingStyle}"${readonlyAttribute}>${(0, utils_js_22.escapeHtml)(character.speakingStyle ?? '')}</textarea>
         <small>口調、テンポ、感情表現、方言、属性口調などを指定します。</small>
       </label>
 
       <label class="field full character-standard-text-field">
         <span>${limitLabel('基本語尾', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.defaultEndings)}</span>
-        <input name="defaultEndings" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.defaultEndings}" value="${(0, utils_js_21.escapeHtml)(character.defaultEndings ?? '')}"${readonlyAttribute}>
+        <input name="defaultEndings" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.defaultEndings}" value="${(0, utils_js_22.escapeHtml)(character.defaultEndings ?? '')}"${readonlyAttribute}>
       </label>
 
       <label class="field full character-standard-text-field">
         <span>${limitLabel('避ける表現', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.avoidedExpressions)}</span>
-        <input name="avoidedExpressions" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.avoidedExpressions}" value="${(0, utils_js_21.escapeHtml)(character.avoidedExpressions ?? '')}"${readonlyAttribute}>
+        <input name="avoidedExpressions" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.avoidedExpressions}" value="${(0, utils_js_22.escapeHtml)(character.avoidedExpressions ?? '')}"${readonlyAttribute}>
       </label>
 
       <label class="field">
@@ -22614,7 +23272,7 @@ define("js/ui/views/characters/characterProfileFormView", ["require", "exports",
 
       <label class="field full">
         <span>${limitLabel('口調例', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.speechExamples)}</span>
-        <textarea name="speechExamples" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.speechExamples}"${readonlyAttribute}>${(0, utils_js_21.escapeHtml)(character.speechExamples ?? '')}</textarea>
+        <textarea name="speechExamples" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.speechExamples}"${readonlyAttribute}>${(0, utils_js_22.escapeHtml)(character.speechExamples ?? '')}</textarea>
         <small>一行に一例を入力します。題材や結論ではなく、文体・語彙・テンポの例を入力してください。</small>
       </label>
     </div>
@@ -22655,7 +23313,7 @@ define("js/ui/views/characters/characterProfileFormView", ["require", "exports",
 
       <label class="field full">
         <span>${limitLabel('議論での振る舞い補足', characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.discussionBehavior)}</span>
-        <textarea name="discussionBehavior" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.discussionBehavior}"${readonlyAttribute}>${(0, utils_js_21.escapeHtml)(character.discussionBehavior ?? '')}</textarea>
+        <textarea name="discussionBehavior" maxlength="${characterTextPolicyAdapter_js_3.CHARACTER_TEXT_LIMITS.discussionBehavior}"${readonlyAttribute}>${(0, utils_js_22.escapeHtml)(character.discussionBehavior ?? '')}</textarea>
         <small>質問・仲裁・説得など、そのキャラクターらしい議論の仕方を補足します。</small>
       </label>
     </div>
@@ -22666,7 +23324,7 @@ define("js/ui/views/characters/characterProfileFormView", ["require", "exports",
  * 責務: ゲーム準備中プレイヤーの詳細設定フォームを生成し、人物設定・会話のきっかけ・ゲーム参加者向け相手別呼称を一画面で編集できる形にする。
  * 変更ルール: 状態更新、入力検証、イベント登録、ゲーム規則判定を行わない。キャラクタープロフィール項目はcharacterProfileFormView.jsを正本とし、相手別呼称の編集対象は現在のゲーム参加者だけに限定する。
  */
-define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characters/callNames/callNameResolver", "js/characters/config/characterTextPolicyAdapter", "js/domain/policies/playerIdentityPolicy", "js/shared/utils", "js/ui/views/characters/characterProfileFormView"], function (require, exports, callNameResolver_js_2, characterTextPolicyAdapter_js_4, playerIdentityPolicy_js_4, utils_js_22, characterProfileFormView_js_1) {
+define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characters/callNames/callNameResolver", "js/characters/config/characterTextPolicyAdapter", "js/domain/policies/playerIdentityPolicy", "js/shared/utils", "js/ui/views/characters/characterProfileFormView"], function (require, exports, callNameResolver_js_2, characterTextPolicyAdapter_js_4, playerIdentityPolicy_js_4, utils_js_23, characterProfileFormView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderPlayerConversationSeedRow = renderPlayerConversationSeedRow;
@@ -22677,10 +23335,10 @@ define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characte
     }
     function renderPlayerConversationSeedRow(seed = {}) {
         return `<div class="character-conversation-seed" data-player-conversation-seed-row>
-    <input name="conversationSeedId" type="hidden" value="${(0, utils_js_22.escapeHtml)(seed.id ?? '')}">
+    <input name="conversationSeedId" type="hidden" value="${(0, utils_js_23.escapeHtml)(seed.id ?? '')}">
     <div class="form-grid">
-      <label class="field"><span>${limitLabel('話題', characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedSubject)}</span><input name="conversationSeedSubject" maxlength="${characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedSubject}" value="${(0, utils_js_22.escapeHtml)(seed.subject ?? '')}" required></label>
-      <label class="field"><span>${limitLabel('雰囲気', characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedTone)}</span><input name="conversationSeedTone" maxlength="${characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedTone}" value="${(0, utils_js_22.escapeHtml)(seed.tone ?? '')}" required></label>
+      <label class="field"><span>${limitLabel('話題', characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedSubject)}</span><input name="conversationSeedSubject" maxlength="${characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedSubject}" value="${(0, utils_js_23.escapeHtml)(seed.subject ?? '')}" required></label>
+      <label class="field"><span>${limitLabel('雰囲気', characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedTone)}</span><input name="conversationSeedTone" maxlength="${characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.conversationSeedTone}" value="${(0, utils_js_23.escapeHtml)(seed.tone ?? '')}" required></label>
     </div>
     <button class="button danger-ghost small character-conversation-seed-remove" data-player-detail-action="remove-conversation-seed" type="button">削除</button>
   </div>`;
@@ -22705,9 +23363,9 @@ define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characte
             const resolved = snapshot.bySpeakerId?.[player.id]?.[target.id];
             const placeholder = resolved?.preferred || target.name;
             return `<div class="character-call-name-row">
-      <input name="callNameTargetPlayerId" type="hidden" value="${(0, utils_js_22.escapeHtml)(target.id)}">
-      <strong>${(0, utils_js_22.escapeHtml)(target.name)} <small>（最大${playerIdentityPolicy_js_4.CALL_NAME_MAX_LENGTH}文字）</small></strong>
-      <label class="field"><input name="callNamePreferred" maxlength="${playerIdentityPolicy_js_4.CALL_NAME_MAX_LENGTH}" value="${(0, utils_js_22.escapeHtml)(override)}" placeholder="${(0, utils_js_22.escapeHtml)(placeholder)}"></label>
+      <input name="callNameTargetPlayerId" type="hidden" value="${(0, utils_js_23.escapeHtml)(target.id)}">
+      <strong>${(0, utils_js_23.escapeHtml)(target.name)} <small>（最大${playerIdentityPolicy_js_4.CALL_NAME_MAX_LENGTH}文字）</small></strong>
+      <label class="field"><input name="callNamePreferred" maxlength="${playerIdentityPolicy_js_4.CALL_NAME_MAX_LENGTH}" value="${(0, utils_js_23.escapeHtml)(override)}" placeholder="${(0, utils_js_23.escapeHtml)(placeholder)}"></label>
     </div>`;
         }).join('');
         return `<fieldset class="player-detail-section">
@@ -22720,7 +23378,7 @@ define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characte
         const character = player.character;
         return `<form id="player-detail-form">
     <div class="modal-header">
-      <h3>${(0, utils_js_22.escapeHtml)(player.name)}の詳細設定</h3>
+      <h3>${(0, utils_js_23.escapeHtml)(player.name)}の詳細設定</h3>
       <button class="button icon ghost" data-modal-close type="button">×</button>
     </div>
 
@@ -22732,7 +23390,7 @@ define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characte
         <div class="form-grid">
           <label class="field full">
             <span>別名（各最大${characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.alias}文字・${characterTextPolicyAdapter_js_4.CHARACTER_TEXT_LIMITS.aliasesMax}件まで）</span>
-            <input name="aliases" maxlength="${ALIASES_INPUT_MAX_LENGTH}" value="${(0, utils_js_22.escapeHtml)(player.aliases.join('、'))}">
+            <input name="aliases" maxlength="${ALIASES_INPUT_MAX_LENGTH}" value="${(0, utils_js_23.escapeHtml)(player.aliases.join('、'))}">
             <small>略称・読み違い・表記揺れなどを、読点区切りで登録します。</small>
           </label>
         </div>
@@ -22747,7 +23405,7 @@ define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characte
         <div class="form-grid">
           <label class="field full">
             <span>この参加者だけが知る追加情報</span>
-            <textarea name="privateInfo">${(0, utils_js_22.escapeHtml)(player.privateInfo)}</textarea>
+            <textarea name="privateInfo">${(0, utils_js_23.escapeHtml)(player.privateInfo)}</textarea>
             <small>この参加者のAIとGMだけが参照します。役職能力やゲームルールを変更するものではありません。</small>
           </label>
         </div>
@@ -22765,7 +23423,7 @@ define("js/ui/views/setup/playerDetailView", ["require", "exports", "js/characte
  * 責務: 夜開始時点の生存スナップショットと、その夜に必要な共有会話・襲撃・能力入力計画を生成する。
  * 変更ルール: 状態保存・DOM操作・イベント公開を行わない。役職属性とルールだけから計画を返し、座敷わらしの初夜家主選択を他の全夜処理より優先する。訪問と凍結の対象制限は共通の直前対象方式を使う。
  */
-define("js/domain/night/nightPlanner", ["require", "exports", "js/shared/utils", "js/domain/game/standardRules", "js/domain/roles/roleAttributes", "js/domain/night/masonConversationPolicy", "js/domain/night/graveyardConversationPolicy"], function (require, exports, utils_js_23, standardRules_js_17, roleAttributes_js_22, masonConversationPolicy_js_1, graveyardConversationPolicy_js_1) {
+define("js/domain/night/nightPlanner", ["require", "exports", "js/shared/utils", "js/domain/game/standardRules", "js/domain/roles/roleAttributes", "js/domain/night/masonConversationPolicy", "js/domain/night/graveyardConversationPolicy"], function (require, exports, utils_js_24, standardRules_js_17, roleAttributes_js_22, masonConversationPolicy_js_1, graveyardConversationPolicy_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.getWolfConversationParticipantIds = getWolfConversationParticipantIds;
@@ -22816,7 +23474,7 @@ define("js/domain/night/nightPlanner", ["require", "exports", "js/shared/utils",
         if (unresolvedZashiki) {
             const plan = emptyPlan(state, day, true);
             plan.slots.push({
-                id: (0, utils_js_23.createId)('slot'),
+                id: (0, utils_js_24.createId)('slot'),
                 type: 'choose-owner',
                 actorId: unresolvedZashiki.id,
                 targetId: null,
@@ -22855,7 +23513,7 @@ define("js/domain/night/nightPlanner", ["require", "exports", "js/shared/utils",
                 const candidates = (0, standardRules_js_17.getAlivePlayers)(state).filter((player) => player.id !== seer.id && !(0, roleAttributes_js_22.countsAsWolf)(state, player) && !(0, roleAttributes_js_22.isActualFox)(state, player));
                 const target = randomItem(candidates, random);
                 plan.slots.push({
-                    id: (0, utils_js_23.createId)('slot'),
+                    id: (0, utils_js_24.createId)('slot'),
                     type: 'inspect',
                     actorId: seer.id,
                     targetId: target?.id ?? null,
@@ -22864,23 +23522,23 @@ define("js/domain/night/nightPlanner", ["require", "exports", "js/shared/utils",
                 });
             }
             else {
-                plan.slots.push({ id: (0, utils_js_23.createId)('slot'), type: 'inspect', actorId: seer.id, targetId: null, status: 'pending', override: null });
+                plan.slots.push({ id: (0, utils_js_24.createId)('slot'), type: 'inspect', actorId: seer.id, targetId: null, status: 'pending', override: null });
             }
         });
         guards.forEach((guard) => {
-            plan.slots.push({ id: (0, utils_js_23.createId)('slot'), type: 'guard', actorId: guard.id, targetId: null, status: 'pending', override: null });
+            plan.slots.push({ id: (0, utils_js_24.createId)('slot'), type: 'guard', actorId: guard.id, targetId: null, status: 'pending', override: null });
         });
         namahages.forEach((namahage) => {
             const candidates = (0, standardRules_js_17.getAlivePlayers)(state).filter((player) => player.id !== namahage.id && player.id !== namahage.roleState?.lastTargetId);
             plan.slots.push({
-                id: (0, utils_js_23.createId)('slot'), type: 'visit', actorId: namahage.id, targetId: null,
+                id: (0, utils_js_24.createId)('slot'), type: 'visit', actorId: namahage.id, targetId: null,
                 status: candidates.length ? 'pending' : 'waived-by-rule', override: null,
             });
         });
         snowWomen.forEach((snowWoman) => {
             const candidates = (0, standardRules_js_17.getAlivePlayers)(state).filter((player) => player.id !== snowWoman.id && player.id !== snowWoman.roleState?.lastTargetId);
             plan.slots.push({
-                id: (0, utils_js_23.createId)('slot'), type: 'freeze', actorId: snowWoman.id, targetId: null,
+                id: (0, utils_js_24.createId)('slot'), type: 'freeze', actorId: snowWoman.id, targetId: null,
                 status: candidates.length ? 'pending' : 'waived-by-rule', override: null,
             });
         });
@@ -22961,7 +23619,7 @@ define("js/domain/setup/setupRoles", ["require", "exports", "js/domain/roles/rol
  * 責務: ゲーム開始時だけ適用する役職再配置と役職欠けを処理し、再開始用の開始前プレイヤー別配役と、役職欠け使用時の公開用役職構成を固定する。
  * 変更ルール: 準備画面の手動配役変更や進行中の役職訂正には使用しない。開始前配役を保存してから、役職欠け使用時は公開用構成も保存し、「開始時シャッフル→役職欠け」の順で実配役だけを変更する。再開始用のプレイヤー別配役と公開用の人数構成は用途が異なるため統合しない。村人を含む人狼系以外を抽選し、村人が選ばれた場合は実質的な欠けなしとする。
  */
-define("js/domain/setup/startRoleAssignment", ["require", "exports", "js/shared/utils", "js/domain/roles/roleComposition", "js/domain/roles/roleMissingPolicy", "js/domain/setup/setupRoles"], function (require, exports, utils_js_24, roleComposition_js_5, roleMissingPolicy_js_1, setupRoles_js_1) {
+define("js/domain/setup/startRoleAssignment", ["require", "exports", "js/shared/utils", "js/domain/roles/roleComposition", "js/domain/roles/roleMissingPolicy", "js/domain/setup/setupRoles"], function (require, exports, utils_js_25, roleComposition_js_5, roleMissingPolicy_js_1, setupRoles_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.applyStartRoleAssignmentRules = applyStartRoleAssignmentRules;
@@ -22972,7 +23630,7 @@ define("js/domain/setup/startRoleAssignment", ["require", "exports", "js/shared/
             ? (0, roleComposition_js_5.countRoleComposition)(state.players)
             : null;
         if (rules.shuffleOnStart === true) {
-            (0, setupRoles_js_1.applySetupRoles)(state.players, (0, utils_js_24.shuffle)(state.players.map((player) => player.roleId)));
+            (0, setupRoles_js_1.applySetupRoles)(state.players, (0, utils_js_25.shuffle)(state.players.map((player) => player.roleId)));
         }
         if (rules.roleMissingEnabled === true) {
             const candidates = (0, roleMissingPolicy_js_1.getRoleMissingCandidates)(state.players);
@@ -23222,7 +23880,7 @@ define("js/domain/night/actionExecutionPolicy", ["require", "exports", "js/domai
 });
 /**
  * 責務: 状態付与・行動開始判定・護衛・襲撃・凍結・占い・後追いを定められた順序で調停し、夜の確定結果を生成する。
- * 変更ルール: 状態を変更しない。恐怖は共通の行動開始判定へ委譲し、行動阻害と実行後の効果不成立を別項目で保持する。襲撃は全生存人狼が恐怖の時だけ阻害する。
+ * 変更ルール: 状態を変更しない。恐怖は共通の行動開始判定へ委譲し、行動阻害と実行後の効果不成立を別項目で保持する。襲撃は全生存人狼が恐怖の時だけ阻害する。雪女の凍結は行動自体が実行済みでも、雪女本人または対象が同じ夜に死亡した場合は翌日の状態付与を行わない。
  */
 define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game/deathResolution", "js/domain/roles/roleAttributes", "js/domain/night/actionExecutionPolicy"], function (require, exports, deathResolution_js_1, roleAttributes_js_25, actionExecutionPolicy_js_1) {
     "use strict";
@@ -23267,6 +23925,8 @@ define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game
         if (freezeSlot) {
             if (freezeExecution.executionState === 'blocked')
                 freezeOutcome = 'not-executed';
+            else if (deadIds.has(freezeSlot.actorId))
+                freezeOutcome = 'actor-dead';
             else if (guardedTargetIds.includes(executedFreezeTargetId))
                 freezeOutcome = 'guarded';
             else if (deadIds.has(executedFreezeTargetId))
@@ -23281,6 +23941,8 @@ define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game
             gmNotes.push('生存人狼全員が恐怖状態のため、襲撃行動は実行されませんでした。');
         if (freezeExecution.executionState === 'blocked')
             gmNotes.push('雪女が恐怖状態のため、凍結行動は実行されませんでした。');
+        else if (freezeOutcome === 'actor-dead')
+            gmNotes.push('凍結は実行されましたが、雪女が同じ夜に死亡したため翌日の凍結状態は付与されません。');
         else if (freezeOutcome === 'guarded')
             gmNotes.push('凍結は実行されましたが、対象が護衛されていたため効果が発生しませんでした。');
         else if (freezeOutcome === 'target-dead')
@@ -23307,7 +23969,7 @@ define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game
  * 責務: 私有結果確認、勝敗検出・確認・公開、全員の勝敗後感想を実行する。
  * 変更ルール: 勝敗判定はstandardRules、感想完了判定はresultImpressionsを正本とし、公開前の情報を混入させない。各機密会話を公開する場合も許可された会話記録だけを射影し、別責務の内部情報を公開イベントへ含めない。
  */
-define("js/domain/result/resultRuntime", ["require", "exports", "js/config/constants", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/shared/utils", "js/domain/policies/publicAbilityClaimNarrative", "js/domain/memory/memoryLedger", "js/domain/result/resultImpressions", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared"], function (require, exports, constants_js_41, standardRules_js_20, eventStore_js_8, utils_js_25, publicAbilityClaimNarrative_js_3, memoryLedger_js_7, resultImpressions_js_3, restorePointPolicy_js_2, gameRuntimeShared_js_2) {
+define("js/domain/result/resultRuntime", ["require", "exports", "js/config/constants", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/shared/utils", "js/domain/policies/publicAbilityClaimNarrative", "js/domain/memory/memoryLedger", "js/domain/result/resultImpressions", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared"], function (require, exports, constants_js_41, standardRules_js_20, eventStore_js_8, utils_js_26, publicAbilityClaimNarrative_js_3, memoryLedger_js_7, resultImpressions_js_3, restorePointPolicy_js_2, gameRuntimeShared_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.acknowledgePrivateResults = acknowledgePrivateResults;
@@ -23331,7 +23993,7 @@ define("js/domain/result/resultRuntime", ["require", "exports", "js/config/const
             && !event.payload?.acknowledgedAt);
         if (!events.length)
             return (0, gameRuntimeShared_js_2.result)(false, '未確認の個人結果はありません。');
-        const acknowledgedAt = (0, utils_js_25.nowIso)();
+        const acknowledgedAt = (0, utils_js_26.nowIso)();
         events.forEach((event) => { event.payload.acknowledgedAt = acknowledgedAt; });
         return (0, gameRuntimeShared_js_2.result)(true, `${player.name}の個人結果通知を確認済みにしました。`, { eventIds: events.map((event) => event.id) });
     }
@@ -23380,7 +24042,7 @@ define("js/domain/result/resultRuntime", ["require", "exports", "js/config/const
             return (0, gameRuntimeShared_js_2.result)(false, '先にゲーム結果と公開範囲を確認してください。');
         (0, restorePointPolicy_js_2.requestMandatoryRestorePoint)(state, restorePointPolicy_js_2.RESTORE_POINT_TYPES.BEFORE_RESULT_PUBLISH);
         state.result.status = 'published';
-        state.result.publishedAt = (0, utils_js_25.nowIso)();
+        state.result.publishedAt = (0, utils_js_26.nowIso)();
         const payload = {
             text: `${state.result.winner === 'village' ? '村人陣営' : state.result.winner === 'wolf' ? '人狼陣営' : state.result.winner === 'fox' ? '妖狐陣営' : '引き分け'}。${state.result.reason}`,
             winner: state.result.winner,
@@ -23528,7 +24190,7 @@ define("js/domain/result/resultRuntime", ["require", "exports", "js/config/const
  * 責務: 墓場／共有者／人狼秘密会話、襲撃投票、夜行動、夜解決、夜明け公開を実行する。
  * 変更ルール: 秘密情報を公開状態へ混入させず、候補・行動解決・恐怖処理・機密会話の発言順は専用ポリシーを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。
  */
-define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/night/nightPlanner", "js/domain/night/wolfConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/nightResolution", "js/domain/night/actionExecutionPolicy", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/memory/memoryLedger", "js/domain/game/factionStrategyState", "js/domain/roles/roleAttributes", "js/domain/roles/roleState", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/discussion/discussionRuntime", "js/domain/result/resultRuntime"], function (require, exports, standardRules_js_21, nightPlanner_js_1, wolfConversationPolicy_js_1, masonConversationPolicy_js_2, graveyardConversationPolicy_js_2, nightResolution_js_1, actionExecutionPolicy_js_2, eventStore_js_9, utils_js_26, publicDerivation_js_4, memoryLedger_js_8, factionStrategyState_js_12, roleAttributes_js_26, roleState_js_3, restorePointPolicy_js_3, gameRuntimeShared_js_3, discussionRuntime_js_2, resultRuntime_js_1) {
+define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/night/nightPlanner", "js/domain/night/wolfConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/nightResolution", "js/domain/night/actionExecutionPolicy", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/memory/memoryLedger", "js/domain/game/factionStrategyState", "js/domain/roles/roleAttributes", "js/domain/roles/roleState", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/discussion/discussionRuntime", "js/domain/result/resultRuntime"], function (require, exports, standardRules_js_21, nightPlanner_js_1, wolfConversationPolicy_js_1, masonConversationPolicy_js_2, graveyardConversationPolicy_js_2, nightResolution_js_1, actionExecutionPolicy_js_2, eventStore_js_9, utils_js_27, publicDerivation_js_4, memoryLedger_js_8, factionStrategyState_js_12, roleAttributes_js_26, roleState_js_3, restorePointPolicy_js_3, gameRuntimeShared_js_3, discussionRuntime_js_2, resultRuntime_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createEmptyWolfSharedStrategy = createEmptyWolfSharedStrategy;
@@ -23589,7 +24251,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
         });
         if (session.purpose === 'opening-strategy')
             next.attackPlan = 'none';
-        next.updatedAt = (0, utils_js_26.nowIso)();
+        next.updatedAt = (0, utils_js_27.nowIso)();
         next.updatedByPlayerId = speakerId;
         session.sharedStrategy = next;
     }
@@ -23603,14 +24265,14 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
         if (plan.graveyardConversationRequired) {
             const conversationProgress = (0, graveyardConversationPolicy_js_2.createGraveyardConversationProgress)(plan.graveyardConversationParticipantIds, state.game.rules.graveyardCommunication.speechCountPerNight);
             const session = {
-                id: (0, utils_js_26.createId)('graveyard-chat'),
+                id: (0, utils_js_27.createId)('graveyard-chat'),
                 day,
                 status: 'open',
                 participantIds: [...plan.graveyardConversationParticipantIds],
                 messages: [],
                 ...conversationProgress,
                 summary: '',
-                createdAt: (0, utils_js_26.nowIso)(),
+                createdAt: (0, utils_js_27.nowIso)(),
                 closedAt: null,
             };
             state.graveyardConversations.push(session);
@@ -23620,14 +24282,14 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
         if (plan.masonConversationRequired) {
             const conversationProgress = (0, masonConversationPolicy_js_2.createMasonConversationProgress)(plan.masonConversationParticipantIds, state.game.rules.masonCommunication.speechCountPerNight);
             const session = {
-                id: (0, utils_js_26.createId)('mason-chat'),
+                id: (0, utils_js_27.createId)('mason-chat'),
                 day,
                 status: 'open',
                 participantIds: [...plan.masonConversationParticipantIds],
                 messages: [],
                 ...conversationProgress,
                 summary: '',
-                createdAt: (0, utils_js_26.nowIso)(),
+                createdAt: (0, utils_js_27.nowIso)(),
                 closedAt: null,
             };
             state.masonConversations.push(session);
@@ -23637,7 +24299,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
         if (plan.wolfConversationRequired) {
             const conversationProgress = (0, wolfConversationPolicy_js_1.createWolfConversationProgress)(plan.wolfConversationParticipantIds, state.game.rules.wolfCommunication.speechCountPerNight);
             const session = {
-                id: (0, utils_js_26.createId)('wolf-chat'),
+                id: (0, utils_js_27.createId)('wolf-chat'),
                 day,
                 purpose: plan.wolfConversationPurpose,
                 status: 'open',
@@ -23646,7 +24308,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
                 ...conversationProgress,
                 sharedStrategy: createEmptyWolfSharedStrategy(plan.wolfConversationPurpose),
                 summary: '',
-                createdAt: (0, utils_js_26.nowIso)(),
+                createdAt: (0, utils_js_27.nowIso)(),
                 closedAt: null,
             };
             state.wolfConversations.push(session);
@@ -23716,7 +24378,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
     }
     function finishGraveyardConversationSession(state, session) {
         session.status = 'closed';
-        session.closedAt = (0, utils_js_26.nowIso)();
+        session.closedAt = (0, utils_js_27.nowIso)();
         session.summary = session.messages.slice(-8).map((message) => `${(0, standardRules_js_21.getPlayer)(state, message.speakerId)?.name ?? '不明'}: ${message.content}`).join(' / ');
         syncNightConversationStatus(state);
     }
@@ -23740,7 +24402,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
         if (!text)
             return (0, gameRuntimeShared_js_3.result)(false, '墓場会話の発言を入力してください。');
         const message = {
-            id: (0, utils_js_26.createId)('graveyard-message'),
+            id: (0, utils_js_27.createId)('graveyard-message'),
             sessionId: session.id,
             speakerId,
             type: text === 'なし' ? 'pass' : 'message',
@@ -23748,7 +24410,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
             sequence: session.messages.length + 1,
             source: rawResponse ? 'ai' : 'human',
             aiTurnId: null,
-            timestamp: (0, utils_js_26.nowIso)(),
+            timestamp: (0, utils_js_27.nowIso)(),
         };
         session.messages.push(message);
         (0, graveyardConversationPolicy_js_2.consumeGraveyardConversationSpeech)(session, speakerId);
@@ -23802,7 +24464,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
     }
     function finishMasonConversationSession(state, session) {
         session.status = 'closed';
-        session.closedAt = (0, utils_js_26.nowIso)();
+        session.closedAt = (0, utils_js_27.nowIso)();
         session.summary = session.messages.slice(-8).map((message) => `${(0, standardRules_js_21.getPlayer)(state, message.speakerId)?.name ?? '不明'}: ${message.content}`).join(' / ');
         syncNightConversationStatus(state);
     }
@@ -23826,7 +24488,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
             taskType: 'mason-conversation',
         });
         const message = {
-            id: (0, utils_js_26.createId)('mason-message'),
+            id: (0, utils_js_27.createId)('mason-message'),
             sessionId: session.id,
             speakerId,
             type: text === 'なし' ? 'pass' : 'message',
@@ -23834,7 +24496,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
             sequence: session.messages.length + 1,
             source: rawResponse ? 'ai' : 'human',
             aiTurnId: null,
-            timestamp: (0, utils_js_26.nowIso)(),
+            timestamp: (0, utils_js_27.nowIso)(),
         };
         session.messages.push(message);
         (0, masonConversationPolicy_js_2.consumeMasonConversationSpeech)(session, speakerId);
@@ -23891,7 +24553,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
     }
     function finishWolfConversationSession(state, session) {
         session.status = 'closed';
-        session.closedAt = (0, utils_js_26.nowIso)();
+        session.closedAt = (0, utils_js_27.nowIso)();
         session.summary = session.messages.slice(-8).map((message) => `${(0, standardRules_js_21.getPlayer)(state, message.speakerId)?.name ?? '不明'}: ${message.content}`).join(' / ');
         syncNightConversationStatus(state);
         if (state.night.plan.wolfAttackRequired)
@@ -23915,7 +24577,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
             return (0, gameRuntimeShared_js_3.result)(false, '共有発言を入力してください。');
         const normalizedSharedStrategyPatch = normalizeWolfSharedStrategyPatch(sharedStrategyPatch);
         const message = {
-            id: (0, utils_js_26.createId)('wolf-message'),
+            id: (0, utils_js_27.createId)('wolf-message'),
             sessionId: session.id,
             speakerId,
             type: text === 'なし' ? 'pass' : 'message',
@@ -23923,7 +24585,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
             sequence: session.messages.length + 1,
             source: rawResponse ? 'ai' : 'human',
             aiTurnId: null,
-            timestamp: (0, utils_js_26.nowIso)(),
+            timestamp: (0, utils_js_27.nowIso)(),
         };
         session.messages.push(message);
         (0, wolfConversationPolicy_js_1.consumeWolfConversationSpeech)(session, speakerId);
@@ -24421,7 +25083,7 @@ define("js/domain/night/nightRuntime", ["require", "exports", "js/domain/game/st
  * 責務: ゲーム開始時の役職再配置ルール適用、役職通知確認、初日または夜への開始遷移を実行し、新規開始時に前ゲームの相関スナップショットを初期化する。
  * 変更ルール: 開始前検証と開始時役職変更は専用setupモジュールへ委譲し、通知確認だけを扱う。夜・議論の具体処理と日終了スナップショット保存は各Runtimeへ委譲する。
  */
-define("js/domain/game/gameLifecycleRuntime", ["require", "exports", "js/characters/callNames/callNameResolver", "js/domain/game/standardRules", "js/domain/night/nightPlanner", "js/domain/events/eventStore", "js/shared/utils", "js/domain/memory/memoryLedger", "js/domain/game/decisionState", "js/domain/game/factionStrategyState", "js/domain/roles/roleAttributes", "js/domain/roles/roleState", "js/domain/setup/startRoleAssignment", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime", "js/domain/discussion/discussionRuntime"], function (require, exports, callNameResolver_js_3, standardRules_js_22, nightPlanner_js_2, eventStore_js_10, utils_js_27, memoryLedger_js_9, decisionState_js_12, factionStrategyState_js_13, roleAttributes_js_27, roleState_js_4, startRoleAssignment_js_1, restorePointPolicy_js_4, gameRuntimeShared_js_4, nightRuntime_js_1, discussionRuntime_js_3) {
+define("js/domain/game/gameLifecycleRuntime", ["require", "exports", "js/characters/callNames/callNameResolver", "js/domain/game/standardRules", "js/domain/night/nightPlanner", "js/domain/events/eventStore", "js/shared/utils", "js/domain/memory/memoryLedger", "js/domain/game/decisionState", "js/domain/game/factionStrategyState", "js/domain/roles/roleAttributes", "js/domain/roles/roleState", "js/domain/setup/startRoleAssignment", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime", "js/domain/discussion/discussionRuntime"], function (require, exports, callNameResolver_js_3, standardRules_js_22, nightPlanner_js_2, eventStore_js_10, utils_js_28, memoryLedger_js_9, decisionState_js_12, factionStrategyState_js_13, roleAttributes_js_27, roleState_js_4, startRoleAssignment_js_1, restorePointPolicy_js_4, gameRuntimeShared_js_4, nightRuntime_js_1, discussionRuntime_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.startGame = startGame;
@@ -24528,7 +25190,7 @@ define("js/domain/game/gameLifecycleRuntime", ["require", "exports", "js/charact
         state.briefing.noticeStatusByPlayerId[playerId] = status;
         state.briefing.aiContextReadyByPlayerId[playerId] = player.controller === 'ai';
         state.briefing.forcedReasonByPlayerId[playerId] = forcedReason;
-        state.playerKnowledge[playerId].roleNotifiedAt = (0, utils_js_27.nowIso)();
+        state.playerKnowledge[playerId].roleNotifiedAt = (0, utils_js_28.nowIso)();
         player.aiContextStatus = player.controller === 'ai' ? 'initialized' : player.aiContextStatus;
         const event = (0, eventStore_js_10.createEvent)(state, {
             type: 'role-notified',
@@ -24564,9 +25226,9 @@ define("js/domain/game/gameLifecycleRuntime", ["require", "exports", "js/charact
 });
 /**
  * 責務: 公開CO・公開能力結果・公開投票と参加者別判断状態から、リアルタイム表示および日終了スナップショット用のプレイヤー相関モデルを決定的に構築・射影・保存する。
- * 変更ルール: 公開発言本文を自然言語解析しない。リアルタイム疑いは生存者同士だけへ射影し、日終了保存では当日死亡者に接続する最終疑いだけを保持して前日以前の死亡者との疑いを除去する。機密情報非表示への射影では疑い関係・疑い強度・真役職を必ず除去する。スナップショットは同じDayを一件だけ保持し、訂正後の再進行時は同Dayを置換する。
+ * 変更ルール: 公開発言本文を自然言語解析しない。リアルタイム疑いは生存者同士だけへ射影し、日終了保存では当日死亡者に接続する最終疑いだけを保持して前日以前の死亡者との疑いを除去する。疑い対象と疑い線は公開議論上の対立関係に近い相関図の基礎情報として機密表示OFFでも保持し、真役職と内部確信度である疑い強度・判断更新日は機密表示時だけ射影する。この境界を役職等の秘密情報と同一視して疑い線まで隠さない。スナップショットは同じDayを一件だけ保持し、訂正後の再進行時は同Dayを置換する。
  */
-define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/game/decisionState", "js/domain/game/decisionTargetPolicy", "js/domain/policies/publicAbilityClaimPolicy"], function (require, exports, constants_js_42, utils_js_28, decisionState_js_13, decisionTargetPolicy_js_6, publicAbilityClaimPolicy_js_18) {
+define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/game/decisionState", "js/domain/game/decisionTargetPolicy", "js/domain/policies/publicAbilityClaimPolicy"], function (require, exports, constants_js_42, utils_js_29, decisionState_js_13, decisionTargetPolicy_js_6, publicAbilityClaimPolicy_js_18) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.PLAYER_RELATIONSHIP_LABELS = exports.PLAYER_RELATIONSHIP_TYPES = void 0;
@@ -24606,7 +25268,7 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
     function activeAbilityClaims(state) {
         return (state.publicAbilityClaims ?? [])
             .filter((claim) => claim?.status === 'active')
-            .sort((a, b) => Number(a.announcedDay ?? a.observedDay ?? 0) - Number(b.announcedDay ?? b.observedDay ?? 0));
+            .sort((a, b) => Number(a.availableDay ?? a.announcedDay ?? 0) - Number(b.availableDay ?? b.announcedDay ?? 0));
     }
     function pushOrReplaceEdge(edgeMap, edge, { replace = false } = {}) {
         const key = `${edge.type}:${edge.sourceId}:${edge.targetId}`;
@@ -24682,25 +25344,25 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
         const suspicionParticipantIds = new Set(players
             .filter((player) => canConnectSuspicion(player, normalizedSnapshotDay))
             .map((player) => player.id));
-        if (showConfidential) {
-            players.forEach((player) => {
-                if (!suspicionParticipantIds.has(player.id))
-                    return;
-                const currentDecision = decisionByPlayerId.get(player.id);
-                unique(currentDecision?.suspicionCandidateIds)
-                    .filter((targetId) => targetId !== player.id
-                    && playerIds.has(targetId)
-                    && suspicionParticipantIds.has(targetId))
-                    .forEach((targetId) => pushOrReplaceEdge(edgeMap, normalizedEdge({
-                    id: `suspicion:${player.id}:${targetId}`,
-                    type: 'suspicion',
-                    sourceId: player.id,
-                    targetId,
-                    label: '疑い',
-                    day: Number(currentDecision?.sourceDay ?? 0),
-                })));
-            });
-        }
+        // 疑い先は公開議論の対立関係とほぼ同質で、相関図の主要価値を構成する。
+        // 機密表示OFFでも線自体は残し、内部確信度や真役職だけを後段で秘匿する。
+        players.forEach((player) => {
+            if (!suspicionParticipantIds.has(player.id))
+                return;
+            const currentDecision = decisionByPlayerId.get(player.id);
+            unique(currentDecision?.suspicionCandidateIds)
+                .filter((targetId) => targetId !== player.id
+                && playerIds.has(targetId)
+                && suspicionParticipantIds.has(targetId))
+                .forEach((targetId) => pushOrReplaceEdge(edgeMap, normalizedEdge({
+                id: `suspicion:${player.id}:${targetId}`,
+                type: 'suspicion',
+                sourceId: player.id,
+                targetId,
+                label: '疑い',
+                day: Number(currentDecision?.sourceDay ?? 0),
+            })));
+        });
         abilityClaims.forEach((claim) => {
             if (!playerIds.has(claim.actorId) || !playerIds.has(claim.targetId) || claim.actorId === claim.targetId)
                 return;
@@ -24712,7 +25374,7 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
                 targetId: claim.targetId,
                 label: `${claimedRoleName}・${(0, publicAbilityClaimPolicy_js_18.publicAbilityResultLabel)(claim.result, claim.claimedRoleId)}`,
                 graphLabel: `${claimedRoleName}${claim.result === 'wolf' ? '●' : claim.result === 'not-wolf' ? '○' : '◇'}`,
-                day: Number(claim.observedDay ?? claim.announcedDay ?? 0),
+                day: Number(claim.availableDay ?? claim.announcedDay ?? 0),
                 result: claim.result,
                 sourceEventId: claim.sourceEventId ?? null,
             });
@@ -24736,7 +25398,7 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
             const claim = claims.get(player.id) ?? null;
             const currentDecision = decisionByPlayerId.get(player.id);
             const canConnect = suspicionParticipantIds.has(player.id);
-            const suspicionTargetIds = showConfidential && canConnect
+            const suspicionTargetIds = canConnect
                 ? unique(currentDecision?.suspicionCandidateIds)
                     .filter((id) => playerIds.has(id) && id !== player.id && suspicionParticipantIds.has(id))
                 : [];
@@ -24771,12 +25433,11 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
             ...node,
             actualRoleId: confidential ? node.actualRoleId : null,
             actualRoleName: confidential ? node.actualRoleName : '',
-            suspicionTargetIds: confidential ? [...(node.suspicionTargetIds ?? [])] : [],
+            suspicionTargetIds: [...(node.suspicionTargetIds ?? [])],
             suspicionStrength: confidential ? normalizedSuspicionStrength(node.suspicionStrength) : null,
             decisionSourceDay: confidential ? node.decisionSourceDay ?? null : null,
         }));
         const edges = (snapshot?.edges ?? [])
-            .filter((edge) => confidential || edge.type !== 'suspicion')
             .map((edge) => {
             const projected = { ...edge };
             if (edge.type === 'ability')
@@ -24801,9 +25462,9 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
             snapshotDay: day,
         });
         const snapshot = {
-            id: (0, utils_js_28.createId)('relationship-snapshot'),
+            id: (0, utils_js_29.createId)('relationship-snapshot'),
             day,
-            capturedAt: (0, utils_js_28.nowIso)(),
+            capturedAt: (0, utils_js_29.nowIso)(),
             sourceEventId: sourceEvent?.id ?? null,
             sourceRef: sourceEvent ? Number(sourceEvent.sequence ?? 0) : null,
             latestVoteDay: model.latestVoteDay,
@@ -24826,7 +25487,7 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
  * 責務: 投票開始・入力・集計・公開、処刑解決・公開を実行し、処刑あり／なしの公開確定時に当日終了のプレイヤー相関スナップショットを保存する。
  * 変更ルール: 投票候補と同票処理はvoteResolutionを正本とし、結果公開前に次フェーズへ進めない。遺言の要否・凍結による自動スキップはtestamentPolicyを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。相関スナップショットの構築・同日置換はplayerRelationshipModel.jsへ委譲する。
  */
-define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/game/deathResolution", "js/domain/vote/voteResolution", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/discussion/priorityAnswerPolicy", "js/domain/memory/memoryLedger", "js/domain/game/playerStatus", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime", "js/domain/result/resultRuntime", "js/domain/records/playerRelationshipModel", "js/domain/execution/testamentPolicy"], function (require, exports, standardRules_js_23, deathResolution_js_2, voteResolution_js_2, eventStore_js_11, utils_js_29, publicDerivation_js_5, priorityAnswerPolicy_js_4, memoryLedger_js_10, playerStatus_js_8, restorePointPolicy_js_5, gameRuntimeShared_js_5, nightRuntime_js_2, resultRuntime_js_2, playerRelationshipModel_js_1, testamentPolicy_js_2) {
+define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/game/deathResolution", "js/domain/vote/voteResolution", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/discussion/priorityAnswerPolicy", "js/domain/memory/memoryLedger", "js/domain/game/playerStatus", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime", "js/domain/result/resultRuntime", "js/domain/records/playerRelationshipModel", "js/domain/execution/testamentPolicy"], function (require, exports, standardRules_js_23, deathResolution_js_2, voteResolution_js_2, eventStore_js_11, utils_js_30, publicDerivation_js_5, priorityAnswerPolicy_js_4, memoryLedger_js_10, playerStatus_js_10, restorePointPolicy_js_5, gameRuntimeShared_js_5, nightRuntime_js_2, resultRuntime_js_2, playerRelationshipModel_js_1, testamentPolicy_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.beginVote = beginVote;
@@ -24851,11 +25512,11 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
         if (state.game.phase === 'discussion' && state.discussion?.reconsideration?.pending) {
             return (0, gameRuntimeShared_js_5.result)(false, '3巡目のCO後に発言できなかった参加者がいます。対象者の追加発言を完了してください。');
         }
-        const eligibleVoterIds = (0, playerStatus_js_8.getVoteEligiblePlayerIds)(state);
+        const eligibleVoterIds = (0, playerStatus_js_10.getVoteEligiblePlayerIds)(state);
         const aliveCandidateIds = (0, standardRules_js_23.getAlivePlayers)(state).map((player) => player.id);
         const candidates = candidateIds ?? [...aliveCandidateIds];
         state.voteSession = {
-            id: (0, utils_js_29.createId)('vote-session'),
+            id: (0, utils_js_30.createId)('vote-session'),
             day: state.game.day,
             round,
             type,
@@ -25138,7 +25799,7 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
                 status: testamentAvailability.status,
                 eventId: null,
                 skippedReason: testamentAvailability.skippedReason,
-                completedAt: testamentAvailability.status === 'skipped' ? (0, utils_js_29.nowIso)() : null,
+                completedAt: testamentAvailability.status === 'skipped' ? (0, utils_js_30.nowIso)() : null,
             },
         };
         return (0, gameRuntimeShared_js_5.result)(true, resolved.collateralPlayerId ? '猫又の道連れ対象を含む処刑内容を解決しました。' : '処刑内容を解決しました。');
@@ -25189,7 +25850,7 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
         }
         (0, standardRules_js_23.getPlayersByRole)(state, 'medium', { aliveOnly: true }).forEach((medium) => {
             state.mediumResults.push({
-                id: (0, utils_js_29.createId)('medium-result'),
+                id: (0, utils_js_30.createId)('medium-result'),
                 mediumId: medium.id,
                 executedPlayerId: resolution.targetId,
                 result: (0, standardRules_js_23.mediumResult)(state, resolution.targetId),
@@ -25207,7 +25868,7 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
  * 責務: 処刑対象が死亡処理の直前に一度だけ残す公開遺言を登録・辞退する。
  * 変更ルール: 遺言は通常議論の発言回数・質問・回答・再議論へ接続しない。凍結中の処刑対象には遺言を許可せず、公開CO・能力結果だけ既存の公開主張規則を再利用し、処刑以外の死亡へ適用しない。
  */
-define("js/domain/execution/testamentRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/domain/events/publicDerivation", "js/domain/claims/publicClaimCommitPolicy", "js/domain/discussion/discussionOpportunity", "js/domain/policies/publicAbilityClaimNarrative", "js/domain/memory/memoryLedger", "js/shared/utils", "js/domain/execution/testamentPolicy", "js/domain/game/gameRuntimeShared"], function (require, exports, standardRules_js_24, eventStore_js_12, publicDerivation_js_6, publicClaimCommitPolicy_js_2, discussionOpportunity_js_3, publicAbilityClaimNarrative_js_4, memoryLedger_js_11, utils_js_30, testamentPolicy_js_3, gameRuntimeShared_js_6) {
+define("js/domain/execution/testamentRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/events/eventStore", "js/domain/events/publicDerivation", "js/domain/claims/publicClaimCommitPolicy", "js/domain/discussion/discussionOpportunity", "js/domain/policies/publicAbilityClaimNarrative", "js/domain/memory/memoryLedger", "js/shared/utils", "js/domain/execution/testamentPolicy", "js/domain/game/gameRuntimeShared"], function (require, exports, standardRules_js_24, eventStore_js_12, publicDerivation_js_6, publicClaimCommitPolicy_js_2, discussionOpportunity_js_3, publicAbilityClaimNarrative_js_4, memoryLedger_js_11, utils_js_31, testamentPolicy_js_3, gameRuntimeShared_js_6) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.recordHumanTestament = recordHumanTestament;
@@ -25299,7 +25960,7 @@ define("js/domain/execution/testamentRuntime", ["require", "exports", "js/domain
             status: 'completed',
             eventId: event.id,
             skippedReason: '',
-            completedAt: (0, utils_js_30.nowIso)(),
+            completedAt: (0, utils_js_31.nowIso)(),
         };
         (0, publicDerivation_js_6.rebuildPublicDerivedState)(state);
         return (0, gameRuntimeShared_js_6.result)(true, `${pending.player.name}の遺言を公開しました。`, { eventId: event.id, aiTurnId: turn?.id ?? null });
@@ -25342,7 +26003,7 @@ define("js/domain/execution/testamentRuntime", ["require", "exports", "js/domain
             status: 'skipped',
             eventId: null,
             skippedReason: normalizedReason,
-            completedAt: (0, utils_js_30.nowIso)(),
+            completedAt: (0, utils_js_31.nowIso)(),
         };
         return (0, gameRuntimeShared_js_6.result)(true, `${pending.player.name}は遺言を残しませんでした。`, { aiTurnId: turn?.id ?? null });
     }
@@ -25351,7 +26012,7 @@ define("js/domain/execution/testamentRuntime", ["require", "exports", "js/domain
  * 責務: 訂正モード、公開発言・確定イベント・役職割当の訂正と派生進行再構築を実行する。
  * 変更ルール: 訂正は原子的に行い、失敗時は完全復元する。履歴系譜と必須復元点を保持し、旧状態を併存させない。
  */
-define("js/domain/correction/correctionRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/night/nightPlanner", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/discussion/discussionOpportunity", "js/domain/claims/claimRolePolicy", "js/domain/memory/memoryLedger", "js/domain/game/decisionState", "js/domain/game/factionStrategyState", "js/domain/roles/roleAttributes", "js/domain/roles/roleState", "js/domain/roles/roleAssignment", "js/domain/game/playerStatus", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime"], function (require, exports, standardRules_js_25, nightPlanner_js_3, eventStore_js_13, utils_js_31, publicDerivation_js_7, discussionOpportunity_js_4, claimRolePolicy_js_6, memoryLedger_js_12, decisionState_js_14, factionStrategyState_js_14, roleAttributes_js_28, roleState_js_5, roleAssignment_js_2, playerStatus_js_9, gameRuntimeShared_js_7, nightRuntime_js_3) {
+define("js/domain/correction/correctionRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/night/nightPlanner", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/discussion/discussionOpportunity", "js/domain/claims/claimRolePolicy", "js/domain/memory/memoryLedger", "js/domain/game/decisionState", "js/domain/game/factionStrategyState", "js/domain/roles/roleAttributes", "js/domain/roles/roleState", "js/domain/roles/roleAssignment", "js/domain/game/playerStatus", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime"], function (require, exports, standardRules_js_25, nightPlanner_js_3, eventStore_js_13, utils_js_32, publicDerivation_js_7, discussionOpportunity_js_4, claimRolePolicy_js_6, memoryLedger_js_12, decisionState_js_14, factionStrategyState_js_14, roleAttributes_js_28, roleState_js_5, roleAssignment_js_2, playerStatus_js_11, gameRuntimeShared_js_7, nightRuntime_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.enterCorrectionMode = enterCorrectionMode;
@@ -25366,7 +26027,7 @@ define("js/domain/correction/correctionRuntime", ["require", "exports", "js/doma
             return (0, gameRuntimeShared_js_7.result)(false, '訂正モードの理由を入力してください。');
         if (state.game.correctionMode.enabled)
             return (0, gameRuntimeShared_js_7.result)(false, 'すでに訂正モード中です。');
-        state.game.correctionMode = { enabled: true, reason: String(reason).trim(), startedAt: (0, utils_js_31.nowIso)() };
+        state.game.correctionMode = { enabled: true, reason: String(reason).trim(), startedAt: (0, utils_js_32.nowIso)() };
         return (0, gameRuntimeShared_js_7.result)(true, '訂正モードを開始しました。');
     }
     function exitCorrectionMode(state) {
@@ -25422,7 +26083,7 @@ define("js/domain/correction/correctionRuntime", ["require", "exports", "js/doma
             if (!interactionValidation.ok)
                 return (0, gameRuntimeShared_js_7.result)(false, interactionValidation.errors.join('\n'));
             if (state.game.rules.discussion.answerPriorityEnabled && requestedQuestionTargetIds.length === 1
-                && !(0, playerStatus_js_9.canSpeakDuringDay)(state, requestedQuestionTargetIds[0])) {
+                && !(0, playerStatus_js_11.canSpeakDuringDay)(state, requestedQuestionTargetIds[0])) {
                 return (0, gameRuntimeShared_js_7.result)(false, '回答優先モードでは、昼会話できない人物を質問先へ指定できません。');
             }
             correctedInteraction = interactionValidation.interaction;
@@ -25534,7 +26195,7 @@ define("js/domain/correction/correctionRuntime", ["require", "exports", "js/doma
         else {
             return (0, gameRuntimeShared_js_7.result)(false, 'この種類のイベントは通常の部分修正対象ではありません。');
         }
-        event.payload = { ...event.payload, ...payload, editReason: String(reason).trim(), editedAt: (0, utils_js_31.nowIso)() };
+        event.payload = { ...event.payload, ...payload, editReason: String(reason).trim(), editedAt: (0, utils_js_32.nowIso)() };
         return (0, gameRuntimeShared_js_7.result)(true, '公開前イベントと対応する進行状態を修正しました。');
     }
     function correctRoleAssignment(state, { playerId, correctedRoleId, reason }) {
@@ -25607,7 +26268,7 @@ define("js/domain/correction/correctionRuntime", ["require", "exports", "js/doma
         const discussion = state.discussion;
         if (!discussion || state.game.phase !== 'discussion')
             return;
-        const aliveIds = (0, playerStatus_js_9.getDiscussionEligiblePlayerIds)(state);
+        const aliveIds = (0, playerStatus_js_11.getDiscussionEligiblePlayerIds)(state);
         const configured = Number(state.game.rules.speechCountPerDay ?? 0);
         const speechCounts = Object.fromEntries(aliveIds.map((id) => [id, 0]));
         state.events
@@ -25826,7 +26487,7 @@ define("js/domain/game/gameRuntime", ["require", "exports", "js/domain/game/game
  * 責務: 復元理由の検証、進行結果に対応する復元ポイントの選定、影響範囲の算出、StateStoreによる安全復元、無効化された後続イベントのGM監査保存、公開訂正通知を一つの訂正ユースケースとして実行する。
  * 変更ルール: スナップショット保存・履歴上限・状態正規化はStateStoreへ委譲し、DOMや画面状態を扱わない。復元影響のイベント比較はStateStoreと同じキー順非依存比較を使う。公開通知へ無効化イベントの機密内容を含めず、完全な旧イベントはGM限定監査イベントだけへ保存する。進行結果と復元地点の対応はこのモジュールを正本とし、UIで再判定しない。
  */
-define("js/domain/correction/restoreCorrectionService", ["require", "exports", "js/domain/game/gameRuntime", "js/shared/utils", "js/domain/correction/restorePointPolicy"], function (require, exports, gameRuntime_js_1, utils_js_32, restorePointPolicy_js_6) {
+define("js/domain/correction/restoreCorrectionService", ["require", "exports", "js/domain/game/gameRuntime", "js/shared/utils", "js/domain/correction/restorePointPolicy"], function (require, exports, gameRuntime_js_1, utils_js_33, restorePointPolicy_js_6) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.summarizeRestoreImpact = summarizeRestoreImpact;
@@ -25849,7 +26510,7 @@ define("js/domain/correction/restoreCorrectionService", ["require", "exports", "
         const pointEventsById = new Map((point?.state?.events ?? []).map((event) => [event.id, event]));
         return (state?.events ?? []).filter((event) => {
             const pointEvent = pointEventsById.get(event.id);
-            return !pointEvent || (0, utils_js_32.stableStringify)(pointEvent) !== (0, utils_js_32.stableStringify)(event);
+            return !pointEvent || (0, utils_js_33.stableStringify)(pointEvent) !== (0, utils_js_33.stableStringify)(event);
         });
     }
     function summarizeRestoreImpact(state, pointId) {
@@ -25943,9 +26604,9 @@ define("js/domain/correction/restoreCorrectionService", ["require", "exports", "
 });
 /**
  * 責務: リアルタイムまたは日終了スナップショットのプレイヤー相関モデルを、公開／機密境界と選択中レイヤーに従って描画する。
- * 変更ルール: ゲーム状態とスナップショットを更新しない。モデル構築・日終了保存・死亡時点別の疑い線除外はdomain/records/playerRelationshipModel.jsへ委譲し、機密情報非表示時は疑い関係・疑い強度・真役職をDOMへ生成しない。公開能力結果はそのゲームの配役に含まれる公開主張可能役職だけを独立レイヤーとして切り替え、配役に存在しない役職の切替UIは生成しない。線種は能力役職、疑い線は判断強度を表示クラスへ射影する。SVGではプレイヤーカードを先に描画し、相関線を後から描画して常にカードより前面へ表示する。状態由来の文字列と識別子は必ずHTMLエスケープする。
+ * 変更ルール: ゲーム状態とスナップショットを更新しない。モデル構築・日終了保存・死亡時点別の疑い線除外・公開／機密境界はdomain/records/playerRelationshipModel.jsへ委譲する。疑い対象と疑い線は機密表示OFFでも描画し、内部確信度である疑い強度と真役職だけを機密表示へ限定する。公開能力結果はそのゲームの配役に含まれる公開主張可能役職だけを独立レイヤーとして切り替え、配役に存在しない役職の切替UIは生成しない。線種は能力役職、疑い線は機密表示時だけ判断強度を表示クラスへ射影する。SVGではプレイヤーカードを先に描画し、相関線を後から描画して常にカードより前面へ表示する。状態由来の文字列と識別子は必ずHTMLエスケープする。
  */
-define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/domain/records/playerRelationshipModel", "js/domain/policies/publicAbilityClaimPolicy", "js/shared/utils"], function (require, exports, playerRelationshipModel_js_2, publicAbilityClaimPolicy_js_19, utils_js_33) {
+define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/domain/records/playerRelationshipModel", "js/domain/policies/publicAbilityClaimPolicy", "js/shared/utils"], function (require, exports, playerRelationshipModel_js_2, publicAbilityClaimPolicy_js_19, utils_js_34) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.PLAYER_RELATIONSHIP_TYPES = exports.PLAYER_RELATIONSHIP_LABELS = exports.buildPlayerRelationshipModel = void 0;
@@ -26090,22 +26751,27 @@ define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/
                 return '';
             const connected = !selectedPlayerId || edge.sourceId === selectedPlayerId || edge.targetId === selectedPlayerId;
             const abilityRoleVariant = edge.type === 'ability' ? abilityVariant(edge) : '';
-            const suspicionStrength = edge.type === 'suspicion'
-                ? normalizedSuspicionStrength(suspicionStrengthBySource.get(edge.sourceId))
+            const rawSuspicionStrength = edge.type === 'suspicion' ? suspicionStrengthBySource.get(edge.sourceId) : null;
+            const suspicionStrength = edge.type === 'suspicion' && rawSuspicionStrength
+                ? normalizedSuspicionStrength(rawSuspicionStrength)
                 : '';
             const variantClass = edge.type === 'ability'
                 ? `relationship-ability-${abilityRoleVariant}`
                 : edge.type === 'suspicion'
-                    ? `relationship-suspicion-strength-${suspicionStrength}`
+                    ? suspicionStrength
+                        ? `relationship-suspicion-strength-${suspicionStrength}`
+                        : 'relationship-suspicion-strength-hidden'
                     : '';
             const className = `relationship-edge ${relationClass(edge.type)} ${variantClass} ${connected ? '' : 'is-dimmed'}`;
             const pathId = `relationship-edge-path-${index}`;
             const label = edge.type === 'ability' ? String(edge.graphLabel || edge.label || '').trim() : '';
             const title = edge.type === 'suspicion'
-                ? `疑い（${SUSPICION_STRENGTH_LABELS[suspicionStrength]}）`
+                ? suspicionStrength
+                    ? `疑い（${SUSPICION_STRENGTH_LABELS[suspicionStrength]}）`
+                    : '疑い'
                 : edge.label;
             const markerVariant = edge.type === 'ability' ? abilityRoleVariant : '';
-            return `<g class="${className}"><title>${(0, utils_js_33.escapeHtml)(title)}</title><path id="${pathId}" d="${geometry.path}" marker-end="url(#${markerId(edge.type, markerVariant)})"></path>${label ? `<text x="${geometry.labelX}" y="${geometry.labelY}"><tspan>${(0, utils_js_33.escapeHtml)(compact(label, 12))}</tspan></text>` : ''}</g>`;
+            return `<g class="${className}"><title>${(0, utils_js_34.escapeHtml)(title)}</title><path id="${pathId}" d="${geometry.path}" marker-end="url(#${markerId(edge.type, markerVariant)})"></path>${label ? `<text x="${geometry.labelX}" y="${geometry.labelY}"><tspan>${(0, utils_js_34.escapeHtml)(compact(label, 12))}</tspan></text>` : ''}</g>`;
         }).join('');
     }
     function renderNodes(nodes, positions, edges, selectedPlayerId) {
@@ -26125,7 +26791,7 @@ define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/
             const dimmed = Boolean(selectedPlayerId && !relatedIds.has(node.id));
             const coText = node.claimedRoleName ? `${node.claimedRoleName}CO` : 'COなし';
             const roleText = node.actualRoleName ? `真役職: ${node.actualRoleName}` : '';
-            return `<g class="relationship-node ${node.alive ? 'is-alive' : 'is-dead'} ${selected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''}" transform="translate(${(position.x - (NODE_WIDTH / 2)).toFixed(1)} ${(position.y - (NODE_HEIGHT / 2)).toFixed(1)})" data-action="relationship-select-player" data-player-id="${(0, utils_js_33.escapeHtml)(node.id)}"><title>${(0, utils_js_33.escapeHtml)(`${node.name}、${coText}${roleText ? `、${roleText}` : ''}`)}</title><rect width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="14"></rect><circle cx="17" cy="19" r="5"></circle><text class="relationship-node-name" x="30" y="24">${(0, utils_js_33.escapeHtml)(compact(node.name, 15))}</text><text class="relationship-node-co" x="14" y="50">${(0, utils_js_33.escapeHtml)(compact(coText, 19))}</text>${roleText ? `<text class="relationship-node-role" x="14" y="70">${(0, utils_js_33.escapeHtml)(compact(roleText, 21))}</text>` : ''}</g>`;
+            return `<g class="relationship-node ${node.alive ? 'is-alive' : 'is-dead'} ${selected ? 'is-selected' : ''} ${dimmed ? 'is-dimmed' : ''}" transform="translate(${(position.x - (NODE_WIDTH / 2)).toFixed(1)} ${(position.y - (NODE_HEIGHT / 2)).toFixed(1)})" data-action="relationship-select-player" data-player-id="${(0, utils_js_34.escapeHtml)(node.id)}"><title>${(0, utils_js_34.escapeHtml)(`${node.name}、${coText}${roleText ? `、${roleText}` : ''}`)}</title><rect width="${NODE_WIDTH}" height="${NODE_HEIGHT}" rx="14"></rect><circle cx="17" cy="19" r="5"></circle><text class="relationship-node-name" x="30" y="24">${(0, utils_js_34.escapeHtml)(compact(node.name, 15))}</text><text class="relationship-node-co" x="14" y="50">${(0, utils_js_34.escapeHtml)(compact(coText, 19))}</text>${roleText ? `<text class="relationship-node-role" x="14" y="70">${(0, utils_js_34.escapeHtml)(compact(roleText, 21))}</text>` : ''}</g>`;
         }).join('');
     }
     function configuredPublicAbilityRoleIds(state) {
@@ -26142,14 +26808,14 @@ define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/
             disabled: false,
         }));
         const items = [
-            { layerKey: 'suspicion', relationType: 'suspicion', roleId: null, label: model.showConfidential ? '疑い' : '疑い（機密情報）', count: model.counts.suspicion, disabled: !model.showConfidential },
+            { layerKey: 'suspicion', relationType: 'suspicion', roleId: null, label: '疑い', count: model.counts.suspicion, disabled: false },
             ...abilityItems,
             { layerKey: 'vote', relationType: 'vote', roleId: null, label: model.latestVoteDay === null ? '公開投票' : `Day ${model.latestVoteDay} 投票`, count: model.counts.vote, disabled: false },
         ];
         return `<div class="relationship-layer-controls" aria-label="表示する関係">${items.map((item) => {
             const active = visibleTypes.has(item.layerKey) && !item.disabled;
             const abilityClass = item.relationType === 'ability' ? `relationship-ability-${abilityVariant({ abilityRoleId: item.roleId })}` : '';
-            return `<button class="relationship-layer-toggle ${relationClass(item.relationType)} ${abilityClass} ${active ? 'is-active' : ''}" data-action="relationship-toggle-layer" data-relation-type="${(0, utils_js_33.escapeHtml)(item.layerKey)}" aria-pressed="${active}" ${item.disabled ? 'disabled' : ''} type="button"><span></span>${(0, utils_js_33.escapeHtml)(item.label)} <strong>${item.count}</strong></button>`;
+            return `<button class="relationship-layer-toggle ${relationClass(item.relationType)} ${abilityClass} ${active ? 'is-active' : ''}" data-action="relationship-toggle-layer" data-relation-type="${(0, utils_js_34.escapeHtml)(item.layerKey)}" aria-pressed="${active}" ${item.disabled ? 'disabled' : ''} type="button"><span></span>${(0, utils_js_34.escapeHtml)(item.label)} <strong>${item.count}</strong></button>`;
         }).join('')}</div>`;
     }
     function namesForIds(ids, nodeById) {
@@ -26159,7 +26825,7 @@ define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/
         const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
         const selected = nodeById.get(selectedPlayerId) ?? null;
         if (!selected) {
-            return `<div class="relationship-summary"><h3>相関図の見方</h3><p>プレイヤーを選ぶと、その人物から出る関係と向けられている関係を強調します。</p><dl><div><dt>参加者</dt><dd>${model.nodes.length}名</dd></div><div><dt>CO中</dt><dd>${model.nodes.filter((node) => node.claimedRoleId).length}名</dd></div><div><dt>疑い関係</dt><dd>${model.showConfidential ? `${model.counts.suspicion}本` : '機密情報非表示'}</dd></div><div><dt>公開能力結果</dt><dd>${model.counts.ability}本</dd></div><div><dt>公開投票</dt><dd>${model.counts.vote}本</dd></div></dl></div>`;
+            return `<div class="relationship-summary"><h3>相関図の見方</h3><p>プレイヤーを選ぶと、その人物から出る関係と向けられている関係を強調します。</p><dl><div><dt>参加者</dt><dd>${model.nodes.length}名</dd></div><div><dt>CO中</dt><dd>${model.nodes.filter((node) => node.claimedRoleId).length}名</dd></div><div><dt>疑い関係</dt><dd>${model.counts.suspicion}本</dd></div><div><dt>公開能力結果</dt><dd>${model.counts.ability}本</dd></div><div><dt>公開投票</dt><dd>${model.counts.vote}本</dd></div></dl></div>`;
         }
         const outgoingSuspicion = model.edges.filter((edge) => edge.type === 'suspicion' && edge.sourceId === selected.id);
         const incomingSuspicion = model.edges.filter((edge) => edge.type === 'suspicion' && edge.targetId === selected.id);
@@ -26169,14 +26835,14 @@ define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/
         const votes = model.edges.filter((edge) => edge.type === 'vote' && edge.sourceId === selected.id);
         const outgoingNames = namesForIds(outgoingSuspicion.map((edge) => edge.targetId), nodeById);
         const incomingNames = namesForIds(incomingSuspicion.map((edge) => edge.sourceId), nodeById);
-        return `<div class="relationship-player-detail"><div class="relationship-detail-head"><div><span>${selected.alive ? '生存' : '死亡'}・${selected.controller === 'ai' ? 'AI' : '人間'}</span><h3>${(0, utils_js_33.escapeHtml)(selected.name)}</h3></div><button class="button ghost small" data-action="relationship-clear-selection" type="button">全体表示</button></div><dl class="relationship-detail-list"><div><dt>公開CO</dt><dd>${selected.claimedRoleId ? (0, utils_js_33.escapeHtml)(`${selected.claimedRoleName}CO`) : 'なし'}</dd></div>${selected.actualRoleId ? `<div><dt>真の役職</dt><dd>${(0, utils_js_33.escapeHtml)(getRoleName(selected.actualRoleId))}</dd></div>` : ''}<div><dt>疑っている相手</dt><dd>${model.showConfidential ? (0, utils_js_33.escapeHtml)(outgoingNames.join('、') || 'なし') : '機密情報非表示'}</dd></div><div><dt>疑いを向けている相手</dt><dd>${model.showConfidential ? (0, utils_js_33.escapeHtml)(incomingNames.join('、') || 'なし') : '機密情報非表示'}</dd></div><div><dt>公開能力結果</dt><dd>${abilityClaims.length ? abilityClaims.map((edge) => `${(0, utils_js_33.escapeHtml)(nodeById.get(edge.targetId)?.name ?? '不明')}：${(0, utils_js_33.escapeHtml)(edge.label)}`).join('<br>') : 'なし'}</dd></div><div><dt>最新の公開投票</dt><dd>${votes.length ? (0, utils_js_33.escapeHtml)(nodeById.get(votes[0].targetId)?.name ?? '不明') : 'なし'}</dd></div></dl></div>`;
+        return `<div class="relationship-player-detail"><div class="relationship-detail-head"><div><span>${selected.alive ? '生存' : '死亡'}・${selected.controller === 'ai' ? 'AI' : '人間'}</span><h3>${(0, utils_js_34.escapeHtml)(selected.name)}</h3></div><button class="button ghost small" data-action="relationship-clear-selection" type="button">全体表示</button></div><dl class="relationship-detail-list"><div><dt>公開CO</dt><dd>${selected.claimedRoleId ? (0, utils_js_34.escapeHtml)(`${selected.claimedRoleName}CO`) : 'なし'}</dd></div>${selected.actualRoleId ? `<div><dt>真の役職</dt><dd>${(0, utils_js_34.escapeHtml)(getRoleName(selected.actualRoleId))}</dd></div>` : ''}<div><dt>疑っている相手</dt><dd>${(0, utils_js_34.escapeHtml)(outgoingNames.join('、') || 'なし')}</dd></div><div><dt>疑いを向けている相手</dt><dd>${(0, utils_js_34.escapeHtml)(incomingNames.join('、') || 'なし')}</dd></div><div><dt>公開能力結果</dt><dd>${abilityClaims.length ? abilityClaims.map((edge) => `${(0, utils_js_34.escapeHtml)(nodeById.get(edge.targetId)?.name ?? '不明')}：${(0, utils_js_34.escapeHtml)(edge.label)}`).join('<br>') : 'なし'}</dd></div><div><dt>最新の公開投票</dt><dd>${votes.length ? (0, utils_js_34.escapeHtml)(nodeById.get(votes[0].targetId)?.name ?? '不明') : 'なし'}</dd></div></dl></div>`;
     }
     function renderPlayerIndex(nodes, selectedPlayerId) {
-        return `<div class="relationship-player-index" aria-label="プレイヤー一覧">${nodes.map((node) => `<button class="relationship-player-index-item ${selectedPlayerId === node.id ? 'is-selected' : ''} ${node.alive ? '' : 'is-dead'}" data-action="relationship-select-player" data-player-id="${(0, utils_js_33.escapeHtml)(node.id)}" type="button"><span>${(0, utils_js_33.escapeHtml)(node.name)}</span><small>${node.claimedRoleName ? (0, utils_js_33.escapeHtml)(`${node.claimedRoleName}CO`) : 'COなし'}</small></button>`).join('')}</div>`;
+        return `<div class="relationship-player-index" aria-label="プレイヤー一覧">${nodes.map((node) => `<button class="relationship-player-index-item ${selectedPlayerId === node.id ? 'is-selected' : ''} ${node.alive ? '' : 'is-dead'}" data-action="relationship-select-player" data-player-id="${(0, utils_js_34.escapeHtml)(node.id)}" type="button"><span>${(0, utils_js_34.escapeHtml)(node.name)}</span><small>${node.claimedRoleName ? (0, utils_js_34.escapeHtml)(`${node.claimedRoleName}CO`) : 'COなし'}</small></button>`).join('')}</div>`;
     }
     function renderSnapshotSelector(snapshots, selectedSnapshotId) {
         const items = [...(snapshots ?? [])].sort((left, right) => Number(left.day) - Number(right.day));
-        return `<div class="relationship-snapshot-bar"><div><span>表示時点</span><strong>${selectedSnapshotId ? `Day ${Number(items.find((item) => item.id === selectedSnapshotId)?.day ?? 0)} 終了時点` : 'リアルタイム'}</strong></div><div class="relationship-snapshot-list" role="tablist" aria-label="相関図の表示時点"><button class="relationship-snapshot-button ${selectedSnapshotId ? '' : 'is-active'}" data-action="relationship-select-snapshot" data-snapshot-id="" role="tab" aria-selected="${!selectedSnapshotId}" type="button">リアルタイム</button>${items.map((snapshot) => `<button class="relationship-snapshot-button ${selectedSnapshotId === snapshot.id ? 'is-active' : ''}" data-action="relationship-select-snapshot" data-snapshot-id="${(0, utils_js_33.escapeHtml)(snapshot.id)}" role="tab" aria-selected="${selectedSnapshotId === snapshot.id}" type="button">Day ${Number(snapshot.day)} 終了</button>`).join('')}</div></div>`;
+        return `<div class="relationship-snapshot-bar"><div><span>表示時点</span><strong>${selectedSnapshotId ? `Day ${Number(items.find((item) => item.id === selectedSnapshotId)?.day ?? 0)} 終了時点` : 'リアルタイム'}</strong></div><div class="relationship-snapshot-list" role="tablist" aria-label="相関図の表示時点"><button class="relationship-snapshot-button ${selectedSnapshotId ? '' : 'is-active'}" data-action="relationship-select-snapshot" data-snapshot-id="" role="tab" aria-selected="${!selectedSnapshotId}" type="button">リアルタイム</button>${items.map((snapshot) => `<button class="relationship-snapshot-button ${selectedSnapshotId === snapshot.id ? 'is-active' : ''}" data-action="relationship-select-snapshot" data-snapshot-id="${(0, utils_js_34.escapeHtml)(snapshot.id)}" role="tab" aria-selected="${selectedSnapshotId === snapshot.id}" type="button">Day ${Number(snapshot.day)} 終了</button>`).join('')}</div></div>`;
     }
     function renderPlayerRelationshipView({ state, showConfidential = false, selectedPlayerId = '', selectedSnapshotId = '', visibleRelationTypes = DEFAULT_VISIBLE_RELATION_LAYERS, getRoleName = (roleId) => roleId ?? '', } = {}) {
         const visibleTypes = new Set((visibleRelationTypes ?? []).filter((type) => isVisibleLayerKey(type)));
@@ -26191,20 +26857,20 @@ define("js/ui/views/records/playerRelationshipView", ["require", "exports", "js/
         const suspicionStrengthBySource = new Map(model.nodes.map((node) => [node.id, node.suspicionStrength]));
         const hasAnyRelation = edges.length > 0;
         const viewTitle = snapshot ? `Day ${Number(snapshot.day)} 終了時点` : 'リアルタイム';
-        return `<section class="player-relationship-view panel">${renderSnapshotSelector(state.relationshipSnapshots, resolvedSnapshotId)}<div class="relationship-toolbar"><div><span class="eyebrow">プレイヤー相関図・${(0, utils_js_33.escapeHtml)(viewTitle)}</span><h3>CO・疑い・公開結果</h3></div>${renderLegend(model, visibleTypes, getRoleName, state)}</div><div class="relationship-layout"><div class="relationship-canvas-wrap"><svg class="relationship-canvas" viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" role="img" aria-label="${(0, utils_js_33.escapeHtml)(viewTitle)}のプレイヤーCOと関係を示す相関図"><defs>${renderMarkerDefinitions()}</defs>${renderNodes(model.nodes, positions, edges, validSelectedPlayerId)}${renderEdges(edges, positions, validSelectedPlayerId, suspicionStrengthBySource)}</svg>${hasAnyRelation ? '' : `<div class="relationship-empty">${!showConfidential && model.counts.ability === 0 && model.counts.vote === 0 ? 'CO以外の公開関係はまだありません。疑い関係は機密情報を表示すると確認できます。' : '選択中の関係はまだ記録されていません。'}</div>`}</div><aside class="relationship-side-panel">${renderSelectedPlayerDetail(model, validSelectedPlayerId, getRoleName, visibleTypes)}${renderPlayerIndex(model.nodes, validSelectedPlayerId)}</aside></div></section>`;
+        return `<section class="player-relationship-view panel">${renderSnapshotSelector(state.relationshipSnapshots, resolvedSnapshotId)}<div class="relationship-toolbar"><div><span class="eyebrow">プレイヤー相関図・${(0, utils_js_34.escapeHtml)(viewTitle)}</span><h3>CO・疑い・公開結果</h3></div>${renderLegend(model, visibleTypes, getRoleName, state)}</div><div class="relationship-layout"><div class="relationship-canvas-wrap"><svg class="relationship-canvas" viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" role="img" aria-label="${(0, utils_js_34.escapeHtml)(viewTitle)}のプレイヤーCOと関係を示す相関図"><defs>${renderMarkerDefinitions()}</defs>${renderNodes(model.nodes, positions, edges, validSelectedPlayerId)}${renderEdges(edges, positions, validSelectedPlayerId, suspicionStrengthBySource)}</svg>${hasAnyRelation ? '' : '<div class="relationship-empty">選択中の関係はまだ記録されていません。</div>'}</div><aside class="relationship-side-panel">${renderSelectedPlayerDetail(model, validSelectedPlayerId, getRoleName, visibleTypes)}${renderPlayerIndex(model.nodes, validSelectedPlayerId)}</aside></div></section>`;
     }
 });
 /**
  * 責務: 訂正・復元と、リアルタイム／日終了履歴を切り替えられるプレイヤー相関図、イベント、発言番号付きAI監査、操作通知履歴、心の声、内部メモ、共有会話、公開内容の訂正、進行結果の復元再進行、復元ポイントの管理画面を描画する。
  * 変更ルール: 状態更新やゲームデータ出力処理を行わず、機密情報は表示許可時だけDOMへ生成する。AI応答の発言番号はaiTurn.committedEntityIdsと公開イベントsequenceの対応から描画時に導出し、監査stateへ重複保存しない。記録・管理ヘッダーには現在ゲームの保存導線としてゲームデータ出力だけを置き、読込はゲーム準備へ集約する。操作通知履歴はUI層から受け取った現行セッション分だけを表示し、ゲーム状態へ混在させない。復元・進行結果訂正・公開内容訂正は単一ワークスペース内のタブで分離し、一覧は選択、詳細ペインは影響確認と実行だけを担当する。利用者向けの訂正モード開始操作は置かず、訂正・復元時の自動開始と明示終了だけを表示する。共有会話と監査情報は補助領域として折りたたみ、状態由来の識別子をHTML属性へ出力する場合は必ずエスケープする。
  */
-define("js/ui/views/records/recordsView", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/memory/memoryLedger", "js/domain/correction/restoreCorrectionService", "js/ui/views/records/playerRelationshipView"], function (require, exports, constants_js_43, utils_js_34, memoryLedger_js_14, restoreCorrectionService_js_1, playerRelationshipView_js_1) {
+define("js/ui/views/records/recordsView", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/memory/memoryLedger", "js/domain/correction/restoreCorrectionService", "js/ui/views/records/playerRelationshipView"], function (require, exports, constants_js_43, utils_js_35, memoryLedger_js_14, restoreCorrectionService_js_1, playerRelationshipView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.formatGenerationRun = formatGenerationRun;
     exports.renderRecordsView = renderRecordsView;
     function option(value, label) {
-        return `<option value="${(0, utils_js_34.escapeHtml)(value)}">${(0, utils_js_34.escapeHtml)(label)}</option>`;
+        return `<option value="${(0, utils_js_35.escapeHtml)(value)}">${(0, utils_js_35.escapeHtml)(label)}</option>`;
     }
     function correctionStructuredFields(state) {
         const roleOptions = [
@@ -26217,7 +26883,7 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
             option('none', '質問先なし'),
             ...state.players.filter((player) => player.alive).map((player) => option(player.id, player.name)),
         ].join('');
-        return `<details class="optional-box"><summary>公開発言に含まれる情報</summary><p class="help">質問先を変更すると、その相手への回答予定にも影響します。通常は元の値を維持し、質問先自体が誤っていた場合だけ変更してください。</p><label class="field"><span>質問先</span><select data-draft="correction-question-target">${questionTargetOptions}</select></label><label class="field"><span>CO・能力結果</span><select data-draft="correction-structured-mode">${option('preserve', '元のCO・能力結果を維持')}${option('replace', '以下のCO・能力結果へ置換')}</select></label><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-draft="correction-co-action">${option('none', '変更しない')}${option('declare', '新しくCO')}${option('change', 'CO役職を変更')}${option('withdraw', 'COを撤回')}</select></label><label class="field"><span>COする役職</span><select data-draft="correction-co-role">${roleOptions}</select></label><label class="field"><span>能力結果の操作</span><select data-draft="correction-ability-action">${option('none', '公開しない')}${option('publish', '能力結果を公開')}</select></label><label class="field"><span>能力の種類</span><select data-draft="correction-ability-role">${option('none', '指定なし')}${option('seer', '占い')}${option('medium', '霊能')}${option('guard', '護衛')}</select></label><label class="field"><span>能力を使用した日</span><input type="number" min="0" data-draft="correction-ability-day" value="0"></label><label class="field"><span>能力対象</span><select data-draft="correction-ability-target">${playerOptions}</select></label><label class="field"><span>結果</span><select data-draft="correction-ability-result">${option('none', '指定なし')}${option('wolf', '人狼')}${option('not-wolf', '人狼ではない')}${option('unknown', '不明（狩人）')}</select></label><label class="field"><span>対象選択根拠</span><select data-draft="correction-ability-basis">${option('no-public-information', '公開根拠なし')}${option('public-evidence', '公開履歴を根拠に選択')}${option('rule-forced', '処刑履歴で対象固定')}</select></label><label class="field"><span>根拠とする公開ログ番号</span><input data-draft="correction-ability-evidence" placeholder="#15,#18 または空欄"></label><label class="field"><span>当時の対象選択理由</span><input data-draft="correction-ability-reason" placeholder="公開履歴を根拠に選択した場合だけ入力"></label></div><p class="help">能力結果を置換すると、登録済みの能力結果は1件に置き換わります。複数の能力結果を残したい場合は元の内容を維持してください。質問への専用回答として登録された発言では質問先を変更できません。進行そのものをやり直す必要がある訂正は、復元ポイントから再進行してください。</p></details>`;
+        return `<details class="optional-box"><summary>公開発言に含まれる情報</summary><p class="help">質問先を変更すると、その相手への回答予定にも影響します。通常は元の値を維持し、質問先自体が誤っていた場合だけ変更してください。</p><label class="field"><span>質問先</span><select data-draft="correction-question-target">${questionTargetOptions}</select></label><label class="field"><span>CO・能力結果</span><select data-draft="correction-structured-mode">${option('preserve', '元のCO・能力結果を維持')}${option('replace', '以下のCO・能力結果へ置換')}</select></label><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-draft="correction-co-action">${option('none', '変更しない')}${option('declare', '新しくCO')}${option('change', 'CO役職を変更')}${option('withdraw', 'COを撤回')}</select></label><label class="field"><span>COする役職</span><select data-draft="correction-co-role">${roleOptions}</select></label><label class="field"><span>能力結果の操作</span><select data-draft="correction-ability-action">${option('none', '公開しない')}${option('publish', '能力結果を公開')}</select></label><label class="field"><span>能力の種類</span><select data-draft="correction-ability-role">${option('none', '指定なし')}${option('seer', '占い')}${option('medium', '霊能')}${option('guard', '護衛')}</select></label><label class="field"><span>能力を実行・成立したDay</span><input type="number" min="0" data-draft="correction-ability-day" value="0"></label><label class="field"><span>能力対象</span><select data-draft="correction-ability-target">${playerOptions}</select></label><label class="field"><span>結果</span><select data-draft="correction-ability-result">${option('none', '指定なし')}${option('wolf', '人狼')}${option('not-wolf', '人狼ではない')}${option('unknown', '不明（狩人）')}</select></label><label class="field"><span>対象選択根拠</span><select data-draft="correction-ability-basis">${option('no-public-information', '公開根拠なし')}${option('public-evidence', '公開履歴を根拠に選択')}${option('rule-forced', '処刑履歴で対象固定')}</select></label><label class="field"><span>根拠とする公開ログ番号</span><input data-draft="correction-ability-evidence" placeholder="#15,#18 または空欄"></label><label class="field"><span>当時の対象選択理由</span><input data-draft="correction-ability-reason" placeholder="公開履歴を根拠に選択した場合だけ入力"></label></div><p class="help">能力結果を置換すると、登録済みの能力結果は1件に置き換わります。複数の能力結果を残したい場合は元の内容を維持してください。質問への専用回答として登録された発言では質問先を変更できません。進行そのものをやり直す必要がある訂正は、復元ポイントから再進行してください。</p></details>`;
     }
     function formatAuditData(turn) {
         const data = {
@@ -26228,7 +26894,7 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
         };
         if (Object.values(data).every((value) => value === null))
             return '';
-        return `<details class="optional-box"><summary>応答データの詳細</summary><pre>${(0, utils_js_34.escapeHtml)(JSON.stringify(data, null, 2))}</pre></details>`;
+        return `<details class="optional-box"><summary>応答データの詳細</summary><pre>${(0, utils_js_35.escapeHtml)(JSON.stringify(data, null, 2))}</pre></details>`;
     }
     function aiTurnPublicSpeechSequenceLabel(state, turn) {
         const committedIds = new Set((turn?.committedEntityIds ?? []).map(String));
@@ -26255,17 +26921,17 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
         const history = exchanges.length
             ? `<div class="postgame-analysis-history">${exchanges.map((exchange, index) => {
                 const attributions = exchange.attributions?.length
-                    ? `<ul>${exchange.attributions.map((item) => `<li><strong>影響度 ${(0, utils_js_34.escapeHtml)(POSTGAME_INFLUENCE_LABELS[item.influence] ?? item.influence)} / ${(0, utils_js_34.escapeHtml)(item.source)}</strong>${item.excerpt ? `<p>該当箇所: ${(0, utils_js_34.escapeHtml)(item.excerpt)}</p>` : ''}<p>${(0, utils_js_34.escapeHtml)(item.reason)}</p></li>`).join('')}</ul>`
+                    ? `<ul>${exchange.attributions.map((item) => `<li><strong>影響度 ${(0, utils_js_35.escapeHtml)(POSTGAME_INFLUENCE_LABELS[item.influence] ?? item.influence)} / ${(0, utils_js_35.escapeHtml)(item.source)}</strong>${item.excerpt ? `<p>該当箇所: ${(0, utils_js_35.escapeHtml)(item.excerpt)}</p>` : ''}<p>${(0, utils_js_35.escapeHtml)(item.reason)}</p></li>`).join('')}</ul>`
                     : '<p>具体的な影響箇所は特定されませんでした。</p>';
-                return `<details class="optional-box" ${index === exchanges.length - 1 ? 'open' : ''}><summary>GM質問 ${index + 1}: ${(0, utils_js_34.escapeHtml)(compactText(exchange.question, 72))}</summary><p><strong>回答</strong></p><p>${(0, utils_js_34.escapeHtml)(exchange.answer)}</p><p><strong>影響箇所</strong></p>${attributions}${exchange.otherFactors ? `<p><strong>その他の要因</strong></p><p>${(0, utils_js_34.escapeHtml)(exchange.otherFactors)}</p>` : ''}${exchange.promptImprovement ? `<p><strong>プロンプト改善案</strong></p><p>${(0, utils_js_34.escapeHtml)(exchange.promptImprovement)}</p>` : ''}${exchange.uncertainty ? `<p class="help">${(0, utils_js_34.escapeHtml)(exchange.uncertainty)}</p>` : ''}</details>`;
+                return `<details class="optional-box" ${index === exchanges.length - 1 ? 'open' : ''}><summary>GM質問 ${index + 1}: ${(0, utils_js_35.escapeHtml)(compactText(exchange.question, 72))}</summary><p><strong>回答</strong></p><p>${(0, utils_js_35.escapeHtml)(exchange.answer)}</p><p><strong>影響箇所</strong></p>${attributions}${exchange.otherFactors ? `<p><strong>その他の要因</strong></p><p>${(0, utils_js_35.escapeHtml)(exchange.otherFactors)}</p>` : ''}${exchange.promptImprovement ? `<p><strong>プロンプト改善案</strong></p><p>${(0, utils_js_35.escapeHtml)(exchange.promptImprovement)}</p>` : ''}${exchange.uncertainty ? `<p class="help">${(0, utils_js_35.escapeHtml)(exchange.uncertainty)}</p>` : ''}</details>`;
             }).join('')}</div>`
             : '';
-        const error = analysis.error ? `<div class="alert error-alert"><strong>分析失敗</strong><span>${(0, utils_js_34.escapeHtml)(analysis.error)}</span></div>` : '';
-        const unavailable = unavailableReason ? `<p class="help">${(0, utils_js_34.escapeHtml)(unavailableReason)}</p>` : '';
+        const error = analysis.error ? `<div class="alert error-alert"><strong>分析失敗</strong><span>${(0, utils_js_35.escapeHtml)(analysis.error)}</span></div>` : '';
+        const unavailable = unavailableReason ? `<p class="help">${(0, utils_js_35.escapeHtml)(unavailableReason)}</p>` : '';
         const form = analysis.available
-            ? `<label class="field"><span>GMからの質問</span><textarea data-draft="postgame-analysis-question:${(0, utils_js_34.escapeHtml)(turn.id)}" placeholder="例: この発言は生成時プロンプトのどの部分に強く引っ張られた可能性がありますか？">${(0, utils_js_34.escapeHtml)(analysis.draftQuestion ?? '')}</textarea></label><div class="button-row"><button class="button primary" data-action="postgame-analysis-ask" data-turn-id="${(0, utils_js_34.escapeHtml)(turn.id)}" type="button" ${analysis.pending ? 'disabled' : ''}>${analysis.pending ? '分析中…' : 'GMから質問する'}</button>${exchanges.length ? `<button class="button ghost" data-action="postgame-analysis-clear" data-turn-id="${(0, utils_js_34.escapeHtml)(turn.id)}" type="button" ${analysis.pending ? 'disabled' : ''}>質問履歴を消去</button>` : ''}</div>`
+            ? `<label class="field"><span>GMからの質問</span><textarea data-draft="postgame-analysis-question:${(0, utils_js_35.escapeHtml)(turn.id)}" placeholder="例: この発言は生成時プロンプトのどの部分に強く引っ張られた可能性がありますか？">${(0, utils_js_35.escapeHtml)(analysis.draftQuestion ?? '')}</textarea></label><div class="button-row"><button class="button primary" data-action="postgame-analysis-ask" data-turn-id="${(0, utils_js_35.escapeHtml)(turn.id)}" type="button" ${analysis.pending ? 'disabled' : ''}>${analysis.pending ? '分析中…' : 'GMから質問する'}</button>${exchanges.length ? `<button class="button ghost" data-action="postgame-analysis-clear" data-turn-id="${(0, utils_js_35.escapeHtml)(turn.id)}" type="button" ${analysis.pending ? 'disabled' : ''}>質問履歴を消去</button>` : ''}</div>`
             : '';
-        return `<details class="optional-box postgame-analysis-box" data-postgame-analysis-turn-id="${(0, utils_js_34.escapeHtml)(turn.id)}"><summary>ゲーム終了後のGM向けAI分析</summary><p class="help">保存済みのAI生成記録をもとに分析します。分析内容はゲーム進行には影響しません。AIの内部思考を表示する機能ではありません。</p>${history}${error}${unavailable}${form}</details>`;
+        return `<details class="optional-box postgame-analysis-box" data-postgame-analysis-turn-id="${(0, utils_js_35.escapeHtml)(turn.id)}"><summary>ゲーム終了後のGM向けAI分析</summary><p class="help">保存済みのAI生成記録をもとに分析します。分析内容はゲーム進行には影響しません。AIの内部思考を表示する機能ではありません。</p>${history}${error}${unavailable}${form}</details>`;
     }
     const GENERATION_STAGE_LABELS = Object.freeze({
         direct: '直接生成',
@@ -26288,17 +26954,17 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
                     ? (getAiProfileLabel(stage.executorProfileId) ?? `不明なプロファイル（${stage.executorProfileId}）`)
                     : 'このプロファイル';
             if (stage.status === 'skipped') {
-                return `<li><strong>${(0, utils_js_34.escapeHtml)(label)}</strong>: 対象文章なし / API呼び出しなし</li>`;
+                return `<li><strong>${(0, utils_js_35.escapeHtml)(label)}</strong>: 対象文章なし / API呼び出しなし</li>`;
             }
-            const fields = stage.targetTextFields?.length ? ` / ${(0, utils_js_34.escapeHtml)(stage.targetTextFields.join(', '))}` : '';
+            const fields = stage.targetTextFields?.length ? ` / ${(0, utils_js_35.escapeHtml)(stage.targetTextFields.join(', '))}` : '';
             const calls = manual ? '' : ` / ${Number(stage.attemptCount ?? 0)}回`;
             const fallback = stage.fallbackUsed ? ' / 前工程候補を採用' : '';
             const issues = stage.issues?.length
-                ? `<ul>${stage.issues.map((issue) => `<li>${(0, utils_js_34.escapeHtml)(issue.code)}: ${(0, utils_js_34.escapeHtml)(issue.message)}</li>`).join('')}</ul>`
+                ? `<ul>${stage.issues.map((issue) => `<li>${(0, utils_js_35.escapeHtml)(issue.code)}: ${(0, utils_js_35.escapeHtml)(issue.message)}</li>`).join('')}</ul>`
                 : '';
-            return `<li><strong>${(0, utils_js_34.escapeHtml)(label)}</strong>: ${(0, utils_js_34.escapeHtml)(executor)} / ${(0, utils_js_34.escapeHtml)(stage.status)}${calls}${fields}${fallback}${issues}</li>`;
+            return `<li><strong>${(0, utils_js_35.escapeHtml)(label)}</strong>: ${(0, utils_js_35.escapeHtml)(executor)} / ${(0, utils_js_35.escapeHtml)(stage.status)}${calls}${fields}${fallback}${issues}</li>`;
         }).join('');
-        return `<details class="optional-box"><summary>生成工程の詳細</summary><p>生成深度: ${Number(run.depth ?? 1)}（${(0, utils_js_34.escapeHtml)(callSummary)}）</p><ul>${stages}</ul><p>最終採用: ${(0, utils_js_34.escapeHtml)(GENERATION_STAGE_LABELS[run.finalStageId] ?? run.finalStageId)}</p></details>`;
+        return `<details class="optional-box"><summary>生成工程の詳細</summary><p>生成深度: ${Number(run.depth ?? 1)}（${(0, utils_js_35.escapeHtml)(callSummary)}）</p><ul>${stages}</ul><p>最終採用: ${(0, utils_js_35.escapeHtml)(GENERATION_STAGE_LABELS[run.finalStageId] ?? run.finalStageId)}</p></details>`;
     }
     function formatRecordEventText(event) {
         if (event.type === 'priority-answer-resolution')
@@ -26408,10 +27074,10 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
             { id: 'progression', label: '進行結果の訂正', count: counts.progression },
             { id: 'public', label: '公開済み情報の訂正', count: counts.public },
         ];
-        return `<div class="records-mode-tabs" role="tablist" aria-label="訂正・復元の操作種別">${tabs.map((tab) => `<button class="records-mode-tab ${mode === tab.id ? 'active' : ''}" data-action="records-correction-mode" data-mode="${tab.id}" role="tab" aria-selected="${mode === tab.id}" type="button"><span>${(0, utils_js_34.escapeHtml)(tab.label)}</span><strong>${tab.count}</strong></button>`).join('')}</div>`;
+        return `<div class="records-mode-tabs" role="tablist" aria-label="訂正・復元の操作種別">${tabs.map((tab) => `<button class="records-mode-tab ${mode === tab.id ? 'active' : ''}" data-action="records-correction-mode" data-mode="${tab.id}" role="tab" aria-selected="${mode === tab.id}" type="button"><span>${(0, utils_js_35.escapeHtml)(tab.label)}</span><strong>${tab.count}</strong></button>`).join('')}</div>`;
     }
     function renderCompactEmpty(title, message) {
-        return `<div class="records-compact-empty"><strong>${(0, utils_js_34.escapeHtml)(title)}</strong><span>${(0, utils_js_34.escapeHtml)(message)}</span></div>`;
+        return `<div class="records-compact-empty"><strong>${(0, utils_js_35.escapeHtml)(title)}</strong><span>${(0, utils_js_35.escapeHtml)(message)}</span></div>`;
     }
     function renderRestoreList(points, selectedId) {
         if (!points.length)
@@ -26419,7 +27085,7 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
         return `<div class="correction-item-list">${points.map((point) => {
             const day = Number(point.state?.game?.day ?? 0);
             const phase = constants_js_43.PHASE_LABELS[point.state?.game?.phase] ?? point.state?.game?.phase ?? '不明';
-            return `<button class="correction-item ${point.id === selectedId ? 'active' : ''}" data-action="records-correction-select" data-mode="restore" data-item-id="${(0, utils_js_34.escapeHtml)(point.id)}" type="button"><span class="correction-item-badge restore">復元</span><span class="correction-item-copy"><strong>${(0, utils_js_34.escapeHtml)(point.label)}</strong><small>Day ${day}・${(0, utils_js_34.escapeHtml)(phase)} / ${(0, utils_js_34.escapeHtml)((0, utils_js_34.formatDateTime)(point.createdAt))}</small></span><span class="correction-item-arrow">›</span></button>`;
+            return `<button class="correction-item ${point.id === selectedId ? 'active' : ''}" data-action="records-correction-select" data-mode="restore" data-item-id="${(0, utils_js_35.escapeHtml)(point.id)}" type="button"><span class="correction-item-badge restore">復元</span><span class="correction-item-copy"><strong>${(0, utils_js_35.escapeHtml)(point.label)}</strong><small>Day ${day}・${(0, utils_js_35.escapeHtml)(phase)} / ${(0, utils_js_35.escapeHtml)((0, utils_js_35.formatDateTime)(point.createdAt))}</small></span><span class="correction-item-arrow">›</span></button>`;
         }).join('')}</div>`;
     }
     function renderRestoreDetail(state, point) {
@@ -26428,14 +27094,14 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
         const impact = (0, restoreCorrectionService_js_1.summarizeRestoreImpact)(state, point.id);
         const day = Number(point.state?.game?.day ?? 0);
         const phase = constants_js_43.PHASE_LABELS[point.state?.game?.phase] ?? point.state?.game?.phase ?? '不明';
-        return `<div class="correction-detail-card"><div class="correction-detail-head"><div><span class="correction-item-badge restore">復元</span><h3>${(0, utils_js_34.escapeHtml)(point.label)}</h3><p>Day ${day}・${(0, utils_js_34.escapeHtml)(phase)}へ戻します。</p></div></div><dl class="correction-meta-grid"><div><dt>保存日時</dt><dd>${(0, utils_js_34.escapeHtml)((0, utils_js_34.formatDateTime)(point.createdAt))}</dd></div><div><dt>復元後</dt><dd>Day ${day}・${(0, utils_js_34.escapeHtml)(phase)}</dd></div><div><dt>外れるイベント</dt><dd>${impact?.supersededEventCount ?? 0}件</dd></div><div><dt>外れるAIターン</dt><dd>${impact?.aiTurnCount ?? 0}件</dd></div></dl><div class="records-impact-note"><strong>影響範囲</strong><span>公開イベント ${impact?.publicEventCount ?? 0}件を含む後続履歴は、訂正前の監査情報として保存されます。</span></div><label class="field"><span>復元理由</span><textarea data-draft="records-restore-reason" placeholder="誤った操作と、ここからやり直す理由を入力してください。"></textarea></label><button class="button danger correction-primary-action" data-action="restore-selected-point" data-point-id="${(0, utils_js_34.escapeHtml)(point.id)}" type="button">この地点へ復元</button></div>`;
+        return `<div class="correction-detail-card"><div class="correction-detail-head"><div><span class="correction-item-badge restore">復元</span><h3>${(0, utils_js_35.escapeHtml)(point.label)}</h3><p>Day ${day}・${(0, utils_js_35.escapeHtml)(phase)}へ戻します。</p></div></div><dl class="correction-meta-grid"><div><dt>保存日時</dt><dd>${(0, utils_js_35.escapeHtml)((0, utils_js_35.formatDateTime)(point.createdAt))}</dd></div><div><dt>復元後</dt><dd>Day ${day}・${(0, utils_js_35.escapeHtml)(phase)}</dd></div><div><dt>外れるイベント</dt><dd>${impact?.supersededEventCount ?? 0}件</dd></div><div><dt>外れるAIターン</dt><dd>${impact?.aiTurnCount ?? 0}件</dd></div></dl><div class="records-impact-note"><strong>影響範囲</strong><span>公開イベント ${impact?.publicEventCount ?? 0}件を含む後続履歴は、訂正前の監査情報として保存されます。</span></div><label class="field"><span>復元理由</span><textarea data-draft="records-restore-reason" placeholder="誤った操作と、ここからやり直す理由を入力してください。"></textarea></label><button class="button danger correction-primary-action" data-action="restore-selected-point" data-point-id="${(0, utils_js_35.escapeHtml)(point.id)}" type="button">この地点へ復元</button></div>`;
     }
     function renderProgressionList(events, selectedId, getPlayerName) {
         if (!events.length)
             return renderCompactEmpty('訂正対象の進行結果はありません', '投票・処刑・夜明け・勝敗が公開されると表示されます。');
         return `<div class="correction-item-list">${events.map((event) => {
             const badgeClass = PROGRESSION_BADGE_CLASSES[event.type] ?? 'public';
-            return `<button class="correction-item ${event.id === selectedId ? 'active' : ''}" data-action="records-correction-select" data-mode="progression" data-item-id="${(0, utils_js_34.escapeHtml)(event.id)}" type="button"><span class="correction-item-badge ${badgeClass}">${(0, utils_js_34.escapeHtml)(PROGRESSION_TYPE_LABELS[event.type] ?? constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</span><span class="correction-item-copy"><strong>Day ${event.day} / #${event.sequence}</strong><small>${(0, utils_js_34.escapeHtml)(progressionEventSummary(event, getPlayerName))}</small></span><span class="correction-item-arrow">›</span></button>`;
+            return `<button class="correction-item ${event.id === selectedId ? 'active' : ''}" data-action="records-correction-select" data-mode="progression" data-item-id="${(0, utils_js_35.escapeHtml)(event.id)}" type="button"><span class="correction-item-badge ${badgeClass}">${(0, utils_js_35.escapeHtml)(PROGRESSION_TYPE_LABELS[event.type] ?? constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</span><span class="correction-item-copy"><strong>Day ${event.day} / #${event.sequence}</strong><small>${(0, utils_js_35.escapeHtml)(progressionEventSummary(event, getPlayerName))}</small></span><span class="correction-item-arrow">›</span></button>`;
         }).join('')}</div>`;
     }
     function renderProgressionDetail(state, event, getPlayerName) {
@@ -26444,21 +27110,21 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
         const recommendation = (0, restoreCorrectionService_js_1.recommendRestorePointForProgressionEvent)(state, event.id);
         const badgeClass = PROGRESSION_BADGE_CLASSES[event.type] ?? 'public';
         if (!recommendation) {
-            return `<div class="correction-detail-card"><div class="correction-detail-head"><div><span class="correction-item-badge ${badgeClass}">${(0, utils_js_34.escapeHtml)(PROGRESSION_TYPE_LABELS[event.type] ?? event.type)}</span><h3>Day ${event.day} / #${event.sequence}</h3><p>${(0, utils_js_34.escapeHtml)(progressionEventSummary(event, getPlayerName))}</p></div></div><div class="records-impact-note warning"><strong>対応する復元ポイントがありません</strong><span>保存済みデータまたは別の復元ポイントを確認してください。</span></div></div>`;
+            return `<div class="correction-detail-card"><div class="correction-detail-head"><div><span class="correction-item-badge ${badgeClass}">${(0, utils_js_35.escapeHtml)(PROGRESSION_TYPE_LABELS[event.type] ?? event.type)}</span><h3>Day ${event.day} / #${event.sequence}</h3><p>${(0, utils_js_35.escapeHtml)(progressionEventSummary(event, getPlayerName))}</p></div></div><div class="records-impact-note warning"><strong>対応する復元ポイントがありません</strong><span>保存済みデータまたは別の復元ポイントを確認してください。</span></div></div>`;
         }
         const pointDay = Number(recommendation.point.state?.game?.day ?? 0);
         const pointPhase = constants_js_43.PHASE_LABELS[recommendation.point.state?.game?.phase] ?? recommendation.point.state?.game?.phase ?? '不明';
-        return `<div class="correction-detail-card"><div class="correction-detail-head"><div><span class="correction-item-badge ${badgeClass}">${(0, utils_js_34.escapeHtml)(PROGRESSION_TYPE_LABELS[event.type] ?? event.type)}</span><h3>Day ${event.day} / #${event.sequence}</h3><p>${(0, utils_js_34.escapeHtml)(progressionEventSummary(event, getPlayerName))}</p></div></div><dl class="correction-meta-grid"><div><dt>自動選択する復元先</dt><dd>${(0, utils_js_34.escapeHtml)(recommendation.point.label)}</dd></div><div><dt>再進行開始地点</dt><dd>Day ${pointDay}・${(0, utils_js_34.escapeHtml)(pointPhase)}</dd></div><div><dt>外れるイベント</dt><dd>${recommendation.impact?.supersededEventCount ?? 0}件</dd></div><div><dt>外れるAIターン</dt><dd>${recommendation.impact?.aiTurnCount ?? 0}件</dd></div></dl><div class="records-impact-note"><strong>訂正方法</strong><span>公開前の地点へ戻り、正しい内容で同じ進行をやり直します。訂正前の履歴はGM監査へ保存されます。</span></div><label class="field"><span>訂正理由</span><textarea data-draft="records-progression-reason" placeholder="どの結果が誤っており、どう再進行するかを入力してください。"></textarea></label><button class="button danger correction-primary-action" data-action="restore-selected-progression" data-event-id="${(0, utils_js_34.escapeHtml)(event.id)}" type="button">再進行で訂正</button></div>`;
+        return `<div class="correction-detail-card"><div class="correction-detail-head"><div><span class="correction-item-badge ${badgeClass}">${(0, utils_js_35.escapeHtml)(PROGRESSION_TYPE_LABELS[event.type] ?? event.type)}</span><h3>Day ${event.day} / #${event.sequence}</h3><p>${(0, utils_js_35.escapeHtml)(progressionEventSummary(event, getPlayerName))}</p></div></div><dl class="correction-meta-grid"><div><dt>自動選択する復元先</dt><dd>${(0, utils_js_35.escapeHtml)(recommendation.point.label)}</dd></div><div><dt>再進行開始地点</dt><dd>Day ${pointDay}・${(0, utils_js_35.escapeHtml)(pointPhase)}</dd></div><div><dt>外れるイベント</dt><dd>${recommendation.impact?.supersededEventCount ?? 0}件</dd></div><div><dt>外れるAIターン</dt><dd>${recommendation.impact?.aiTurnCount ?? 0}件</dd></div></dl><div class="records-impact-note"><strong>訂正方法</strong><span>公開前の地点へ戻り、正しい内容で同じ進行をやり直します。訂正前の履歴はGM監査へ保存されます。</span></div><label class="field"><span>訂正理由</span><textarea data-draft="records-progression-reason" placeholder="どの結果が誤っており、どう再進行するかを入力してください。"></textarea></label><button class="button danger correction-primary-action" data-action="restore-selected-progression" data-event-id="${(0, utils_js_35.escapeHtml)(event.id)}" type="button">再進行で訂正</button></div>`;
     }
     function renderPublicCorrectionList(events, selectedId, getPlayerName) {
         if (!events.length)
             return renderCompactEmpty('訂正対象の公開情報はありません', '公開発言・CO・能力結果などが公開されると表示されます。');
-        return `<div class="correction-item-list">${events.map((event) => `<button class="correction-item ${event.id === selectedId ? 'active' : ''}" data-action="records-correction-select" data-mode="public" data-item-id="${(0, utils_js_34.escapeHtml)(event.id)}" type="button"><span class="correction-item-badge public">${(0, utils_js_34.escapeHtml)(constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</span><span class="correction-item-copy"><strong>Day ${event.day} / #${event.sequence}</strong><small>${(0, utils_js_34.escapeHtml)(publicCorrectionSummary(event, getPlayerName))}</small></span><span class="correction-item-arrow">›</span></button>`).join('')}</div>`;
+        return `<div class="correction-item-list">${events.map((event) => `<button class="correction-item ${event.id === selectedId ? 'active' : ''}" data-action="records-correction-select" data-mode="public" data-item-id="${(0, utils_js_35.escapeHtml)(event.id)}" type="button"><span class="correction-item-badge public">${(0, utils_js_35.escapeHtml)(constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</span><span class="correction-item-copy"><strong>Day ${event.day} / #${event.sequence}</strong><small>${(0, utils_js_35.escapeHtml)(publicCorrectionSummary(event, getPlayerName))}</small></span><span class="correction-item-arrow">›</span></button>`).join('')}</div>`;
     }
     function renderPublicCorrectionDetail(state, event, getPlayerName) {
         if (!event)
             return renderCompactEmpty('公開情報を選択してください', '左の一覧から内容を差し替えたい公開情報を選択します。');
-        return `<div class="correction-detail-card public-correction-form"><div class="correction-detail-head"><div><span class="correction-item-badge public">${(0, utils_js_34.escapeHtml)(constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</span><h3>Day ${event.day} / #${event.sequence}</h3><p>${(0, utils_js_34.escapeHtml)(publicCorrectionSummary(event, getPlayerName))}</p></div></div><input type="hidden" data-draft="correction-event" value="${(0, utils_js_34.escapeHtml)(event.id)}"><label class="field"><span>現在の公開内容</span><textarea readonly>${(0, utils_js_34.escapeHtml)(formatRecordEventText(event))}</textarea></label><label class="field"><span>訂正理由</span><input data-draft="correction-reason" placeholder="入力ミス、COタグ誤りなど"></label><label class="field"><span>訂正後の公開文</span><textarea data-draft="correction-text" placeholder="訂正後に公開する全文を入力してください。"></textarea></label>${correctionStructuredFields(state)}<button class="button danger correction-primary-action" data-action="correct-public-event" type="button">内容を訂正</button></div>`;
+        return `<div class="correction-detail-card public-correction-form"><div class="correction-detail-head"><div><span class="correction-item-badge public">${(0, utils_js_35.escapeHtml)(constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</span><h3>Day ${event.day} / #${event.sequence}</h3><p>${(0, utils_js_35.escapeHtml)(publicCorrectionSummary(event, getPlayerName))}</p></div></div><input type="hidden" data-draft="correction-event" value="${(0, utils_js_35.escapeHtml)(event.id)}"><label class="field"><span>現在の公開内容</span><textarea readonly>${(0, utils_js_35.escapeHtml)(formatRecordEventText(event))}</textarea></label><label class="field"><span>訂正理由</span><input data-draft="correction-reason" placeholder="入力ミス、COタグ誤りなど"></label><label class="field"><span>訂正後の公開文</span><textarea data-draft="correction-text" placeholder="訂正後に公開する全文を入力してください。"></textarea></label>${correctionStructuredFields(state)}<button class="button danger correction-primary-action" data-action="correct-public-event" type="button">内容を訂正</button></div>`;
     }
     function renderCorrectionWorkspace({ state, mode, selectedId, progressionEvents, publicCorrectionEvents, getPlayerName }) {
         const points = [...state.restorePoints].reverse();
@@ -26489,24 +27155,24 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
     }
     function renderSharedConversationSupport(state, showConfidential, getPlayerName) {
         const wolfContent = state.wolfConversations.length
-            ? state.wolfConversations.map((session) => `<details><summary>Day ${session.day} / ${(0, utils_js_34.escapeHtml)(wolfPurposeLabel(session.purpose))} / ${session.messages.length}件</summary>${showConfidential ? `<pre>${(0, utils_js_34.escapeHtml)(formatWolfSharedStrategy(session.sharedStrategy))}</pre>${session.messages.map((message) => `<p><strong>${(0, utils_js_34.escapeHtml)(getPlayerName(message.speakerId))}</strong>: ${(0, utils_js_34.escapeHtml)(message.content)}</p>`).join('')}` : '<p>機密情報非表示中</p>'}</details>`).join('')
+            ? state.wolfConversations.map((session) => `<details><summary>Day ${session.day} / ${(0, utils_js_35.escapeHtml)(wolfPurposeLabel(session.purpose))} / ${session.messages.length}件</summary>${showConfidential ? `<pre>${(0, utils_js_35.escapeHtml)(formatWolfSharedStrategy(session.sharedStrategy))}</pre>${session.messages.map((message) => `<p><strong>${(0, utils_js_35.escapeHtml)(getPlayerName(message.speakerId))}</strong>: ${(0, utils_js_35.escapeHtml)(message.content)}</p>`).join('')}` : '<p>機密情報非表示中</p>'}</details>`).join('')
             : '<div class="records-compact-empty"><strong>人狼共有会話はありません</strong><span>会話が記録されるとここへ表示されます。</span></div>';
         const masonContent = state.masonConversations.length
-            ? state.masonConversations.map((session) => `<details><summary>Day ${session.day} / ${session.messages.length}件</summary>${showConfidential ? session.messages.map((message) => `<p><strong>${(0, utils_js_34.escapeHtml)(getPlayerName(message.speakerId))}</strong>: ${(0, utils_js_34.escapeHtml)(message.content)}</p>`).join('') : '<p>機密情報非表示中</p>'}</details>`).join('')
+            ? state.masonConversations.map((session) => `<details><summary>Day ${session.day} / ${session.messages.length}件</summary>${showConfidential ? session.messages.map((message) => `<p><strong>${(0, utils_js_35.escapeHtml)(getPlayerName(message.speakerId))}</strong>: ${(0, utils_js_35.escapeHtml)(message.content)}</p>`).join('') : '<p>機密情報非表示中</p>'}</details>`).join('')
             : '<div class="records-compact-empty"><strong>共有者共有会話はありません</strong><span>会話が記録されるとここへ表示されます。</span></div>';
         const graveyardContent = state.graveyardConversations.length
-            ? state.graveyardConversations.map((session) => `<details><summary>Day ${session.day} / ${session.messages.length}件</summary>${showConfidential ? session.messages.map((message) => `<p><strong>${(0, utils_js_34.escapeHtml)(getPlayerName(message.speakerId))}</strong>: ${(0, utils_js_34.escapeHtml)(message.content)}</p>`).join('') : '<p>機密情報非表示中</p>'}</details>`).join('')
+            ? state.graveyardConversations.map((session) => `<details><summary>Day ${session.day} / ${session.messages.length}件</summary>${showConfidential ? session.messages.map((message) => `<p><strong>${(0, utils_js_35.escapeHtml)(getPlayerName(message.speakerId))}</strong>: ${(0, utils_js_35.escapeHtml)(message.content)}</p>`).join('') : '<p>機密情報非表示中</p>'}</details>`).join('')
             : '<div class="records-compact-empty"><strong>墓場会話はありません</strong><span>死亡者が2人以上いる夜に会話が記録されるとここへ表示されます。</span></div>';
         return `<details class="records-support-section" id="records-shared-support"><summary><span><strong>共有会話</strong><small>人狼 ${state.wolfConversations.length}件 / 共有者 ${state.masonConversations.length}件 / 墓場 ${state.graveyardConversations.length}件</small></span><span class="records-support-chevron">›</span></summary><div class="records-support-body records-support-grid"><section><h3>人狼共有会話</h3>${wolfContent}</section><section><h3>共有者共有会話</h3>${masonContent}</section><section><h3>墓場会話</h3>${graveyardContent}</section></div></details>`;
     }
     function renderAuditSupport({ state, showConfidential, getPlayerName, getRoleName, getAiProfileLabel, memoToolsByPlayerId, manualMemoDraftsByPlayerId, notifications, events, postgameAnalysis, }) {
         return `<details class="records-support-section" id="records-audit-support"><summary><span><strong>詳細・補助情報</strong><small>イベント ${state.events.length}件 / AIターン ${state.aiTurns.length}件 / 通知 ${notifications.length}件</small></span><span class="records-support-chevron">›</span></summary><div class="records-support-body"><div class="records-grid">
-      <div class="panel records-inner-panel"><h3>イベント</h3><div class="timeline">${events.length ? events.map((event) => `<div class="timeline-row ${event.audience?.type === 'public' ? '' : 'private-event'} ${event.status === 'voided' ? 'voided-event' : ''}"><span class="timeline-seq">#${event.sequence}</span><div><strong>${(0, utils_js_34.escapeHtml)(constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</strong><small>Day ${event.day} / ${(0, utils_js_34.escapeHtml)(constants_js_43.AUDIENCE_LABELS[event.audience?.type] ?? event.audience?.type)} / ${(0, utils_js_34.escapeHtml)(event.status)}</small><p>${(0, utils_js_34.escapeHtml)(formatRecordEventText(event))}</p>${canEditPrivateEvent(state, event) ? `<button class="button small ghost" data-action="edit-private-event" data-event-id="${(0, utils_js_34.escapeHtml)(event.id)}" type="button">登録内容だけ修正</button>` : ''}</div></div>`).join('') : '<div class="empty-inline">イベントはまだありません。</div>'}</div></div>
+      <div class="panel records-inner-panel"><h3>イベント</h3><div class="timeline">${events.length ? events.map((event) => `<div class="timeline-row ${event.audience?.type === 'public' ? '' : 'private-event'} ${event.status === 'voided' ? 'voided-event' : ''}"><span class="timeline-seq">#${event.sequence}</span><div><strong>${(0, utils_js_35.escapeHtml)(constants_js_43.EVENT_TYPE_LABELS[event.type] ?? event.type)}</strong><small>Day ${event.day} / ${(0, utils_js_35.escapeHtml)(constants_js_43.AUDIENCE_LABELS[event.audience?.type] ?? event.audience?.type)} / ${(0, utils_js_35.escapeHtml)(event.status)}</small><p>${(0, utils_js_35.escapeHtml)(formatRecordEventText(event))}</p>${canEditPrivateEvent(state, event) ? `<button class="button small ghost" data-action="edit-private-event" data-event-id="${(0, utils_js_35.escapeHtml)(event.id)}" type="button">登録内容だけ修正</button>` : ''}</div></div>`).join('') : '<div class="empty-inline">イベントはまだありません。</div>'}</div></div>
       <div class="panel records-inner-panel"><h3>AI応答の詳細</h3><div class="audit-list">${state.aiTurns.length ? [...state.aiTurns].reverse().map((turn) => {
             const speechSequence = aiTurnPublicSpeechSequenceLabel(state, turn);
-            return `<details data-ai-turn-id="${(0, utils_js_34.escapeHtml)(turn.id)}"><summary>Day ${turn.day}${speechSequence ? ` / ${(0, utils_js_34.escapeHtml)(speechSequence)}` : ''} ${(0, utils_js_34.escapeHtml)(getPlayerName(turn.playerId))} / ${(0, utils_js_34.escapeHtml)(constants_js_43.TASK_LABELS[turn.taskType] ?? turn.taskType)}</summary><p>時刻: ${(0, utils_js_34.escapeHtml)((0, utils_js_34.formatDateTime)(turn.timestamp))}</p>${turn.warnings?.length ? `<ul>${turn.warnings.map((warning) => `<li>${(0, utils_js_34.escapeHtml)(warning)}</li>`).join('')}</ul>` : ''}${formatGenerationRun(turn.generationRun, getAiProfileLabel)}${formatAuditData(turn)}<textarea readonly>${(0, utils_js_34.escapeHtml)(turn.rawResponse)}</textarea>${renderPostgameAnalysis(turn, postgameAnalysis?.byTurnId?.[turn.id] ?? null)}</details>`;
+            return `<details data-ai-turn-id="${(0, utils_js_35.escapeHtml)(turn.id)}"><summary>Day ${turn.day}${speechSequence ? ` / ${(0, utils_js_35.escapeHtml)(speechSequence)}` : ''} ${(0, utils_js_35.escapeHtml)(getPlayerName(turn.playerId))} / ${(0, utils_js_35.escapeHtml)(constants_js_43.TASK_LABELS[turn.taskType] ?? turn.taskType)}</summary><p>時刻: ${(0, utils_js_35.escapeHtml)((0, utils_js_35.formatDateTime)(turn.timestamp))}</p>${turn.warnings?.length ? `<ul>${turn.warnings.map((warning) => `<li>${(0, utils_js_35.escapeHtml)(warning)}</li>`).join('')}</ul>` : ''}${formatGenerationRun(turn.generationRun, getAiProfileLabel)}${formatAuditData(turn)}<textarea readonly>${(0, utils_js_35.escapeHtml)(turn.rawResponse)}</textarea>${renderPostgameAnalysis(turn, postgameAnalysis?.byTurnId?.[turn.id] ?? null)}</details>`;
         }).join('') : '<div class="empty-inline">AI応答履歴はありません。</div>'}</div></div>
-      <div class="panel records-inner-panel"><h3>操作通知履歴</h3><div class="notification-history">${notifications.length ? notifications.map((item) => `<div class="notification-history-row ${(0, utils_js_34.escapeHtml)(item.type)}"><div><strong>${(0, utils_js_34.escapeHtml)(item.message)}</strong><small>${(0, utils_js_34.escapeHtml)((0, utils_js_34.formatDateTime)(item.timestamp))} / ${item.displayed ? '画面表示' : '履歴のみ'}</small></div></div>`).join('') : '<div class="empty-inline">操作通知はまだありません。</div>'}</div></div>
+      <div class="panel records-inner-panel"><h3>操作通知履歴</h3><div class="notification-history">${notifications.length ? notifications.map((item) => `<div class="notification-history-row ${(0, utils_js_35.escapeHtml)(item.type)}"><div><strong>${(0, utils_js_35.escapeHtml)(item.message)}</strong><small>${(0, utils_js_35.escapeHtml)((0, utils_js_35.formatDateTime)(item.timestamp))} / ${item.displayed ? '画面表示' : '履歴のみ'}</small></div></div>`).join('') : '<div class="empty-inline">操作通知はまだありません。</div>'}</div></div>
       <div class="panel records-inner-panel"><h3>心の声・記憶</h3>${state.players.map((player) => {
             const ledger = player.memoryLedger ?? {};
             const ledgerRows = [
@@ -26514,12 +27180,12 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
                 ['自分が公開済みの立場・行動', ledger.publicCommitments ?? []],
                 ['結果判明前の行動理由', ledger.selectionRationales ?? []],
                 ['次に区別したい情報', ledger.pendingDiscriminators ?? []],
-            ].map(([label, items]) => `<h5>${(0, utils_js_34.escapeHtml)(label)}</h5>${items.length ? `<ul>${items.map((item) => `<li>${(0, utils_js_34.escapeHtml)(item.text || item.rationale || '')}</li>`).join('')}</ul>` : '<p>なし</p>'}`).join('');
+            ].map(([label, items]) => `<h5>${(0, utils_js_35.escapeHtml)(label)}</h5>${items.length ? `<ul>${items.map((item) => `<li>${(0, utils_js_35.escapeHtml)(item.text || item.rationale || '')}</li>`).join('')}</ul>` : '<p>なし</p>'}`).join('');
             const freeMemo = (0, memoryLedger_js_14.formatInternalMemoryText)(player) || 'なし';
             const recommendation = player.internalMemory?.consolidationRecommended
                 ? '<div class="alert warning-alert"><strong>整理推奨</strong><span>追記件数または文字数が基準を超えています。</span></div>'
                 : '';
-            return `<details><summary>${(0, utils_js_34.escapeHtml)(player.name)}${showConfidential ? ` / ${(0, utils_js_34.escapeHtml)(getRoleName(player.roleId))}` : ''}</summary>${showConfidential ? `<h4>心の声</h4><p class="heart-voice-text">${(0, utils_js_34.escapeHtml)(player.heartVoice || 'なし')}</p><h4>システム管理記憶</h4>${ledgerRows}<h4>自由内部メモ</h4>${recommendation}<pre>${(0, utils_js_34.escapeHtml)(freeMemo)}</pre>${memoToolsByPlayerId[player.id] ? `<details class="optional-box"><summary>AIで自由内部メモを整理</summary>${memoToolsByPlayerId[player.id]}</details>` : ''}<details class="optional-box"><summary>GMが手動で自由内部メモを整理</summary><p class="help">確定情報はシステム管理記憶へ残るため、今後必要な読み・迷い・方針だけを自由文で整理します。</p><label class="field"><span>整理後の自由内部メモ</span><textarea data-draft="manual-memo-summary:${(0, utils_js_34.escapeHtml)(player.id)}">${(0, utils_js_34.escapeHtml)(manualMemoDraftsByPlayerId[player.id] ?? '')}</textarea></label><button class="button ghost wide" data-action="consolidate-memo-manual" data-player-id="${(0, utils_js_34.escapeHtml)(player.id)}" type="button">手動整理を登録</button></details>` : '機密情報非表示中'}</details>`;
+            return `<details><summary>${(0, utils_js_35.escapeHtml)(player.name)}${showConfidential ? ` / ${(0, utils_js_35.escapeHtml)(getRoleName(player.roleId))}` : ''}</summary>${showConfidential ? `<h4>心の声</h4><p class="heart-voice-text">${(0, utils_js_35.escapeHtml)(player.heartVoice || 'なし')}</p><h4>システム管理記憶</h4>${ledgerRows}<h4>自由内部メモ</h4>${recommendation}<pre>${(0, utils_js_35.escapeHtml)(freeMemo)}</pre>${memoToolsByPlayerId[player.id] ? `<details class="optional-box"><summary>AIで自由内部メモを整理</summary>${memoToolsByPlayerId[player.id]}</details>` : ''}<details class="optional-box"><summary>GMが手動で自由内部メモを整理</summary><p class="help">確定情報はシステム管理記憶へ残るため、今後必要な読み・迷い・方針だけを自由文で整理します。</p><label class="field"><span>整理後の自由内部メモ</span><textarea data-draft="manual-memo-summary:${(0, utils_js_35.escapeHtml)(player.id)}">${(0, utils_js_35.escapeHtml)(manualMemoDraftsByPlayerId[player.id] ?? '')}</textarea></label><button class="button ghost wide" data-action="consolidate-memo-manual" data-player-id="${(0, utils_js_35.escapeHtml)(player.id)}" type="button">手動整理を登録</button></details>` : '機密情報非表示中'}</details>`;
         }).join('')}</div>
     </div></div></details>`;
     }
@@ -26550,13 +27216,13 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
             : '<span class="records-status-chip">通常進行</span>';
         const pageTitle = viewMode === 'relationship' ? 'プレイヤー相関図' : '訂正・復元';
         const pageDescription = viewMode === 'relationship'
-            ? '公開CO、公開能力結果、公開投票と、機密表示時の疑い関係を確認します。'
+            ? '公開CO、疑い関係、公開能力結果、公開投票を確認します。真の役職などの機密情報だけが機密表示設定に従います。'
             : '復元、進行結果の再実行、公開内容の差し替えを安全に行います。';
         const correctionModeExitButton = state.game.correctionMode.enabled
             ? '<button class="button danger" data-action="exit-correction" type="button">訂正モード終了</button>'
             : '';
         const pageActions = viewMode === 'relationship'
-            ? '<div class="page-head-actions records-page-actions"><button class="button ghost" data-action="game-data-export" type="button">ゲームデータ出力</button></div>'
+            ? '<div class="page-head-actions records-page-actions"><button class="button primary" data-action="open-player-relationship-window" type="button">別ウィンドウで開く</button><button class="button ghost" data-action="game-data-export" type="button">ゲームデータ出力</button></div>'
             : `<div class="page-head-actions records-page-actions"><button class="button ghost" data-action="game-data-export" type="button">ゲームデータ出力</button><button class="button ghost" data-action="show-records-shared" type="button">共有会話</button><button class="button ghost" data-action="show-records-audit" type="button">詳細情報</button>${correctionModeExitButton}<button class="button danger-ghost" data-action="manual-finish" type="button">手動勝敗判定</button></div>`;
         const body = viewMode === 'relationship'
             ? (0, playerRelationshipView_js_1.renderPlayerRelationshipView)({
@@ -26567,7 +27233,7 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
                 visibleRelationTypes: relationshipVisibleRelationTypes,
                 getRoleName,
             })
-            : `<div class="records-command-bar"><div><span>現在の状態</span><strong>${(0, utils_js_34.escapeHtml)(currentStatus)}</strong></div>${correctionStatus}${state.game.correctionMode.enabled ? `<p>${(0, utils_js_34.escapeHtml)(state.game.correctionMode.reason)}</p>` : '<p>公開前の入力は通常修正し、公開訂正・復元では必要に応じて自動で訂正モードへ入ります。</p>'}</div>
+            : `<div class="records-command-bar"><div><span>現在の状態</span><strong>${(0, utils_js_35.escapeHtml)(currentStatus)}</strong></div>${correctionStatus}${state.game.correctionMode.enabled ? `<p>${(0, utils_js_35.escapeHtml)(state.game.correctionMode.reason)}</p>` : '<p>公開前の入力は通常修正し、公開訂正・復元では必要に応じて自動で訂正モードへ入ります。</p>'}</div>
     ${renderCorrectionWorkspace({
                 state,
                 mode,
@@ -26591,14 +27257,14 @@ define("js/ui/views/records/recordsView", ["require", "exports", "js/config/cons
                 postgameAnalysis,
             })}
     </div>`;
-        return `<section class="page records-page"><div class="page-head records-page-head"><div><span class="eyebrow">記録・管理</span><h2>${(0, utils_js_34.escapeHtml)(pageTitle)}</h2><p>${(0, utils_js_34.escapeHtml)(pageDescription)}</p></div>${pageActions}</div>${renderRecordsPrimaryTabs(viewMode)}${body}</section>`;
+        return `<section class="page records-page"><div class="page-head records-page-head"><div><span class="eyebrow">記録・管理</span><h2>${(0, utils_js_35.escapeHtml)(pageTitle)}</h2><p>${(0, utils_js_35.escapeHtml)(pageDescription)}</p></div>${pageActions}</div>${renderRecordsPrimaryTabs(viewMode)}${body}</section>`;
     }
 });
 /**
  * 責務: 公開発言のイベント番号を表示用参照として扱い、発言本文中の「#N」を既存の公開発言へ安全に関連付ける。
  * 変更ルール: 公開スナップショット内の公開発言だけを参照し、イベント番号の採番・状態更新・DOMイベント登録は行わない。引用先が存在しない参照は原文のまま表示する。
  */
-define("js/public/publicSpeechReferences", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_35) {
+define("js/public/publicSpeechReferences", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_36) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createPublicSpeechReferenceIndex = createPublicSpeechReferenceIndex;
@@ -26622,7 +27288,7 @@ define("js/public/publicSpeechReferences", ["require", "exports", "js/shared/uti
         return text ? `${header}\n${text}` : header;
     }
     function escapeAttribute(value) {
-        return (0, utils_js_35.escapeHtml)(value).replace(/\r\n?|\n/gu, '&#10;');
+        return (0, utils_js_36.escapeHtml)(value).replace(/\r\n?|\n/gu, '&#10;');
     }
     function renderPublicSpeechText(snapshot, text, references = createPublicSpeechReferenceIndex(snapshot)) {
         const source = String(text ?? '');
@@ -26630,26 +27296,26 @@ define("js/public/publicSpeechReferences", ["require", "exports", "js/shared/uti
         let cursor = 0;
         for (const match of source.matchAll(PUBLIC_REFERENCE_PATTERN)) {
             const start = match.index ?? 0;
-            html += (0, utils_js_35.escapeHtml)(source.slice(cursor, start));
+            html += (0, utils_js_36.escapeHtml)(source.slice(cursor, start));
             const sequence = Number(match[1]);
             const target = references.get(sequence);
             if (!target) {
-                html += (0, utils_js_35.escapeHtml)(match[0]);
+                html += (0, utils_js_36.escapeHtml)(match[0]);
             }
             else {
                 const tooltip = tooltipText(snapshot, target);
-                html += `<span class="public-quote-ref" tabindex="0" data-public-ref="#${sequence}" title="${escapeAttribute(tooltip)}" aria-label="${escapeAttribute(`${match[0]}の引用先: ${tooltip}`)}">${(0, utils_js_35.escapeHtml)(match[0])}</span>`;
+                html += `<span class="public-quote-ref" tabindex="0" data-public-ref="#${sequence}" title="${escapeAttribute(tooltip)}" aria-label="${escapeAttribute(`${match[0]}の引用先: ${tooltip}`)}">${(0, utils_js_36.escapeHtml)(match[0])}</span>`;
             }
             cursor = start + match[0].length;
         }
-        return html + (0, utils_js_35.escapeHtml)(source.slice(cursor));
+        return html + (0, utils_js_36.escapeHtml)(source.slice(cursor));
     }
 });
 /**
  * 責務: 公開専用スナップショットだけから参加者向け画面を描画し、自動実行時の進行卓と統一した話者・Day・番号、本文改行、投票内訳、許可済みの真の役職と発言別の心の声を表示する。
  * 変更ルール: 完全状態を受け取らず、秘密情報を推測しない。真の役職と心の声はevent.confidentialに明示された話者イベントだけへ描画する。公開イベントの本文と投票内訳はスナップショットの構造化済み情報だけから整形する。
  */
-define("js/ui/views/public/publicView", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/policies/publicAbilityClaimPolicy", "js/public/publicSpeechReferences"], function (require, exports, constants_js_44, utils_js_36, publicAbilityClaimPolicy_js_20, publicSpeechReferences_js_1) {
+define("js/ui/views/public/publicView", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/public/publicSpeechReferences"], function (require, exports, constants_js_44, utils_js_37, publicAbilityClaimPolicy_js_20, abilityClaimTimingPolicy_js_9, publicSpeechReferences_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderPublicSnapshot = renderPublicSnapshot;
@@ -26665,13 +27331,13 @@ define("js/ui/views/public/publicView", ["require", "exports", "js/config/consta
         const ballots = (payload.ballots ?? []).map((ballot) => {
             const voter = nameOf(snapshot, ballot.voterId);
             const target = ballot.targetId === 'abstain' ? '棄権' : nameOf(snapshot, ballot.targetId);
-            return `<div class="public-vote-ballot"><span>${(0, utils_js_36.escapeHtml)(voter)}</span><span aria-hidden="true">→</span><strong>${(0, utils_js_36.escapeHtml)(target)}</strong></div>`;
+            return `<div class="public-vote-ballot"><span>${(0, utils_js_37.escapeHtml)(voter)}</span><span aria-hidden="true">→</span><strong>${(0, utils_js_37.escapeHtml)(target)}</strong></div>`;
         }).join('');
         const tally = (payload.tally ?? []).map((item) => `${nameOf(snapshot, item.targetId)} ${item.count}票`).join('\n');
         const fallback = summary || tally || '投票結果';
         if (!ballots)
-            return (0, utils_js_36.escapeHtml)(fallback);
-        return `<div class="public-vote-summary">${(0, utils_js_36.escapeHtml)(fallback)}</div><section class="public-vote-breakdown" aria-label="投票先の内訳"><strong>投票先の内訳</strong><div>${ballots}</div></section>`;
+            return (0, utils_js_37.escapeHtml)(fallback);
+        return `<div class="public-vote-summary">${(0, utils_js_37.escapeHtml)(fallback)}</div><section class="public-vote-breakdown" aria-label="投票先の内訳"><strong>投票先の内訳</strong><div>${ballots}</div></section>`;
     }
     function eventBody(snapshot, event, speechReferences) {
         const payload = event.payload ?? {};
@@ -26680,9 +27346,9 @@ define("js/ui/views/public/publicView", ["require", "exports", "js/config/consta
         if (payload.text) {
             return event.type === 'public-speech'
                 ? (0, publicSpeechReferences_js_1.renderPublicSpeechText)(snapshot, payload.text, speechReferences)
-                : (0, utils_js_36.escapeHtml)(payload.text);
+                : (0, utils_js_37.escapeHtml)(payload.text);
         }
-        return (0, utils_js_36.escapeHtml)(event.type);
+        return (0, utils_js_37.escapeHtml)(event.type);
     }
     function eventMeta(event) {
         const sequence = Number(event.sequence);
@@ -26695,8 +27361,8 @@ define("js/ui/views/public/publicView", ["require", "exports", "js/config/consta
             return '<strong class="public-speaker-name">ゲーム進行</strong>';
         const roleId = String(event.confidential?.roleId ?? '').trim();
         const roleName = roleId ? (constants_js_44.ROLE_DEFINITIONS[roleId]?.name ?? roleId) : '';
-        const role = roleName ? `<span class="public-speaker-role">（${(0, utils_js_36.escapeHtml)(roleName)}）</span>` : '';
-        return `<strong class="public-speaker-name">${(0, utils_js_36.escapeHtml)(nameOf(snapshot, event.actorId))}</strong>${role}`;
+        const role = roleName ? `<span class="public-speaker-role">（${(0, utils_js_37.escapeHtml)(roleName)}）</span>` : '';
+        return `<strong class="public-speaker-name">${(0, utils_js_37.escapeHtml)(nameOf(snapshot, event.actorId))}</strong>${role}`;
     }
     function eventHeartVoice(event) {
         if (!['public-speech', 'result-impression'].includes(event.type))
@@ -26707,34 +27373,34 @@ define("js/ui/views/public/publicView", ["require", "exports", "js/config/consta
         const text = source.replace(/^\(([\s\S]*)\)$/u, '$1').trim();
         if (!text)
             return '';
-        return `<p class="public-heart-voice">(${(0, utils_js_36.escapeHtml)(text)})</p>`;
+        return `<p class="public-heart-voice">(${(0, utils_js_37.escapeHtml)(text)})</p>`;
     }
     function renderPublicSnapshot(snapshot) {
         const speechReferences = (0, publicSpeechReferences_js_1.createPublicSpeechReferenceIndex)(snapshot);
-        const claims = snapshot.claims.map((claim) => `<li><strong>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, claim.actorId))}</strong>: ${(0, utils_js_36.escapeHtml)(constants_js_44.ROLE_DEFINITIONS[claim.roleId]?.name ?? claim.roleId)}CO</li>`).join('');
+        const claims = snapshot.claims.map((claim) => `<li><strong>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, claim.actorId))}</strong>: ${(0, utils_js_37.escapeHtml)(constants_js_44.ROLE_DEFINITIONS[claim.roleId]?.name ?? claim.roleId)}CO</li>`).join('');
         const roleLabels = { seer: '占い', medium: '霊能', guard: '護衛' };
-        const abilityClaims = snapshot.publicAbilityClaims.map((claim) => `<li><strong>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, claim.actorId))}</strong>: Day ${(0, utils_js_36.escapeHtml)(String(claim.observedDay))} ${(0, utils_js_36.escapeHtml)(roleLabels[claim.claimedRoleId] ?? claim.claimedRoleId ?? '能力')} → ${(0, utils_js_36.escapeHtml)(nameOf(snapshot, claim.targetId))}は${(0, utils_js_36.escapeHtml)((0, publicAbilityClaimPolicy_js_20.publicAbilityResultLabel)(claim.result, claim.claimedRoleId))}</li>`).join('');
+        const abilityClaims = snapshot.publicAbilityClaims.map((claim) => `<li><strong>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, claim.actorId))}</strong>: ${(0, utils_js_37.escapeHtml)((0, abilityClaimTimingPolicy_js_9.formatAbilityClaimTiming)(claim))} ${(0, utils_js_37.escapeHtml)(roleLabels[claim.claimedRoleId] ?? claim.claimedRoleId ?? '能力')} → ${(0, utils_js_37.escapeHtml)(nameOf(snapshot, claim.targetId))}は${(0, utils_js_37.escapeHtml)((0, publicAbilityClaimPolicy_js_20.publicAbilityResultLabel)(claim.result, claim.claimedRoleId))}</li>`).join('');
         const resultRoles = snapshot.result?.roles?.length
-            ? `<details class="public-details"><summary>全役職</summary><ul>${snapshot.result.roles.map((item) => `<li>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, item.playerId))}: ${(0, utils_js_36.escapeHtml)(constants_js_44.ROLE_DEFINITIONS[item.roleId]?.name ?? item.roleId)}</li>`).join('')}</ul></details>`
+            ? `<details class="public-details"><summary>全役職</summary><ul>${snapshot.result.roles.map((item) => `<li>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, item.playerId))}: ${(0, utils_js_37.escapeHtml)(constants_js_44.ROLE_DEFINITIONS[item.roleId]?.name ?? item.roleId)}</li>`).join('')}</ul></details>`
             : '';
         const resultChats = snapshot.result?.wolfConversations?.length
-            ? `<details class="public-details"><summary>人狼共有会話</summary>${snapshot.result.wolfConversations.map((session) => `<section><h4>Day ${session.day}</h4>${session.messages.map((message) => `<p><strong>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, message.speakerId))}</strong>: ${(0, utils_js_36.escapeHtml)(message.content)}</p>`).join('')}</section>`).join('')}</details>`
+            ? `<details class="public-details"><summary>人狼共有会話</summary>${snapshot.result.wolfConversations.map((session) => `<section><h4>Day ${session.day}</h4>${session.messages.map((message) => `<p><strong>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, message.speakerId))}</strong>: ${(0, utils_js_37.escapeHtml)(message.content)}</p>`).join('')}</section>`).join('')}</details>`
             : '';
         const resultMasonChats = snapshot.result?.masonConversations?.length
-            ? `<details class="public-details"><summary>共有者共有会話</summary>${snapshot.result.masonConversations.map((session) => `<section><h4>Day ${session.day}</h4>${session.messages.map((message) => `<p><strong>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, message.speakerId))}</strong>: ${(0, utils_js_36.escapeHtml)(message.content)}</p>`).join('')}</section>`).join('')}</details>`
+            ? `<details class="public-details"><summary>共有者共有会話</summary>${snapshot.result.masonConversations.map((session) => `<section><h4>Day ${session.day}</h4>${session.messages.map((message) => `<p><strong>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, message.speakerId))}</strong>: ${(0, utils_js_37.escapeHtml)(message.content)}</p>`).join('')}</section>`).join('')}</details>`
             : '';
         const resultGraveyardChats = snapshot.result?.graveyardConversations?.length
-            ? `<details class="public-details"><summary>墓場会話</summary>${snapshot.result.graveyardConversations.map((session) => `<section><h4>Day ${session.day}</h4>${session.messages.map((message) => `<p><strong>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, message.speakerId))}</strong>: ${(0, utils_js_36.escapeHtml)(message.content)}</p>`).join('')}</section>`).join('')}</details>`
+            ? `<details class="public-details"><summary>墓場会話</summary>${snapshot.result.graveyardConversations.map((session) => `<section><h4>Day ${session.day}</h4>${session.messages.map((message) => `<p><strong>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, message.speakerId))}</strong>: ${(0, utils_js_37.escapeHtml)(message.content)}</p>`).join('')}</section>`).join('')}</details>`
             : '';
         const resultMemos = snapshot.result?.internalMemos?.length
-            ? `<details class="public-details"><summary>心の声・自由内部メモ</summary>${snapshot.result.internalMemos.map((item) => `<section><h4>${(0, utils_js_36.escapeHtml)(nameOf(snapshot, item.playerId))}</h4><h5>心の声</h5><p class="public-heart-voice-summary">${(0, utils_js_36.escapeHtml)(item.heartVoice || 'なし')}</p><h5>自由内部メモ</h5><pre>${(0, utils_js_36.escapeHtml)(item.memo || 'なし')}</pre></section>`).join('')}</details>`
+            ? `<details class="public-details"><summary>心の声・自由内部メモ</summary>${snapshot.result.internalMemos.map((item) => `<section><h4>${(0, utils_js_37.escapeHtml)(nameOf(snapshot, item.playerId))}</h4><h5>心の声</h5><p class="public-heart-voice-summary">${(0, utils_js_37.escapeHtml)(item.heartVoice || 'なし')}</p><h5>自由内部メモ</h5><pre>${(0, utils_js_37.escapeHtml)(item.memo || 'なし')}</pre></section>`).join('')}</details>`
             : '';
         return `<div class="public-board">
-    <div class="public-status"><strong>Day ${snapshot.game.day}</strong><span>${(0, utils_js_36.escapeHtml)(snapshot.game.phaseLabel)}</span></div>
-    <div class="public-players">${snapshot.players.map((player) => `<div class="${publicPlayerClass(player)}"><span>${player.alive ? '○' : '×'}</span><strong>${(0, utils_js_36.escapeHtml)(player.name)}</strong>${player.frozen ? '<span class="public-player-status">凍結</span>' : ''}</div>`).join('')}</div>
+    <div class="public-status"><strong>Day ${snapshot.game.day}</strong><span>${(0, utils_js_37.escapeHtml)(snapshot.game.phaseLabel)}</span></div>
+    <div class="public-players">${snapshot.players.map((player) => `<div class="${publicPlayerClass(player)}"><span>${player.alive ? '○' : '×'}</span><strong>${(0, utils_js_37.escapeHtml)(player.name)}</strong>${player.frozen ? '<span class="public-player-status">凍結</span>' : ''}</div>`).join('')}</div>
     ${(claims || abilityClaims) ? `<div class="public-facts"><section><h3>公開CO</h3><ul>${claims || '<li>なし</li>'}</ul></section><section><h3>公開能力結果</h3><ul>${abilityClaims || '<li>なし</li>'}</ul></section></div>` : ''}
-    ${snapshot.result ? `<div class="public-result"><strong>${(0, utils_js_36.escapeHtml)(constants_js_44.TEAM_LABELS[snapshot.result.winner] ?? 'ゲーム終了')}</strong><span>${(0, utils_js_36.escapeHtml)(snapshot.result.reason)}</span></div>${resultRoles}${resultChats}${resultMasonChats}${resultGraveyardChats}${resultMemos}` : ''}
-    <div class="public-log">${snapshot.events.map((event) => `<article><div class="public-log-meta"><span>${eventSpeaker(snapshot, event)}</span><small>${(0, utils_js_36.escapeHtml)(eventMeta(event))}</small></div><div class="public-log-body">${eventBody(snapshot, event, speechReferences)}</div>${eventHeartVoice(event)}</article>`).join('') || '<div class="empty-inline">公開記録はまだありません。</div>'}</div>
+    ${snapshot.result ? `<div class="public-result"><strong>${(0, utils_js_37.escapeHtml)(constants_js_44.TEAM_LABELS[snapshot.result.winner] ?? 'ゲーム終了')}</strong><span>${(0, utils_js_37.escapeHtml)(snapshot.result.reason)}</span></div>${resultRoles}${resultChats}${resultMasonChats}${resultGraveyardChats}${resultMemos}` : ''}
+    <div class="public-log">${snapshot.events.map((event) => `<article><div class="public-log-meta"><span>${eventSpeaker(snapshot, event)}</span><small>${(0, utils_js_37.escapeHtml)(eventMeta(event))}</small></div><div class="public-log-body">${eventBody(snapshot, event, speechReferences)}</div>${eventHeartVoice(event)}</article>`).join('') || '<div class="empty-inline">公開記録はまだありません。</div>'}</div>
   </div>`;
     }
 });
@@ -26742,7 +27408,7 @@ define("js/ui/views/public/publicView", ["require", "exports", "js/config/consta
  * 責務: 人間ユーザー向けの役職一覧、陣営、能力、勝利条件を公開情報だけで描画する。
  * 変更ルール: 配役の担当者や秘密情報を表示せず、現在の配役はroleComposition.jsの公開構成を正本とする。役職説明はROLE_DEFINITIONS.helpを正本として「概要／能力／特徴・制約」の順で同じ粒度に描画する。役職通知用descriptionへヘルプ文面を混在させず、ゲーム状態の更新や役職能力の判定を行わない。
  */
-define("js/ui/views/help/roleHelpView", ["require", "exports", "js/config/constants", "js/domain/roles/roleComposition", "js/shared/utils"], function (require, exports, constants_js_45, roleComposition_js_6, utils_js_37) {
+define("js/ui/views/help/roleHelpView", ["require", "exports", "js/config/constants", "js/domain/roles/roleComposition", "js/shared/utils"], function (require, exports, constants_js_45, roleComposition_js_6, utils_js_38) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderRoleHelp = renderRoleHelp;
@@ -26780,7 +27446,7 @@ define("js/ui/views/help/roleHelpView", ["require", "exports", "js/config/consta
     function renderCurrentComposition(counts) {
         const rows = Object.keys(constants_js_45.ROLE_DEFINITIONS)
             .filter((roleId) => (counts.get(roleId) ?? 0) > 0)
-            .map((roleId) => `<span class="role-help-composition-item">${(0, utils_js_37.escapeHtml)(constants_js_45.ROLE_DEFINITIONS[roleId].name)}×${counts.get(roleId)}</span>`)
+            .map((roleId) => `<span class="role-help-composition-item">${(0, utils_js_38.escapeHtml)(constants_js_45.ROLE_DEFINITIONS[roleId].name)}×${counts.get(roleId)}</span>`)
             .join('');
         if (!rows)
             return '<p class="help">現在の配役はまだ設定されていません。</p>';
@@ -26799,13 +27465,13 @@ define("js/ui/views/help/roleHelpView", ["require", "exports", "js/config/consta
         ];
         return `<article class="role-help-card${currentCount > 0 ? ' is-current' : ''}">
     <div class="role-help-card-head">
-      <h4>${(0, utils_js_37.escapeHtml)(role.name)}</h4>
+      <h4>${(0, utils_js_38.escapeHtml)(role.name)}</h4>
       <div class="role-help-badges">
-        <span class="tag">${(0, utils_js_37.escapeHtml)(roleTeamLabel(role))}</span>
+        <span class="tag">${(0, utils_js_38.escapeHtml)(roleTeamLabel(role))}</span>
         ${currentCount > 0 ? `<span class="role-help-current-badge">今回登場×${currentCount}</span>` : ''}
       </div>
     </div>
-    <dl class="role-help-card-details">${rows.map(([label, text]) => `<div class="role-help-detail-row"><dt>${(0, utils_js_37.escapeHtml)(label)}</dt><dd>${(0, utils_js_37.escapeHtml)(text)}</dd></div>`).join('')}</dl>
+    <dl class="role-help-card-details">${rows.map(([label, text]) => `<div class="role-help-detail-row"><dt>${(0, utils_js_38.escapeHtml)(label)}</dt><dd>${(0, utils_js_38.escapeHtml)(text)}</dd></div>`).join('')}</dl>
   </article>`;
     }
     function renderRoleHelp({ state } = {}) {
@@ -26815,8 +27481,8 @@ define("js/ui/views/help/roleHelpView", ["require", "exports", "js/config/consta
             : '';
         const groups = ROLE_GROUPS.map((group) => `<section class="role-help-section" aria-labelledby="role-help-${group.id}">
     <div class="role-help-section-head">
-      <h3 id="role-help-${group.id}">${(0, utils_js_37.escapeHtml)(group.title)}</h3>
-      <p>${(0, utils_js_37.escapeHtml)(group.summary)}</p>
+      <h3 id="role-help-${group.id}">${(0, utils_js_38.escapeHtml)(group.title)}</h3>
+      <p>${(0, utils_js_38.escapeHtml)(group.summary)}</p>
     </div>
     <div class="role-help-grid">${group.roleIds.map((roleId) => renderRoleCard(roleId, counts)).join('')}</div>
   </section>`).join('');
@@ -26843,7 +27509,7 @@ define("js/ui/views/help/roleHelpView", ["require", "exports", "js/config/consta
  * 責務: 企画・設計・開発クレジット、実装支援技術、本ソフト本体の利用ライセンス、組み込みキャラクター管理元の公式サイト・利用規約・権利上の注意事項を一つの権利情報として描画する。
  * 変更ルール: ゲーム状態や外部通信へ依存せず、キャラクター管理元・公式URL・利用規約URL・確認日・所属キャラクター名はキャラクターグループJSONを正本として表示する。外部URLはHTTPSのみ表示し、個別キャラクター固有情報をUIソースへ直書きしない。本体MIT Licenseは「権利について」へ統合し、第三者権利と適用範囲を明確に区別する。管理元・権利者名は補助情報扱いにせず本文相当の視認性を保つ。
  */
-define("js/ui/views/license/licenseView", ["require", "exports", "js/characters/catalog/characterCatalog", "js/shared/utils"], function (require, exports, characterCatalog_js_6, utils_js_38) {
+define("js/ui/views/license/licenseView", ["require", "exports", "js/characters/catalog/characterCatalog", "js/shared/utils"], function (require, exports, characterCatalog_js_6, utils_js_39) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderLicenseView = renderLicenseView;
@@ -26861,22 +27527,22 @@ define("js/ui/views/license/licenseView", ["require", "exports", "js/characters/
             const termsUrl = safeHttpsUrl(group.source?.termsUrl);
             const verifiedAt = String(group.source?.classificationVerifiedAt ?? '').trim();
             const characterNames = group.characters
-                .map((character) => `<li>${(0, utils_js_38.escapeHtml)(character.name)}</li>`)
+                .map((character) => `<li>${(0, utils_js_39.escapeHtml)(character.name)}</li>`)
                 .join('');
             const sourceLinks = [
-                officialUrl ? `<a href="${(0, utils_js_38.escapeHtml)(officialUrl)}" target="_blank" rel="noreferrer">公式サイト</a>` : '',
-                termsUrl ? `<a href="${(0, utils_js_38.escapeHtml)(termsUrl)}" target="_blank" rel="noreferrer">利用規約</a>` : '',
-                verifiedAt ? `<span>確認日: ${(0, utils_js_38.escapeHtml)(verifiedAt)}</span>` : '',
+                officialUrl ? `<a href="${(0, utils_js_39.escapeHtml)(officialUrl)}" target="_blank" rel="noreferrer">公式サイト</a>` : '',
+                termsUrl ? `<a href="${(0, utils_js_39.escapeHtml)(termsUrl)}" target="_blank" rel="noreferrer">利用規約</a>` : '',
+                verifiedAt ? `<span>確認日: ${(0, utils_js_39.escapeHtml)(verifiedAt)}</span>` : '',
             ].filter(Boolean).join('');
             return `<div class="license-source-row">
         <div class="license-source-head">
-          <strong class="license-source-group-name">${(0, utils_js_38.escapeHtml)(group.name)}</strong>
+          <strong class="license-source-group-name">${(0, utils_js_39.escapeHtml)(group.name)}</strong>
           <span class="license-source-count">${group.characters.length}キャラクター</span>
         </div>
-        ${holder ? `<p class="license-source-holder"><span>管理・権利情報</span><strong>${(0, utils_js_38.escapeHtml)(holder)}</strong></p>` : ''}
+        ${holder ? `<p class="license-source-holder"><span>管理・権利情報</span><strong>${(0, utils_js_39.escapeHtml)(holder)}</strong></p>` : ''}
         ${sourceLinks ? `<div class="license-source-links">${sourceLinks}</div>` : ''}
-        <ul class="license-character-name-list" aria-label="${(0, utils_js_38.escapeHtml)(group.name)}のキャラクター">${characterNames}</ul>
-        ${credit ? `<code>${(0, utils_js_38.escapeHtml)(credit)}</code>` : ''}
+        <ul class="license-character-name-list" aria-label="${(0, utils_js_39.escapeHtml)(group.name)}のキャラクター">${characterNames}</ul>
+        ${credit ? `<code>${(0, utils_js_39.escapeHtml)(credit)}</code>` : ''}
       </div>`;
         }).join('');
     }
@@ -26891,8 +27557,8 @@ define("js/ui/views/license/licenseView", ["require", "exports", "js/characters/
       </div>
       <div class="license-version" aria-label="アプリ情報">
         <span>AI人狼マネージャー</span>
-        <strong>v${(0, utils_js_38.escapeHtml)(appVersion)}</strong>
-        ${shortBuildId ? `<code>Build ${(0, utils_js_38.escapeHtml)(shortBuildId)}</code>` : ''}
+        <strong>v${(0, utils_js_39.escapeHtml)(appVersion)}</strong>
+        ${shortBuildId ? `<code>Build ${(0, utils_js_39.escapeHtml)(shortBuildId)}</code>` : ''}
       </div>
     </div>
 
@@ -26967,7 +27633,7 @@ define("js/ui/views/license/licenseView", ["require", "exports", "js/characters/
  * - 組み込み/ユーザーの差は編集可否と表示トーンだけで表し、組み込み詳細も同じ詳細フォームを閲覧専用で表示する。
  * - 通常編集ではJSON構文を直接入力させず、人物設定・会話種・相手別呼称は通常のフォーム部品だけで扱う。ユーザーキャラクターは表示名だけを必須入力とし、表示名の独立ランダム生成操作を隣接配置する。その他は空欄を許可する。AI一括生成操作はAIプロファイルの有無に関係なく表示し、生成ダイアログ内でAPI生成と手動コピペ生成を切り替える。
  */
-define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js/characters/catalog/characterCatalog", "js/characters/config/characterTextPolicyAdapter", "js/shared/utils", "js/ui/views/characters/characterProfileFormView"], function (require, exports, characterCatalog_js_7, characterTextPolicyAdapter_js_5, utils_js_39, characterProfileFormView_js_2) {
+define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js/characters/catalog/characterCatalog", "js/characters/config/characterTextPolicyAdapter", "js/shared/utils", "js/ui/views/characters/characterProfileFormView"], function (require, exports, characterCatalog_js_7, characterTextPolicyAdapter_js_5, utils_js_40, characterProfileFormView_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.selectCharacterLibraryGroup = selectCharacterLibraryGroup;
@@ -26996,8 +27662,8 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
     }
     function groupListItem(group, selected) {
         const enabledCount = group.characters.filter((card) => card.enabled !== false).length;
-        return `<button class="character-library-group-list-item is-${group.origin}${selected ? ' is-selected' : ''}${group.enabled ? '' : ' is-disabled'}" data-character-library-action="select-group" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="button" aria-pressed="${selected ? 'true' : 'false'}">
-    <span class="character-library-group-list-copy"><strong>${(0, utils_js_39.escapeHtml)(group.name)}</strong><small>${enabledCount}/${group.characters.length}キャラクター使用</small></span>
+        return `<button class="character-library-group-list-item is-${group.origin}${selected ? ' is-selected' : ''}${group.enabled ? '' : ' is-disabled'}" data-character-library-action="select-group" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="button" aria-pressed="${selected ? 'true' : 'false'}">
+    <span class="character-library-group-list-copy"><strong>${(0, utils_js_40.escapeHtml)(group.name)}</strong><small>${enabledCount}/${group.characters.length}キャラクター使用</small></span>
     <span class="character-library-origin-badge">${originLabel(group)}</span>
   </button>`;
     }
@@ -27010,16 +27676,16 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
             const effective = group.enabled && card.enabled !== false;
             return `<div class="character-library-character-row${effective ? '' : ' is-disabled'}">
       <label class="character-library-character-enabled" title="このキャラクターをゲームの選択候補に含めます">
-        <input data-character-library-character-toggle data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="checkbox"${(0, utils_js_39.checked)(card.enabled !== false)}${group.enabled ? '' : ' disabled'}>
+        <input data-character-library-character-toggle data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="checkbox"${(0, utils_js_40.checked)(card.enabled !== false)}${group.enabled ? '' : ' disabled'}>
         <span>使用</span>
       </label>
-      <div class="character-library-character-main"><strong>${(0, utils_js_39.escapeHtml)(card.name)}</strong>${aliases ? `<small>${(0, utils_js_39.escapeHtml)(aliases)}</small>` : ''}</div>
+      <div class="character-library-character-main"><strong>${(0, utils_js_40.escapeHtml)(card.name)}</strong>${aliases ? `<small>${(0, utils_js_40.escapeHtml)(aliases)}</small>` : ''}</div>
       <div class="character-library-row-actions">
-        <button class="button ghost small" data-character-library-action="move-character-up" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="button"${index > 0 ? '' : ' disabled'}>上へ</button>
-        <button class="button ghost small" data-character-library-action="move-character-down" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="button"${index < group.characters.length - 1 ? '' : ' disabled'}>下へ</button>
-        <button class="button ghost small" data-character-library-action="edit-character" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="button">詳細設定</button>
-        <button class="button ghost small" data-character-library-action="duplicate-character" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="button"${canDuplicate ? '' : ' disabled'} title="${canDuplicate ? 'ユーザーグループへ複製' : 'ユーザーグループを先に作成してください'}">複製</button>
-        ${group.origin === 'user' ? `<button class="button danger-ghost small" data-character-library-action="delete-character" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="button">削除</button>` : ''}
+        <button class="button ghost small" data-character-library-action="move-character-up" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="button"${index > 0 ? '' : ' disabled'}>上へ</button>
+        <button class="button ghost small" data-character-library-action="move-character-down" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="button"${index < group.characters.length - 1 ? '' : ' disabled'}>下へ</button>
+        <button class="button ghost small" data-character-library-action="edit-character" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="button">詳細設定</button>
+        <button class="button ghost small" data-character-library-action="duplicate-character" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="button"${canDuplicate ? '' : ' disabled'} title="${canDuplicate ? 'ユーザーグループへ複製' : 'ユーザーグループを先に作成してください'}">複製</button>
+        ${group.origin === 'user' ? `<button class="button danger-ghost small" data-character-library-action="delete-character" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="button">削除</button>` : ''}
       </div>
     </div>`;
         }).join('')}</div>`;
@@ -27033,21 +27699,21 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
     <header class="character-library-group-editor-head">
       <div class="character-library-group-editor-title">
         <span class="character-library-origin-badge">${originLabel(group)}</span>
-        <h3>${(0, utils_js_39.escapeHtml)(group.name)}</h3>
+        <h3>${(0, utils_js_40.escapeHtml)(group.name)}</h3>
         <p>${group.characters.length}キャラクター</p>
       </div>
       <div class="character-library-group-controls">
-        <label class="character-library-group-enabled-switch"><input data-character-library-toggle data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="checkbox"${(0, utils_js_39.checked)(group.enabled)}><span>グループを使用</span></label>
+        <label class="character-library-group-enabled-switch"><input data-character-library-toggle data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="checkbox"${(0, utils_js_40.checked)(group.enabled)}><span>グループを使用</span></label>
         <div class="character-library-group-actions">
-          <button class="button ghost small" data-character-library-action="move-group-up" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="button"${index > 0 ? '' : ' disabled'}>上へ</button>
-          <button class="button ghost small" data-character-library-action="move-group-down" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="button"${index >= 0 && index < groups.length - 1 ? '' : ' disabled'}>下へ</button>
-          ${group.origin === 'user' ? `<button class="button ghost small" data-character-library-action="edit-group" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="button">名前変更</button><button class="button danger-ghost small" data-character-library-action="delete-group" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="button">削除</button>` : ''}
+          <button class="button ghost small" data-character-library-action="move-group-up" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="button"${index > 0 ? '' : ' disabled'}>上へ</button>
+          <button class="button ghost small" data-character-library-action="move-group-down" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="button"${index >= 0 && index < groups.length - 1 ? '' : ' disabled'}>下へ</button>
+          ${group.origin === 'user' ? `<button class="button ghost small" data-character-library-action="edit-group" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="button">名前変更</button><button class="button danger-ghost small" data-character-library-action="delete-group" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="button">削除</button>` : ''}
         </div>
       </div>
     </header>
     <div class="character-library-group-body">
       ${characterRows(group, userGroups)}
-      ${group.origin === 'user' ? `<div class="character-library-group-footer"><button class="button primary small" data-character-library-action="add-character" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" type="button">＋ キャラクター追加</button></div>` : ''}
+      ${group.origin === 'user' ? `<div class="character-library-group-footer"><button class="button primary small" data-character-library-action="add-character" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" type="button">＋ キャラクター追加</button></div>` : ''}
     </div>
   </article>`;
     }
@@ -27081,18 +27747,18 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
     <div class="modal-header"><h3>${editing ? 'グループ名変更' : 'グループ作成'}</h3><button class="button icon ghost" data-modal-close type="button">×</button></div>
     <div class="modal-body">
       ${modalErrorHtml()}
-      <label class="field"><span>グループ名</span><input name="name" maxlength="120" value="${(0, utils_js_39.escapeHtml)(group?.name ?? '')}" required autofocus></label>
+      <label class="field"><span>グループ名</span><input name="name" maxlength="120" value="${(0, utils_js_40.escapeHtml)(group?.name ?? '')}" required autofocus></label>
     </div>
-    <div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button primary" data-character-library-action="save-group" data-group-id="${(0, utils_js_39.escapeHtml)(group?.id ?? '')}" type="button">保存</button></div>
+    <div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button primary" data-character-library-action="save-group" data-group-id="${(0, utils_js_40.escapeHtml)(group?.id ?? '')}" type="button">保存</button></div>
   </form>`;
     }
     function renderConversationSeedEditorRow(seed = {}, { readonly = false } = {}) {
         const disabled = readonly ? ' disabled' : '';
         return `<div class="character-conversation-seed" data-conversation-seed-row>
-    <input name="conversationSeedId" type="hidden" value="${(0, utils_js_39.escapeHtml)(seed.id ?? '')}"${disabled}>
+    <input name="conversationSeedId" type="hidden" value="${(0, utils_js_40.escapeHtml)(seed.id ?? '')}"${disabled}>
     <div class="form-grid">
-      <label class="field"><span>${limitLabel('話題', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedSubject)}</span><input name="conversationSeedSubject" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedSubject}" value="${(0, utils_js_39.escapeHtml)(seed.subject ?? '')}"${disabled}></label>
-      <label class="field"><span>${limitLabel('雰囲気', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedTone)}</span><input name="conversationSeedTone" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedTone}" value="${(0, utils_js_39.escapeHtml)(seed.tone ?? '')}"${disabled}></label>
+      <label class="field"><span>${limitLabel('話題', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedSubject)}</span><input name="conversationSeedSubject" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedSubject}" value="${(0, utils_js_40.escapeHtml)(seed.subject ?? '')}"${disabled}></label>
+      <label class="field"><span>${limitLabel('雰囲気', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedTone)}</span><input name="conversationSeedTone" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.conversationSeedTone}" value="${(0, utils_js_40.escapeHtml)(seed.tone ?? '')}"${disabled}></label>
     </div>
     ${readonly ? '' : '<button class="button danger-ghost small character-conversation-seed-remove" data-character-library-action="remove-conversation-seed" type="button">削除</button>'}
   </div>`;
@@ -27114,9 +27780,9 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
         return `<div class="character-call-name-list">${targets.map((target) => {
             const entry = card.callNames?.[target.id] ?? {};
             return `<div class="character-call-name-row">
-      <input name="callNameTargetId" type="hidden" value="${(0, utils_js_39.escapeHtml)(target.id)}"${disabled}>
-      <strong>${(0, utils_js_39.escapeHtml)(target.name)} <small>（最大${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.callNamePreferred}文字）</small></strong>
-      <label class="field"><input name="callNamePreferred" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.callNamePreferred}" value="${(0, utils_js_39.escapeHtml)(entry.preferred ?? '')}" placeholder="未設定なら表示名を使用"${disabled}></label>
+      <input name="callNameTargetId" type="hidden" value="${(0, utils_js_40.escapeHtml)(target.id)}"${disabled}>
+      <strong>${(0, utils_js_40.escapeHtml)(target.name)} <small>（最大${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.callNamePreferred}文字）</small></strong>
+      <label class="field"><input name="callNamePreferred" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.callNamePreferred}" value="${(0, utils_js_40.escapeHtml)(entry.preferred ?? '')}" placeholder="未設定なら表示名を使用"${disabled}></label>
     </div>`;
         }).join('')}</div>`;
     }
@@ -27131,17 +27797,17 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
         const profile = card.character ?? {};
         const disabled = readonly ? ' disabled' : '';
         return `<form class="modal-form character-library-modal-form character-editor-form" data-character-library-form="character">
-    <div class="modal-header"><div><h3>${card.__new ? 'キャラクター追加' : `${(0, utils_js_39.escapeHtml)(card.name)}の詳細設定`}</h3><p>${(0, utils_js_39.escapeHtml)(group.name)}${readonly ? ' ・ 閲覧専用' : ''}</p></div><button class="button icon ghost" data-modal-close type="button">×</button></div>
+    <div class="modal-header"><div><h3>${card.__new ? 'キャラクター追加' : `${(0, utils_js_40.escapeHtml)(card.name)}の詳細設定`}</h3><p>${(0, utils_js_40.escapeHtml)(group.name)}${readonly ? ' ・ 閲覧専用' : ''}</p></div><button class="button icon ghost" data-modal-close type="button">×</button></div>
     <div class="modal-body player-detail-body character-editor-body">
       ${modalErrorHtml()}
       <fieldset class="player-detail-section">
         <legend>識別情報</legend>
         <div class="character-identity-fields">
           <div class="character-display-name-row">
-            <label class="field"><span>${limitLabel('表示名', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.name)}</span><input name="name" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.name}" value="${(0, utils_js_39.escapeHtml)(card.name)}"${readonly ? '' : ' required autofocus'}${disabled}></label>
+            <label class="field"><span>${limitLabel('表示名', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.name)}</span><input name="name" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.name}" value="${(0, utils_js_40.escapeHtml)(card.name)}"${readonly ? '' : ' required autofocus'}${disabled}></label>
             ${readonly ? '' : '<button class="button ghost character-name-randomize" data-character-library-action="randomize-character-name" type="button">ランダム生成</button>'}
           </div>
-          <label class="field"><span>別名（各最大${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.alias}文字・${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.aliasesMax}件まで）</span><input name="aliases" maxlength="${ALIASES_INPUT_MAX_LENGTH}" value="${(0, utils_js_39.escapeHtml)((card.aliases ?? []).join('、'))}"${disabled}><small>略称・読み違い・表記揺れなどを、読点区切りで登録します。</small></label>
+          <label class="field"><span>別名（各最大${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.alias}文字・${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.aliasesMax}件まで）</span><input name="aliases" maxlength="${ALIASES_INPUT_MAX_LENGTH}" value="${(0, utils_js_40.escapeHtml)((card.aliases ?? []).join('、'))}"${disabled}><small>略称・読み違い・表記揺れなどを、読点区切りで登録します。</small></label>
         </div>
       </fieldset>
 
@@ -27155,22 +27821,22 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
         <button class="button ghost character-editor-ai-generate" data-character-library-action="open-ai-character-generation" type="button">AI生成</button>
       </div>`}
       <button class="button ghost" data-modal-close type="button">${readonly ? '閉じる' : 'キャンセル'}</button>
-      ${readonly ? '' : `<button class="button primary" data-character-library-action="save-character" data-group-id="${(0, utils_js_39.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" data-is-new="${card.__new ? 'true' : 'false'}" type="button">保存</button>`}
+      ${readonly ? '' : `<button class="button primary" data-character-library-action="save-character" data-group-id="${(0, utils_js_40.escapeHtml)(group.id)}" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" data-is-new="${card.__new ? 'true' : 'false'}" type="button">保存</button>`}
     </div>
   </form>`;
     }
     function renderCharacterDuplicateTarget({ card, groups }) {
         return `<form class="modal-form character-library-modal-form" data-character-library-form="duplicate">
-    <div class="modal-header"><div><h3>キャラクターを複製</h3><p>${(0, utils_js_39.escapeHtml)(card.name)}</p></div><button class="button icon ghost" data-modal-close type="button">×</button></div>
+    <div class="modal-header"><div><h3>キャラクターを複製</h3><p>${(0, utils_js_40.escapeHtml)(card.name)}</p></div><button class="button icon ghost" data-modal-close type="button">×</button></div>
     <div class="modal-body">
       ${modalErrorHtml()}
-      <label class="field"><span>複製先のユーザーグループ</span><select name="targetGroupId" required>${groups.map((group) => `<option value="${(0, utils_js_39.escapeHtml)(group.id)}">${(0, utils_js_39.escapeHtml)(group.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>複製先のユーザーグループ</span><select name="targetGroupId" required>${groups.map((group) => `<option value="${(0, utils_js_40.escapeHtml)(group.id)}">${(0, utils_js_40.escapeHtml)(group.name)}</option>`).join('')}</select></label>
     </div>
-    <div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button primary" data-character-library-action="confirm-duplicate-character" data-character-id="${(0, utils_js_39.escapeHtml)(card.id)}" type="button">複製</button></div>
+    <div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button primary" data-character-library-action="confirm-duplicate-character" data-character-id="${(0, utils_js_40.escapeHtml)(card.id)}" type="button">複製</button></div>
   </form>`;
     }
     function renderCharacterDeleteConfirmation({ title, message, action, groupId, characterId = '' }) {
-        return `<div class="modal-form character-library-modal-form"><div class="modal-header"><h3>${(0, utils_js_39.escapeHtml)(title)}</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body">${modalErrorHtml()}<p>${(0, utils_js_39.escapeHtml)(message)}</p><p class="validation warning">削除したデータはキャラクター管理へ戻せません。必要なら先にキャラクター出力してください。</p></div><div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button danger" data-character-library-action="${(0, utils_js_39.escapeHtml)(action)}" data-group-id="${(0, utils_js_39.escapeHtml)(groupId)}" data-character-id="${(0, utils_js_39.escapeHtml)(characterId)}" type="button">削除</button></div></div>`;
+        return `<div class="modal-form character-library-modal-form"><div class="modal-header"><h3>${(0, utils_js_40.escapeHtml)(title)}</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body">${modalErrorHtml()}<p>${(0, utils_js_40.escapeHtml)(message)}</p><p class="validation warning">削除したデータはキャラクター管理へ戻せません。必要なら先にキャラクター出力してください。</p></div><div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button danger" data-character-library-action="${(0, utils_js_40.escapeHtml)(action)}" data-group-id="${(0, utils_js_40.escapeHtml)(groupId)}" data-character-id="${(0, utils_js_40.escapeHtml)(characterId)}" type="button">削除</button></div></div>`;
     }
     function renderAiCharacterGenerationDialog({ profiles = [] }) {
         const hasApiProfile = profiles.length > 0;
@@ -27187,7 +27853,7 @@ define("js/ui/views/characters/characterLibraryView", ["require", "exports", "js
       </fieldset>
       <label class="field"><span>${limitLabel('特徴指示', characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.aiInstruction)}</span><textarea name="instruction" maxlength="${characterTextPolicyAdapter_js_5.CHARACTER_TEXT_LIMITS.aiInstruction}" rows="5" placeholder="例：中二病のキャラを作って\n例：一見おっとりしているが推理になると鋭い和風キャラ"></textarea><small>空欄でも生成できます。雰囲気、ジャンル、年齢感、口調、トンデモ設定などを自由に指定できます。</small></label>
       <section class="character-ai-generation-panel" data-character-ai-api-panel${hasApiProfile ? '' : ' hidden'}>
-        <label class="field"><span>使用するAIプロファイル</span><select name="profileId">${profiles.map((profile) => `<option value="${(0, utils_js_39.escapeHtml)(profile.id)}">${(0, utils_js_39.escapeHtml)(profile.label)} / ${(0, utils_js_39.escapeHtml)(profile.model || profile.provider)}</option>`).join('')}</select></label>
+        <label class="field"><span>使用するAIプロファイル</span><select name="profileId">${profiles.map((profile) => `<option value="${(0, utils_js_40.escapeHtml)(profile.id)}">${(0, utils_js_40.escapeHtml)(profile.label)} / ${(0, utils_js_40.escapeHtml)(profile.model || profile.provider)}</option>`).join('')}</select></label>
       </section>
       <section class="character-ai-generation-panel character-ai-manual-panel" data-character-ai-manual-panel${hasApiProfile ? ' hidden' : ''}>
         <div class="character-ai-manual-head"><div><strong>1. プロンプトを外部AIへ渡す</strong><small>特徴指示を編集すると、下のプロンプトも更新されます。</small></div><button class="button ghost" data-character-ai-copy-manual-prompt type="button">プロンプトをコピー</button></div>
@@ -27328,7 +27994,7 @@ define("js/ui/renderCompositionState", ["require", "exports"], function (require
  * 責務: UIで共有する死亡理由、夜行動表示、凍結強調、判断差分プレビュー、トースト種別・夜名伏せを純粋関数として提供する。
  * 変更ルール: DOMや状態を更新せず、表示変換だけを行う。ゲーム規則の独自判定を追加しない。
  */
-define("js/ui/controllers/uiStateFormatters", ["require", "exports", "js/config/personalNightActionTasks", "js/domain/game/standardRules", "js/domain/game/playerStatus"], function (require, exports, personalNightActionTasks_js_10, standardRules_js_27, playerStatus_js_10) {
+define("js/ui/controllers/uiStateFormatters", ["require", "exports", "js/config/personalNightActionTasks", "js/domain/game/standardRules", "js/domain/game/playerStatus"], function (require, exports, personalNightActionTasks_js_10, standardRules_js_27, playerStatus_js_12) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.TOAST_DURATION_MS = exports.NIGHT_ACTION_TARGET_LABELS = exports.NIGHT_ACTION_LABELS = void 0;
@@ -27356,7 +28022,7 @@ define("js/ui/controllers/uiStateFormatters", ["require", "exports", "js/config/
     function nightActionTargetLabel(taskType) { return exports.NIGHT_ACTION_TARGET_LABELS[taskType] ?? '対象'; }
     function shouldHighlightFrozenPlayerPanel(state, playerId) {
         const player = (0, standardRules_js_27.getPlayer)(state, playerId);
-        return Boolean(player?.alive && !['result', 'ended'].includes(state.game.phase) && (0, playerStatus_js_10.isFrozenOnDay)(state, playerId));
+        return Boolean(player?.alive && !['result', 'ended'].includes(state.game.phase) && (0, playerStatus_js_12.isFrozenOnDay)(state, playerId));
     }
     function formatDecisionUpdatePreview(decisionUpdate) {
         if (!decisionUpdate)
@@ -27372,7 +28038,7 @@ define("js/ui/controllers/uiStateFormatters", ["require", "exports", "js/config/
  * 責務: GM進行卓の3カラム骨格、フェーズ概要、プレイヤー相関図ダイアログへの確認導線、自動実行時の停止・再開導線を描画する。
  * 変更ルール: タスク固有フォーム・状態更新・ゲーム規則判定を持たない。
  */
-define("js/ui/views/workbench/workbenchView", ["require", "exports", "js/config/constants", "js/shared/utils"], function (require, exports, constants_js_46, utils_js_40) {
+define("js/ui/views/workbench/workbenchView", ["require", "exports", "js/config/constants", "js/shared/utils"], function (require, exports, constants_js_46, utils_js_41) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderWorkbenchShell = renderWorkbenchShell;
@@ -27385,16 +28051,16 @@ define("js/ui/views/workbench/workbenchView", ["require", "exports", "js/config/
                 : '';
         return `<section class="page workbench-page">
     <div class="page-head">
-      <div><span class="eyebrow">GM進行卓</span><h2>Day ${state.game.day}・${(0, utils_js_40.escapeHtml)(constants_js_46.PHASE_LABELS[state.game.phase] ?? state.game.phase)}</h2><p>${(0, utils_js_40.escapeHtml)(task.label)}</p></div>
+      <div><span class="eyebrow">GM進行卓</span><h2>Day ${state.game.day}・${(0, utils_js_41.escapeHtml)(constants_js_46.PHASE_LABELS[state.game.phase] ?? state.game.phase)}</h2><p>${(0, utils_js_41.escapeHtml)(task.label)}</p></div>
       <div class="rule-strip">${ruleStrip}</div>
     </div>
-    ${state.game.correctionMode.enabled ? `<div class="alert danger-alert"><strong>訂正モード中</strong><span>${(0, utils_js_40.escapeHtml)(state.game.correctionMode.reason)}</span><button class="button" data-action="exit-correction" type="button">訂正モード終了</button></div>` : ''}
+    ${state.game.correctionMode.enabled ? `<div class="alert danger-alert"><strong>訂正モード中</strong><span>${(0, utils_js_41.escapeHtml)(state.game.correctionMode.reason)}</span><button class="button" data-action="exit-correction" type="button">訂正モード終了</button></div>` : ''}
     <div class="workbench-grid">
       <aside class="progress-panel panel"><h3>進行手順</h3>${phaseSteps}</aside>
       <main class="task-panel panel">${taskHtml}</main>
       <aside class="players-panel panel"><div class="panel-title-row"><h3>プレイヤー状態</h3><div class="panel-title-actions"><span>${state.players.filter((player) => player.alive).length}/${state.players.length} 生存</span><button class="button ghost small" data-action="open-player-relationship-dialog" type="button">相関図</button></div></div>${playerStatusList}</aside>
     </div>
-    <div class="action-history"><span>最後の操作: ${(0, utils_js_40.escapeHtml)(state.lastActionLabel || 'なし')}</span>${pauseButton}</div>
+    <div class="action-history"><span>最後の操作: ${(0, utils_js_41.escapeHtml)(state.lastActionLabel || 'なし')}</span>${pauseButton}</div>
   </section>`;
     }
 });
@@ -27402,14 +28068,14 @@ define("js/ui/views/workbench/workbenchView", ["require", "exports", "js/config/
  * 責務: 人間プレイヤーの現在タスクを、進行卓内で完結するインライン操作カードまたは役職通知ダイアログとして純粋描画する。
  * 変更ルール: 公開・非公開を問わず現在の進行卓上へ必要最小限の入力だけを出し、役職通知だけは本人が明示的に開いた時にダイアログ表示する。公開CO候補と役職構成表示はroleComposition.jsの公開構成を使用し、役職欠け後の実配役を漏らさない。ゲーム状態は更新しない。
  */
-define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/claims/claimRolePolicy", "js/domain/game/playerStatus", "js/domain/game/standardRules", "js/domain/policies/publicAbilityClaimPolicy", "js/state/selectors", "js/config/constants", "js/domain/roles/roleComposition", "js/shared/utils", "js/ui/components/components", "js/ui/controllers/uiStateFormatters"], function (require, exports, claimRolePolicy_js_7, playerStatus_js_11, standardRules_js_28, publicAbilityClaimPolicy_js_21, selectors_js_2, constants_js_47, roleComposition_js_7, utils_js_41, components_js_4, uiStateFormatters_js_1) {
+define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/claims/claimRolePolicy", "js/domain/game/playerStatus", "js/domain/game/standardRules", "js/domain/policies/publicAbilityClaimPolicy", "js/state/selectors", "js/config/constants", "js/domain/roles/roleComposition", "js/shared/utils", "js/ui/components/components", "js/ui/controllers/uiStateFormatters"], function (require, exports, claimRolePolicy_js_7, playerStatus_js_13, standardRules_js_28, publicAbilityClaimPolicy_js_21, selectors_js_2, constants_js_47, roleComposition_js_7, utils_js_42, components_js_4, uiStateFormatters_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderHumanTaskCard = renderHumanTaskCard;
     exports.renderHumanRoleNoticeDialog = renderHumanRoleNoticeDialog;
     function humanCardShell({ taskType, playerId, slotId = '', questionEventId = '', tone = 'public', title, eyebrow, body, actions = '' }) {
-        return `<section class="human-task-card human-task-${(0, utils_js_41.escapeHtml)(tone)}" data-human-task-card data-task-type="${(0, utils_js_41.escapeHtml)(taskType)}" data-player-id="${(0, utils_js_41.escapeHtml)(playerId)}" data-slot-id="${(0, utils_js_41.escapeHtml)(slotId)}" data-question-event-id="${(0, utils_js_41.escapeHtml)(questionEventId)}" tabindex="-1">
-    <div class="human-task-head"><div><span class="eyebrow">${(0, utils_js_41.escapeHtml)(eyebrow)}</span><h3>${(0, utils_js_41.escapeHtml)(title)}</h3></div>${tone === 'private' ? '<span class="human-task-private-badge">非公開操作</span>' : ''}</div>
+        return `<section class="human-task-card human-task-${(0, utils_js_42.escapeHtml)(tone)}" data-human-task-card data-task-type="${(0, utils_js_42.escapeHtml)(taskType)}" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" data-slot-id="${(0, utils_js_42.escapeHtml)(slotId)}" data-question-event-id="${(0, utils_js_42.escapeHtml)(questionEventId)}" tabindex="-1">
+    <div class="human-task-head"><div><span class="eyebrow">${(0, utils_js_42.escapeHtml)(eyebrow)}</span><h3>${(0, utils_js_42.escapeHtml)(title)}</h3></div>${tone === 'private' ? '<span class="human-task-private-badge">非公開操作</span>' : ''}</div>
     ${body}
     ${actions}
   </section>`;
@@ -27418,7 +28084,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         const policy = (0, claimRolePolicy_js_7.buildClaimRolePolicy)((0, roleComposition_js_7.getPublicRoleComposition)(state));
         const defaultRole = policy.coRoleIds.find((roleId) => roleId !== 'none') ?? 'none';
         const roleItems = policy.coRoleIds.filter((roleId) => roleId !== 'none').map((roleId) => (0, components_js_4.option)(roleId, (0, selectors_js_2.getRoleName)(roleId), defaultRole)).join('');
-        return `<details class="optional-box human-task-options"><summary>${(0, utils_js_41.escapeHtml)(summary)}</summary><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-human-field="coAction">${(0, components_js_4.option)('none', 'COなし', 'none')}${(0, components_js_4.option)('declare', '新規CO', 'none')}${(0, components_js_4.option)('change', 'CO役職変更', 'none')}${(0, components_js_4.option)('withdraw', 'CO撤回', 'none')}</select></label><label class="field"><span>CO役職</span><select data-human-field="coRoleId">${roleItems}</select></label></div><p class="help">COなし・撤回では役職選択を使用しません。</p></details>`;
+        return `<details class="optional-box human-task-options"><summary>${(0, utils_js_42.escapeHtml)(summary)}</summary><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-human-field="coAction">${(0, components_js_4.option)('none', 'COなし', 'none')}${(0, components_js_4.option)('declare', '新規CO', 'none')}${(0, components_js_4.option)('change', 'CO役職変更', 'none')}${(0, components_js_4.option)('withdraw', 'CO撤回', 'none')}</select></label><label class="field"><span>CO役職</span><select data-human-field="coRoleId">${roleItems}</select></label></div><p class="help">COなし・撤回では役職選択を使用しません。</p></details>`;
     }
     function abilityClaimsForm(state, playerId, contextLabel = '能力結果公開（任意）') {
         const policy = (0, claimRolePolicy_js_7.buildClaimRolePolicy)((0, roleComposition_js_7.getPublicRoleComposition)(state));
@@ -27432,9 +28098,9 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
             const definition = (0, publicAbilityClaimPolicy_js_21.getPublicAbilityClaimDefinition)(defaultRoleId);
             const roleItems = policy.abilityClaimRoleIds.map((id) => (0, components_js_4.option)(id, (0, selectors_js_2.getRoleName)(id), defaultRoleId)).join('');
             const resultItems = (definition?.results ?? ['unknown']).map((value) => (0, components_js_4.option)(value, (0, publicAbilityClaimPolicy_js_21.publicAbilityResultLabel)(value, defaultRoleId), definition?.results?.[0] ?? 'unknown')).join('');
-            return `<fieldset class="optional-box human-ability-row" data-human-ability-row><legend>能力結果 ${index}</legend><div class="form-grid compact"><label class="field"><span>主張役職</span><select data-human-ability-field="claimedRoleId">${roleItems}</select></label><label class="field"><span>結果Day</span><input type="number" min="1" max="${Math.max(1, Number(state.game.day ?? 1))}" value="${index}" data-human-ability-field="observedDay"></label><label class="field"><span>対象</span><select data-human-ability-field="targetId"><option value="">公開しない</option>${(0, components_js_4.playerOptions)(state.players)}</select></label><label class="field"><span>結果</span><select data-human-ability-field="result">${resultItems}</select></label><label class="field"><span>選定根拠</span><select data-human-ability-field="selectionBasis"><option value="no-public-information">公開根拠なし</option><option value="public-evidence">公開根拠あり</option><option value="rule-forced">ルールで対象固定</option></select></label><label class="field"><span>公開根拠番号</span><input data-human-ability-field="evidence" placeholder="#12, #15"></label><label class="field full"><span>選定時点の理由（任意）</span><input data-human-ability-field="selectionReasonAtTime"></label></div></fieldset>`;
+            return `<fieldset class="optional-box human-ability-row" data-human-ability-row><legend>能力結果 ${index}</legend><div class="form-grid compact"><label class="field"><span>主張役職</span><select data-human-ability-field="claimedRoleId">${roleItems}</select></label><label class="field"><span>能力を実行・成立したDay</span><input type="number" min="0" max="${Math.max(0, Number(state.game.day ?? 1) - 1)}" value="${offset}" data-human-ability-field="actionDay"></label><label class="field"><span>対象</span><select data-human-ability-field="targetId"><option value="">公開しない</option>${(0, components_js_4.playerOptions)(state.players)}</select></label><label class="field"><span>結果</span><select data-human-ability-field="result">${resultItems}</select></label><label class="field"><span>選定根拠</span><select data-human-ability-field="selectionBasis"><option value="no-public-information">公開根拠なし</option><option value="public-evidence">公開根拠あり</option><option value="rule-forced">ルールで対象固定</option></select></label><label class="field"><span>公開根拠番号</span><input data-human-ability-field="evidence" placeholder="#12, #15"></label><label class="field full"><span>選定時点の理由（任意）</span><input data-human-ability-field="selectionReasonAtTime"></label></div></fieldset>`;
         }).join('');
-        return `<details class="optional-box human-task-options"><summary>${(0, utils_js_41.escapeHtml)(contextLabel)}</summary><label class="field"><span>能力結果操作</span><select data-human-field="abilityAction"><option value="none">公開しない</option><option value="publish">能力結果を公開する</option></select></label><div class="human-ability-rows">${rows}</div><p class="help">「能力結果を公開する」を選んだ場合、対象を選択した行だけ登録します。</p></details>`;
+        return `<details class="optional-box human-task-options"><summary>${(0, utils_js_42.escapeHtml)(contextLabel)}</summary><label class="field"><span>能力結果操作</span><select data-human-field="abilityAction"><option value="none">公開しない</option><option value="publish">能力結果を公開する</option></select></label><div class="human-ability-rows">${rows}</div><p class="help">「能力結果を公開する」を選んだ場合、対象を選択した行だけ登録します。</p></details>`;
     }
     function renderBriefing(state, task) {
         const player = (0, standardRules_js_28.getPlayer)(state, task.playerId);
@@ -27443,7 +28109,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         return humanCardShell({
             taskType: 'briefing', playerId: player.id, tone: 'private', eyebrow: '個人通知', title: `${player.name}への役職通知`,
             body: '<p class="help">ゲーム開始時の役職情報があります。必要な時だけ開いて確認してください。</p>',
-            actions: `<div class="human-task-actions"><button class="button primary" data-action="open-human-role-notice" data-player-id="${(0, utils_js_41.escapeHtml)(player.id)}" type="button">役職を確認</button></div>`,
+            actions: `<div class="human-task-actions"><button class="button primary" data-action="open-human-role-notice" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" type="button">役職を確認</button></div>`,
         });
     }
     function privateResultRows(state, playerId) {
@@ -27451,11 +28117,11 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         return notices.map((event) => {
             if (event.payload.actionType === 'choose-owner') {
                 const teamName = event.payload.resolvedTeam === 'wolf' ? '人狼陣営' : event.payload.resolvedTeam === 'fox' ? '妖狐陣営' : '村人陣営';
-                return `<div class="human-private-result"><span>家主を選びました</span><strong>${(0, utils_js_41.escapeHtml)((0, selectors_js_2.getPlayerName)(state, event.payload.targetId))}</strong><p>家主の役職: ${(0, utils_js_41.escapeHtml)((0, selectors_js_2.getRoleName)(event.payload.ownerRoleId))} / 所属陣営: ${(0, utils_js_41.escapeHtml)(teamName)}</p></div>`;
+                return `<div class="human-private-result"><span>家主を選びました</span><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_2.getPlayerName)(state, event.payload.targetId))}</strong><p>家主の役職: ${(0, utils_js_42.escapeHtml)((0, selectors_js_2.getRoleName)(event.payload.ownerRoleId))} / 所属陣営: ${(0, utils_js_42.escapeHtml)(teamName)}</p></div>`;
             }
             const action = event.payload.actionType === 'medium' ? '霊能結果' : '占い結果';
             const result = event.payload.result === 'wolf' ? '人狼です' : '人狼ではありません';
-            return `<div class="human-private-result"><span>${(0, utils_js_41.escapeHtml)(action)}</span><strong>${(0, utils_js_41.escapeHtml)((0, selectors_js_2.getPlayerName)(state, event.payload.targetId))}</strong><p>${(0, utils_js_41.escapeHtml)(result)}</p></div>`;
+            return `<div class="human-private-result"><span>${(0, utils_js_42.escapeHtml)(action)}</span><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_2.getPlayerName)(state, event.payload.targetId))}</strong><p>${(0, utils_js_42.escapeHtml)(result)}</p></div>`;
         }).join('');
     }
     function renderPrivateNotification(state, task) {
@@ -27482,7 +28148,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         const d = state.discussion;
         const answerPriorityEnabled = state.game.rules.discussion.answerPriorityEnabled === true;
         const questionCandidates = (0, standardRules_js_28.getAlivePlayers)(state).filter((candidate) => {
-            if (candidate.id === player.id || !(0, playerStatus_js_11.canSpeakDuringDay)(state, candidate.id))
+            if (candidate.id === player.id || !(0, playerStatus_js_13.canSpeakDuringDay)(state, candidate.id))
                 return false;
             if (answerPriorityEnabled)
                 return true;
@@ -27498,7 +28164,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
             : d.mode === 'free'
                 ? '<label class="field"><span>次巡の発言希望</span><select data-human-field="discussionPreference"><option value="EARLY">できるだけ早く発言したい</option><option value="NORMAL" selected>特に希望なし</option><option value="WAIT_CO">他者のCOを待って発言したい</option><option value="DONE">この時点で話すべきことはすべて話し切った</option></select></label>'
                 : '';
-        const body = `<label class="field human-chat-field"><span>公開発言</span><textarea data-human-field="content" data-human-primary-input data-human-enter-submit placeholder="${(0, utils_js_41.escapeHtml)(player.name)}として発言"></textarea></label>${questionField}${modeField}${coForm(state, player.id)}`;
+        const body = `<label class="field human-chat-field"><span>公開発言</span><textarea data-human-field="content" data-human-primary-input data-human-enter-submit placeholder="${(0, utils_js_42.escapeHtml)(player.name)}として発言"></textarea></label>${questionField}${modeField}${coForm(state, player.id)}`;
         const passButton = d.mode === 'free' ? '' : '<button class="button ghost" data-action="submit-human-task" data-human-submit-kind="pass" type="button">パス</button>';
         return humanCardShell({ taskType: task.type, playerId: player.id, eyebrow: '公開発言', title: `${player.name}の発言`, body, actions: `<div class="human-task-actions">${passButton}<button class="button primary" data-action="submit-human-task" type="button">送信</button></div>` });
     }
@@ -27509,7 +28175,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         if (!player)
             return '';
         const asker = question ? (0, standardRules_js_28.getPlayer)(state, question.actorId) : null;
-        const questionBlock = question ? `<div class="status-card"><span>${(0, utils_js_41.escapeHtml)(asker?.name ?? '質問者')}の質問 #${Number(question.sequence ?? 0)}</span><strong>${(0, utils_js_41.escapeHtml)(question.payload?.text ?? '')}</strong></div>` : '';
+        const questionBlock = question ? `<div class="status-card"><span>${(0, utils_js_42.escapeHtml)(asker?.name ?? '質問者')}の質問 #${Number(question.sequence ?? 0)}</span><strong>${(0, utils_js_42.escapeHtml)(question.payload?.text ?? '')}</strong></div>` : '';
         const body = `${questionBlock}<label class="field human-chat-field"><span>質問への回答</span><textarea data-human-field="content" data-human-primary-input data-human-enter-submit placeholder="回答を入力"></textarea></label>${coForm(state, player.id, questionEventId, '回答に伴うCO操作（任意）')}${abilityClaimsForm(state, player.id, '回答に伴う能力結果公開（任意）')}`;
         return humanCardShell({ taskType: 'priority-answer', playerId: player.id, questionEventId, eyebrow: '公開回答', title: `${player.name}の質問への回答`, body, actions: '<div class="human-task-actions"><button class="button ghost" data-action="submit-human-task" data-human-submit-kind="skip" type="button">回答をスキップ</button><button class="button primary" data-action="submit-human-task" type="button">回答を送信</button></div>' });
     }
@@ -27526,8 +28192,8 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         if (!player)
             return '';
         const session = task.type === 'wolf-conversation' ? (0, selectors_js_2.getActiveWolfConversation)(state) : task.type === 'mason-conversation' ? (0, selectors_js_2.getActiveMasonConversation)(state) : (0, selectors_js_2.getActiveGraveyardConversation)(state);
-        const history = (session?.messages ?? []).map((message) => `<div class="chat-message"><strong>${(0, utils_js_41.escapeHtml)((0, selectors_js_2.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_41.escapeHtml)(message.content)}</p></div>`).join('') || '<div class="empty-inline">まだ会話はありません。</div>';
-        const body = `<div class="chat-history human-private-chat-history">${history}</div><label class="field human-chat-field"><span>${(0, utils_js_41.escapeHtml)(label)}への発言</span><textarea data-human-field="content" data-human-primary-input data-human-enter-submit></textarea></label>`;
+        const history = (session?.messages ?? []).map((message) => `<div class="chat-message"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_2.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_42.escapeHtml)(message.content)}</p></div>`).join('') || '<div class="empty-inline">まだ会話はありません。</div>';
+        const body = `<div class="chat-history human-private-chat-history">${history}</div><label class="field human-chat-field"><span>${(0, utils_js_42.escapeHtml)(label)}への発言</span><textarea data-human-field="content" data-human-primary-input data-human-enter-submit></textarea></label>`;
         return humanCardShell({ taskType: task.type, playerId: player.id, tone: 'private', eyebrow: '非公開会話', title: `${player.name}の${label}`, body, actions: '<div class="human-task-actions"><button class="button primary" data-action="submit-human-task" type="button">発言を登録</button></div>' });
     }
     function renderWolfAttack(state, task) {
@@ -27542,7 +28208,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         if (!player)
             return '';
         const candidates = (0, standardRules_js_28.getNightActionCandidates)(state, task.type, player.id);
-        return humanCardShell({ taskType: task.type, playerId: player.id, slotId: task.slotId ?? '', tone: 'private', eyebrow: '夜行動', title: `${player.name}・${(0, uiStateFormatters_js_1.nightActionLabel)(task.type)}`, body: `<label class="field"><span>${(0, utils_js_41.escapeHtml)((0, uiStateFormatters_js_1.nightActionTargetLabel)(task.type))}</span><select data-human-field="targetId" data-human-primary-input>${(0, components_js_4.playerOptions)(candidates, '', '選択してください')}</select></label>`, actions: '<div class="human-task-actions"><button class="button primary" data-action="submit-human-task" type="button">対象を確定</button></div>' });
+        return humanCardShell({ taskType: task.type, playerId: player.id, slotId: task.slotId ?? '', tone: 'private', eyebrow: '夜行動', title: `${player.name}・${(0, uiStateFormatters_js_1.nightActionLabel)(task.type)}`, body: `<label class="field"><span>${(0, utils_js_42.escapeHtml)((0, uiStateFormatters_js_1.nightActionTargetLabel)(task.type))}</span><select data-human-field="targetId" data-human-primary-input>${(0, components_js_4.playerOptions)(candidates, '', '選択してください')}</select></label>`, actions: '<div class="human-task-actions"><button class="button primary" data-action="submit-human-task" type="button">対象を確定</button></div>' });
     }
     function renderTestament(state, task) {
         const player = (0, standardRules_js_28.getPlayer)(state, task.playerId);
@@ -27605,7 +28271,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
         const roleMissingText = state.game.rules?.roleAssignment?.roleMissingEnabled === true
             ? '<p><strong>役職欠けあり</strong>：下記は開始前に公開された配役構成です。実際に欠けた役職は公開されません。</p>'
             : '';
-        return `<div class="modal-header"><div><span class="eyebrow">${(0, utils_js_41.escapeHtml)(player.name)}への役職通知</span><h3>${(0, utils_js_41.escapeHtml)((0, selectors_js_2.getRoleName)(player.roleId))}</h3></div></div><div class="modal-body human-role-notice-body"><div class="role-reveal"><strong>${(0, utils_js_41.escapeHtml)((0, selectors_js_2.getRoleName)(player.roleId))}</strong><p>${(0, utils_js_41.escapeHtml)(role?.description ?? '')}</p>${roleMissingText}${compositionText ? `<p>公開配役: ${(0, utils_js_41.escapeHtml)(compositionText)}</p>` : ''}${wolves.length ? `<p>人狼仲間: ${(0, utils_js_41.escapeHtml)(wolves.join('、'))}</p>` : ''}${madmen.length ? `<p>既知の狂人: ${(0, utils_js_41.escapeHtml)(madmen.join('、'))}</p>` : ''}${masons.length ? `<p>共有者仲間: ${(0, utils_js_41.escapeHtml)(masons.join('、'))}</p>` : ''}</div></div><div class="modal-footer"><button class="button ghost" data-action="open-role-help" type="button">全役職のヘルプ</button><button class="button primary" data-action="confirm-human-role-notice" data-player-id="${(0, utils_js_41.escapeHtml)(player.id)}" type="button">確認して続行</button></div>`;
+        return `<div class="modal-header"><div><span class="eyebrow">${(0, utils_js_42.escapeHtml)(player.name)}への役職通知</span><h3>${(0, utils_js_42.escapeHtml)((0, selectors_js_2.getRoleName)(player.roleId))}</h3></div></div><div class="modal-body human-role-notice-body"><div class="role-reveal"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_2.getRoleName)(player.roleId))}</strong><p>${(0, utils_js_42.escapeHtml)(role?.description ?? '')}</p>${roleMissingText}${compositionText ? `<p>公開配役: ${(0, utils_js_42.escapeHtml)(compositionText)}</p>` : ''}${wolves.length ? `<p>人狼仲間: ${(0, utils_js_42.escapeHtml)(wolves.join('、'))}</p>` : ''}${madmen.length ? `<p>既知の狂人: ${(0, utils_js_42.escapeHtml)(madmen.join('、'))}</p>` : ''}${masons.length ? `<p>共有者仲間: ${(0, utils_js_42.escapeHtml)(masons.join('、'))}</p>` : ''}</div></div><div class="modal-footer"><button class="button ghost" data-action="open-role-help" type="button">全役職のヘルプ</button><button class="button primary" data-action="confirm-human-role-notice" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" type="button">確認して続行</button></div>`;
     }
     if (typeof globalThis !== 'undefined') {
         globalThis.AiWerewolfHumanTaskView = Object.freeze({ renderHumanTaskCard, renderHumanRoleNoticeDialog });
@@ -27615,7 +28281,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
  * 責務: 進行卓のフェーズ表示、現在タスク、参加者状態、人間入力フォーム、夜・投票・結果操作のHTMLを生成する。
  * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。機密会話の既定話者は各会話ポリシーのround-robinを使用し、GMが別参加者を選んだ場合も連続発言禁止を満たす選択だけを保持する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。
  */
-define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "js/domain/claims/claimRolePolicy", "js/domain/roles/roleComposition", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/wolfConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/game/standardRules", "js/state/selectors", "js/domain/game/playerStatus", "js/domain/discussion/priorityAnswerPolicy", "js/domain/game/workflow", "js/shared/utils", "js/ui/components/components", "js/ui/views/workbench/workbenchView", "js/ui/views/human/humanTaskView", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_19, constants_js_48, claimRolePolicy_js_8, roleComposition_js_8, publicAbilityClaimPolicy_js_22, graveyardConversationPolicy_js_3, wolfConversationPolicy_js_2, masonConversationPolicy_js_3, standardRules_js_29, selectors_js_3, playerStatus_js_12, priorityAnswerPolicy_js_5, workflow_js_1, utils_js_42, components_js_5, workbenchView_js_1, humanTaskView_js_1, uiStateFormatters_js_2) {
+define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "js/domain/claims/claimRolePolicy", "js/domain/roles/roleComposition", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/wolfConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/game/standardRules", "js/state/selectors", "js/domain/game/playerStatus", "js/domain/discussion/priorityAnswerPolicy", "js/domain/game/workflow", "js/shared/utils", "js/ui/components/components", "js/ui/views/workbench/workbenchView", "js/ui/views/human/humanTaskView", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_20, constants_js_48, claimRolePolicy_js_8, roleComposition_js_8, publicAbilityClaimPolicy_js_22, graveyardConversationPolicy_js_3, wolfConversationPolicy_js_2, masonConversationPolicy_js_3, standardRules_js_29, selectors_js_3, playerStatus_js_14, priorityAnswerPolicy_js_5, workflow_js_1, utils_js_43, components_js_5, workbenchView_js_1, humanTaskView_js_1, uiStateFormatters_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.WorkbenchTaskRenderer = exports.HUMAN_SPEECH_DRAFT_FIELDS = void 0;
@@ -27679,7 +28345,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 r.wolfCommunication.enabled
                     ? `${r.wolfCommunication.participantMode === 'wolves-and-madman' ? '人狼＋狂人会話' : '人狼会話'}・各${r.wolfCommunication.speechCountPerNight}回`
                     : '人狼会話なし',
-            ].map((item) => `<span>${(0, utils_js_42.escapeHtml)(item)}</span>`).join('');
+            ].map((item) => `<span>${(0, utils_js_43.escapeHtml)(item)}</span>`).join('');
         }
         playerStatusList(state) {
             const task = (0, workflow_js_1.getCurrentGmTask)(state);
@@ -27691,7 +28357,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                     && Boolean(state.voteSession?.votes && player.id in state.voteSession.votes);
                 const claim = state.claims.find((item) => item.actorId === player.id && item.status === 'active');
                 const frozen = (0, uiStateFormatters_js_2.shouldHighlightFrozenPlayerPanel)(state, player.id);
-                return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${(0, utils_js_42.escapeHtml)(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getRoleName)(claim.roleId))}CO` : ''}</small></span>${this.host.showConfidential() ? `<span class="secret-role">${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getRoleName)(player.roleId))}</span>` : ''}</button>`;
+                return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${(0, utils_js_43.escapeHtml)(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(claim.roleId))}CO` : ''}</small></span>${this.host.showConfidential() ? `<span class="secret-role">${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(player.roleId))}</span>` : ''}</button>`;
             }).join('')}</div>`;
         }
         renderTask(state, task) {
@@ -27727,7 +28393,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 return this.renderAllDeferred(state);
             if (task.type === 'priority-answer')
                 return this.renderPriorityAnswerTask(state, task);
-            if ((0, discussionAiTaskTypes_js_19.isNormalSpeechTask)(task.type))
+            if ((0, discussionAiTaskTypes_js_20.isNormalSpeechTask)(task.type))
                 return this.renderSpeechTask(state, task.playerId, task.type);
             if (task.type === 'discussion-complete')
                 return this.renderDiscussionComplete(state);
@@ -27758,13 +28424,13 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 return (0, humanTaskView_js_1.renderHumanTaskCard)(state, { type: 'briefing', playerId });
             }
             const { cache } = this.host.freshPromptState(state, playerId, 'briefing');
-            return `<div class="task-head"><span class="task-count">AI役職通知</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}へ初期プロンプトを提示</h3></div>${this.host.renderAiPromptOnly(state, player, 'briefing', [])}<div class="status-card"><span>通知状態</span><strong>${(0, utils_js_42.escapeHtml)(status)}</strong></div><button class="button primary wide" data-action="ack-ai-briefing" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" ${cache || status === 'shown' ? '' : 'disabled'} type="button">対象AIへ提示済みとして確定</button><details class="optional-box"><summary>GM強制完了</summary><label class="field"><span>理由</span><input data-draft="force-briefing:${(0, utils_js_42.escapeHtml)(playerId)}"></label><button class="button ghost wide" data-action="force-briefing" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" type="button">理由を記録して強制完了</button></details>`;
+            return `<div class="task-head"><span class="task-count">AI役職通知</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}へ初期プロンプトを提示</h3></div>${this.host.renderAiPromptOnly(state, player, 'briefing', [])}<div class="status-card"><span>通知状態</span><strong>${(0, utils_js_43.escapeHtml)(status)}</strong></div><button class="button primary wide" data-action="ack-ai-briefing" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" ${cache || status === 'shown' ? '' : 'disabled'} type="button">対象AIへ提示済みとして確定</button><details class="optional-box"><summary>GM強制完了</summary><label class="field"><span>理由</span><input data-draft="force-briefing:${(0, utils_js_43.escapeHtml)(playerId)}"></label><button class="button ghost wide" data-action="force-briefing" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" type="button">理由を記録して強制完了</button></details>`;
         }
         renderMemoConsolidationTask(state, playerId) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             if (!player)
                 return '<div class="empty-state"><strong>内部メモ整理対象を確認できません</strong><span>記録・管理から参加者状態を確認してください。</span></div>';
-            return `<div class="task-head"><span class="task-count">本人限定・自動整理</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}の内部メモを整理</h3></div><p class="help">未整理メモが増えたため、通常フェーズを進める前に重複をまとめた短い要約へ更新します。内容は本人とGMだけが参照します。</p>${this.host.renderAiBox(state, player, 'memo-consolidate', [])}`;
+            return `<div class="task-head"><span class="task-count">本人限定・自動整理</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}の内部メモを整理</h3></div><p class="help">未整理メモが増えたため、通常フェーズを進める前に重複をまとめた短い要約へ更新します。内容は本人とGMだけが参照します。</p>${this.host.renderAiBox(state, player, 'memo-consolidate', [])}`;
         }
         renderPrivateNotificationTask(state, playerId) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
@@ -27774,43 +28440,43 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             if (!player)
                 return '<div class="empty-state"><strong>発言順希望の対象を確認できません</strong></div>';
-            const header = `<div class="task-head"><span class="task-count">発言希望制・1巡目開始前</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}の発言順希望</h3></div><p class="help">CO・対抗COなど初動の都合だけを申告します。公開発言はまだ行いません。DONEは選択できません。</p>`;
+            const header = `<div class="task-head"><span class="task-count">発言希望制・1巡目開始前</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}の発言順希望</h3></div><p class="help">CO・対抗COなど初動の都合だけを申告します。公開発言はまだ行いません。DONEは選択できません。</p>`;
             if (player.controller === 'ai')
                 return `${header}${this.host.renderAiBox(state, player, 'discussion-opening-preference', [])}`;
             const key = `${exports.HUMAN_SPEECH_DRAFT_FIELDS.openingPreference}:${playerId}`;
             const value = this.host.drafts().get(key) ?? 'NORMAL';
-            return `${header}<label class="field"><span>1巡目の発言順希望</span><select data-draft="${(0, utils_js_42.escapeHtml)(key)}">${(0, components_js_5.option)('EARLY', 'できるだけ早く発言したい', value)}${(0, components_js_5.option)('NORMAL', '特に希望なし', value)}${(0, components_js_5.option)('WAIT_CO', '他者のCOを待って発言したい', value)}</select></label><button class="button primary wide" data-action="commit-human-discussion-opening-preference" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" data-task-type="discussion-opening-preference" type="button">発言順希望を登録</button>`;
+            return `${header}<label class="field"><span>1巡目の発言順希望</span><select data-draft="${(0, utils_js_43.escapeHtml)(key)}">${(0, components_js_5.option)('EARLY', 'できるだけ早く発言したい', value)}${(0, components_js_5.option)('NORMAL', '特に希望なし', value)}${(0, components_js_5.option)('WAIT_CO', '他者のCOを待って発言したい', value)}</select></label><button class="button primary wide" data-action="commit-human-discussion-opening-preference" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" data-task-type="discussion-opening-preference" type="button">発言順希望を登録</button>`;
         }
         renderDiscussionDesignate(state) {
-            const candidates = (0, standardRules_js_29.getAlivePlayers)(state).filter((player) => (0, playerStatus_js_12.canSpeakDuringDay)(state, player.id) && (state.discussion.remainingByPlayer[player.id] ?? 0) > 0);
+            const candidates = (0, standardRules_js_29.getAlivePlayers)(state).filter((player) => (0, playerStatus_js_14.canSpeakDuringDay)(state, player.id) && (state.discussion.remainingByPlayer[player.id] ?? 0) > 0);
             return `<div class="task-head"><span class="task-count">${state.discussion.mode === 'free' ? '発言希望制' : '指名制'}</span><h3>次の発言者を指定</h3></div><label class="field"><span>発言者</span><select data-draft="discussion-speaker">${(0, components_js_5.playerOptions)(candidates)}</select></label><button class="button primary wide" data-action="designate-speaker" type="button">この人に発言を求める</button><button class="button ghost wide" data-action="finish-discussion" type="button">昼議論を終了</button>`;
         }
         renderAllDeferred(state) {
-            const candidates = (0, standardRules_js_29.getAlivePlayers)(state).filter((player) => (0, playerStatus_js_12.canSpeakDuringDay)(state, player.id) && (state.discussion.remainingByPlayer[player.id] ?? 0) > 0);
+            const candidates = (0, standardRules_js_29.getAlivePlayers)(state).filter((player) => (0, playerStatus_js_14.canSpeakDuringDay)(state, player.id) && (state.discussion.remainingByPlayer[player.id] ?? 0) > 0);
             return `<div class="task-head"><span class="task-count">GM判断</span><h3>発言可能者全員が後回しを選択しました</h3></div><div class="button-row"><button class="button ghost" data-action="resolve-deferred" data-deferred-action="reset" type="button">同じ巡を再開</button><button class="button primary" data-action="resolve-deferred" data-deferred-action="complete" type="button">昼議論を終了</button></div><label class="field"><span>発言者を指定して再開</span><select data-draft="deferred-speaker">${(0, components_js_5.playerOptions)(candidates)}</select></label><button class="button ghost wide" data-action="resolve-deferred" data-deferred-action="designate" type="button">指定した人から再開</button>`;
         }
         renderSpeechTask(state, playerId, taskType) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             const d = state.discussion;
             const remaining = d.remainingByPlayer[playerId];
-            const header = `<div class="task-head"><span class="task-count">第${d.round}巡${d.mode === 'free' ? '・発言希望制' : ''}・残り${remaining}回</span><h3>現在の発言者: ${(0, utils_js_42.escapeHtml)(player.name)}</h3></div>`;
+            const header = `<div class="task-head"><span class="task-count">第${d.round}巡${d.mode === 'free' ? '・発言希望制' : ''}・残り${remaining}回</span><h3>現在の発言者: ${(0, utils_js_43.escapeHtml)(player.name)}</h3></div>`;
             const normalSpeechAnswers = (0, priorityAnswerPolicy_js_5.getCurrentNormalSpeechAnswerTasks)(state, playerId);
             const answerNotice = normalSpeechAnswers.length
                 ? `${normalSpeechAnswers.map((answer) => {
                     const asker = (0, standardRules_js_29.getPlayer)(state, answer.askerPlayerId);
-                    return `<div class="status-card"><span>通常発言内で回答・${(0, utils_js_42.escapeHtml)(asker?.name ?? '質問者')} #${(0, utils_js_42.escapeHtml)(String(answer.questionSequence))}</span><strong>${(0, utils_js_42.escapeHtml)(answer.questionText)}</strong></div>`;
+                    return `<div class="status-card"><span>通常発言内で回答・${(0, utils_js_43.escapeHtml)(asker?.name ?? '質問者')} #${(0, utils_js_43.escapeHtml)(String(answer.questionSequence))}</span><strong>${(0, utils_js_43.escapeHtml)(answer.questionText)}</strong></div>`;
                 }).join('')}<p class="help">次の発言順と回答者が同じため、独立した回答フェーズを省略し、この通常発言内で質問へ回答します。</p>`
                 : '';
             const passControl = d.mode === 'free'
                 ? ''
-                : `<button class="button ghost" data-action="pass-speech" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" type="button">パス</button>`;
-            const gmControls = `<section class="gm-progress-controls"><h4>GM進行操作</h4><div class="secondary-actions">${d.mode === 'ordered' ? `<button class="button ghost" data-action="defer-speech" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" type="button">後回し</button>` : ''}${passControl}${d.mode === 'free' ? '<button class="button ghost" data-action="finish-discussion" type="button">昼議論を終了</button>' : ''}</div></section>`;
+                : `<button class="button ghost" data-action="pass-speech" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" type="button">パス</button>`;
+            const gmControls = `<section class="gm-progress-controls"><h4>GM進行操作</h4><div class="secondary-actions">${d.mode === 'ordered' ? `<button class="button ghost" data-action="defer-speech" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" type="button">後回し</button>` : ''}${passControl}${d.mode === 'free' ? '<button class="button ghost" data-action="finish-discussion" type="button">昼議論を終了</button>' : ''}</div></section>`;
             if (player.controller === 'ai') {
                 return `${header}${answerNotice}${this.host.renderAiBox(state, player, taskType, [])}${gmControls}`;
             }
             const answerPriorityEnabled = state.game.rules.discussion.answerPriorityEnabled === true;
             const questionCandidates = (0, standardRules_js_29.getAlivePlayers)(state).filter((candidate) => {
-                if (candidate.id === playerId || !(0, playerStatus_js_12.canSpeakDuringDay)(state, candidate.id))
+                if (candidate.id === playerId || !(0, playerStatus_js_14.canSpeakDuringDay)(state, candidate.id))
                     return false;
                 if (answerPriorityEnabled)
                     return true;
@@ -27818,7 +28484,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 return Number(candidateRemaining ?? 0) > 0;
             });
             const questionTarget = this.host.drafts().get(`${exports.HUMAN_SPEECH_DRAFT_FIELDS.questionTarget}:${playerId}`) ?? '';
-            const questionTargetField = `<label class="field"><span>個人質問先（任意）</span><select data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.questionTarget}:${(0, utils_js_42.escapeHtml)(playerId)}"><option value="">指定なし</option>${(0, components_js_5.playerOptions)(questionCandidates, questionTarget)}</select></label><p class="help">質問先が次の通常発言者の場合は、その発言内に回答を統合します。それ以外の場合は、直後に回答フェーズが入ります。</p>`;
+            const questionTargetField = `<label class="field"><span>個人質問先（任意）</span><select data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.questionTarget}:${(0, utils_js_43.escapeHtml)(playerId)}"><option value="">指定なし</option>${(0, components_js_5.playerOptions)(questionCandidates, questionTarget)}</select></label><p class="help">質問先が次の通常発言者の場合は、その発言内に回答を統合します。それ以外の場合は、直後に回答フェーズが入ります。</p>`;
             const modeControlField = d.mode === 'designated'
                 ? (() => {
                     const candidates = (d.queue ?? []).slice(Number(d.currentIndex ?? 0) + 1)
@@ -27827,16 +28493,16 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                         .filter(Boolean);
                     const key = `${exports.HUMAN_SPEECH_DRAFT_FIELDS.nextSpeaker}:${playerId}`;
                     const value = this.host.drafts().get(key) ?? '';
-                    return `<label class="field"><span>次に前倒しする発言者（任意）</span><select data-draft="${(0, utils_js_42.escapeHtml)(key)}"><option value="">指名なし</option>${(0, components_js_5.playerOptions)(candidates, value)}</select></label><p class="help">この巡で未発言の相手だけを前倒しします。発言権そのものは増えません。</p>`;
+                    return `<label class="field"><span>次に前倒しする発言者（任意）</span><select data-draft="${(0, utils_js_43.escapeHtml)(key)}"><option value="">指名なし</option>${(0, components_js_5.playerOptions)(candidates, value)}</select></label><p class="help">この巡で未発言の相手だけを前倒しします。発言権そのものは増えません。</p>`;
                 })()
                 : d.mode === 'free'
                     ? (() => {
                         const key = `${exports.HUMAN_SPEECH_DRAFT_FIELDS.discussionPreference}:${playerId}`;
                         const value = this.host.drafts().get(key) ?? 'NORMAL';
-                        return `<label class="field"><span>次巡の発言希望</span><select data-draft="${(0, utils_js_42.escapeHtml)(key)}">${(0, components_js_5.option)('EARLY', 'できるだけ早く発言したい', value)}${(0, components_js_5.option)('NORMAL', '特に希望なし', value)}${(0, components_js_5.option)('WAIT_CO', '他者のCOを待って発言したい', value)}${(0, components_js_5.option)('DONE', 'この時点で話すべきことはすべて話し切った', value)}</select></label><p class="help">「話し切った」は材料不足ではなく、現時点で公開すべき推理・疑い・質問・CO・弁明などを今回までに十分発言済みの場合だけ選びます。選択後も個人質問への回答優先には応じます。</p>`;
+                        return `<label class="field"><span>次巡の発言希望</span><select data-draft="${(0, utils_js_43.escapeHtml)(key)}">${(0, components_js_5.option)('EARLY', 'できるだけ早く発言したい', value)}${(0, components_js_5.option)('NORMAL', '特に希望なし', value)}${(0, components_js_5.option)('WAIT_CO', '他者のCOを待って発言したい', value)}${(0, components_js_5.option)('DONE', 'この時点で話すべきことはすべて話し切った', value)}</select></label><p class="help">「話し切った」は材料不足ではなく、現時点で公開すべき推理・疑い・質問・CO・弁明などを今回までに十分発言済みの場合だけ選びます。選択後も個人質問への回答優先には応じます。</p>`;
                     })()
                     : '';
-            return `${header}${answerNotice}<label class="field"><span>公開発言</span><textarea data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.speech}:${(0, utils_js_42.escapeHtml)(playerId)}" placeholder="発言内容を入力">${(0, utils_js_42.escapeHtml)(this.host.drafts().get(`${exports.HUMAN_SPEECH_DRAFT_FIELDS.speech}:${playerId}`) ?? '')}</textarea></label>${questionTargetField}${modeControlField}${this.humanCoForm(state, playerId)}<button class="button primary wide" data-action="commit-human-speech" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" data-task-type="${(0, utils_js_42.escapeHtml)(taskType)}" type="button">発言を登録</button>${gmControls}`;
+            return `${header}${answerNotice}<label class="field"><span>公開発言</span><textarea data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.speech}:${(0, utils_js_43.escapeHtml)(playerId)}" placeholder="発言内容を入力">${(0, utils_js_43.escapeHtml)(this.host.drafts().get(`${exports.HUMAN_SPEECH_DRAFT_FIELDS.speech}:${playerId}`) ?? '')}</textarea></label>${questionTargetField}${modeControlField}${this.humanCoForm(state, playerId)}<button class="button primary wide" data-action="commit-human-speech" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" data-task-type="${(0, utils_js_43.escapeHtml)(taskType)}" type="button">発言を登録</button>${gmControls}`;
         }
         renderPriorityAnswerTask(state, task) {
             const player = (0, standardRules_js_29.getPlayer)(state, task.playerId);
@@ -27845,16 +28511,16 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 return '<div class="empty-state"><strong>回答対象を確認できません</strong><span>記録・管理から公開履歴を確認してください。</span></div>';
             const asker = (0, standardRules_js_29.getPlayer)(state, question.actorId);
             const questionRef = `#${question.sequence}`;
-            const header = `<div class="task-head"><span class="task-count">回答優先・発言数消費なし</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}の回答フェーズ</h3></div>`;
-            const questionBlock = `<div class="status-card"><span>${(0, utils_js_42.escapeHtml)(asker?.name ?? '質問者')}の質問 ${(0, utils_js_42.escapeHtml)(questionRef)}</span><strong>${(0, utils_js_42.escapeHtml)(question.payload?.text ?? '')}</strong></div><p class="help">質問された内容への回答だけを促します。回答内容そのものの妥当性は検証しません。</p>`;
+            const header = `<div class="task-head"><span class="task-count">回答優先・発言数消費なし</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}の回答フェーズ</h3></div>`;
+            const questionBlock = `<div class="status-card"><span>${(0, utils_js_43.escapeHtml)(asker?.name ?? '質問者')}の質問 ${(0, utils_js_43.escapeHtml)(questionRef)}</span><strong>${(0, utils_js_43.escapeHtml)(question.payload?.text ?? '')}</strong></div><p class="help">質問された内容への回答だけを促します。回答内容そのものの妥当性は検証しません。</p>`;
             const skipKey = `priority-answer-skip-reason:${task.questionEventId}`;
-            const skipControls = `<details class="optional-box"><summary>GM判断で回答をスキップ</summary><p class="help">API障害、担当者不在、質問自体を無効と判断した場合に使用します。理由はGM限定記録へ保存されます。</p><label class="field"><span>スキップ理由</span><input data-draft="${(0, utils_js_42.escapeHtml)(skipKey)}" value="${(0, utils_js_42.escapeHtml)(this.host.drafts().get(skipKey) ?? '')}" placeholder="スキップ理由を入力"></label><button class="button danger wide" data-action="skip-priority-answer" data-question-event-id="${(0, utils_js_42.escapeHtml)(task.questionEventId)}" type="button">回答をスキップ</button></details>`;
+            const skipControls = `<details class="optional-box"><summary>GM判断で回答をスキップ</summary><p class="help">API障害、担当者不在、質問自体を無効と判断した場合に使用します。理由はGM限定記録へ保存されます。</p><label class="field"><span>スキップ理由</span><input data-draft="${(0, utils_js_43.escapeHtml)(skipKey)}" value="${(0, utils_js_43.escapeHtml)(this.host.drafts().get(skipKey) ?? '')}" placeholder="スキップ理由を入力"></label><button class="button danger wide" data-action="skip-priority-answer" data-question-event-id="${(0, utils_js_43.escapeHtml)(task.questionEventId)}" type="button">回答をスキップ</button></details>`;
             if (player.controller === 'ai')
                 return `${header}${questionBlock}${this.host.renderAiBox(state, player, 'priority-answer', [], task.questionEventId)}${skipControls}`;
             const key = `human-priority-answer:${task.questionEventId}`;
             const coForm = this.humanCoForm(state, player.id, task.questionEventId, '回答に伴うCO操作（任意）');
             const abilityForm = this.humanPriorityAbilityClaimsForm(state, player.id, task.questionEventId);
-            return `${header}${questionBlock}<label class="field"><span>質問への回答</span><textarea data-draft="${(0, utils_js_42.escapeHtml)(key)}" placeholder="質問された内容への回答を入力">${(0, utils_js_42.escapeHtml)(this.host.drafts().get(key) ?? '')}</textarea></label>${coForm}${abilityForm}<p class="help">CO・能力結果は質問への回答に必要な場合だけ登録してください。新しい質問は登録できません。</p><button class="button primary wide" data-action="commit-human-priority-answer" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" data-question-event-id="${(0, utils_js_42.escapeHtml)(task.questionEventId)}" type="button">回答を登録</button>${skipControls}`;
+            return `${header}${questionBlock}<label class="field"><span>質問への回答</span><textarea data-draft="${(0, utils_js_43.escapeHtml)(key)}" placeholder="質問された内容への回答を入力">${(0, utils_js_43.escapeHtml)(this.host.drafts().get(key) ?? '')}</textarea></label>${coForm}${abilityForm}<p class="help">CO・能力結果は質問への回答に必要な場合だけ登録してください。新しい質問は登録できません。</p><button class="button primary wide" data-action="commit-human-priority-answer" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" data-question-event-id="${(0, utils_js_43.escapeHtml)(task.questionEventId)}" type="button">回答を登録</button>${skipControls}`;
         }
         humanCoForm(state, playerId, draftScope = playerId, summary = '任意のCO操作') {
             const policy = (0, claimRolePolicy_js_8.buildClaimRolePolicy)((0, roleComposition_js_8.getPublicRoleComposition)(state));
@@ -27867,9 +28533,9 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 .map((roleId) => (0, components_js_5.option)(roleId, (0, selectors_js_3.getRoleName)(roleId), roleValue))
                 .join('');
             if (draftScope === playerId) {
-                return `<details class="optional-box"><summary>${(0, utils_js_42.escapeHtml)(summary)}</summary><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.coAction}:${(0, utils_js_42.escapeHtml)(playerId)}">${(0, components_js_5.option)('none', 'COなし', actionValue)}${(0, components_js_5.option)('declare', '新規CO', actionValue)}${(0, components_js_5.option)('change', 'CO役職変更', actionValue)}${(0, components_js_5.option)('withdraw', 'CO撤回', actionValue)}</select></label><label class="field"><span>CO役職</span><select data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.coRole}:${(0, utils_js_42.escapeHtml)(playerId)}">${roleItems}</select></label></div><p class="help">現在の配役に存在する役職だけを表示します。COなし・撤回では役職選択を使用しません。</p></details>`;
+                return `<details class="optional-box"><summary>${(0, utils_js_43.escapeHtml)(summary)}</summary><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.coAction}:${(0, utils_js_43.escapeHtml)(playerId)}">${(0, components_js_5.option)('none', 'COなし', actionValue)}${(0, components_js_5.option)('declare', '新規CO', actionValue)}${(0, components_js_5.option)('change', 'CO役職変更', actionValue)}${(0, components_js_5.option)('withdraw', 'CO撤回', actionValue)}</select></label><label class="field"><span>CO役職</span><select data-draft="${exports.HUMAN_SPEECH_DRAFT_FIELDS.coRole}:${(0, utils_js_43.escapeHtml)(playerId)}">${roleItems}</select></label></div><p class="help">現在の配役に存在する役職だけを表示します。COなし・撤回では役職選択を使用しません。</p></details>`;
             }
-            return `<details class="optional-box"><summary>${(0, utils_js_42.escapeHtml)(summary)}</summary><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-draft="${actionKey}">${(0, components_js_5.option)('none', 'COなし', actionValue)}${(0, components_js_5.option)('declare', '新規CO', actionValue)}${(0, components_js_5.option)('change', 'CO役職変更', actionValue)}${(0, components_js_5.option)('withdraw', 'CO撤回', actionValue)}</select></label><label class="field"><span>CO役職</span><select data-draft="${roleKey}">${roleItems}</select></label></div><p class="help">現在の配役に存在する役職だけを表示します。COなし・撤回では役職選択を使用しません。</p></details>`;
+            return `<details class="optional-box"><summary>${(0, utils_js_43.escapeHtml)(summary)}</summary><div class="form-grid compact"><label class="field"><span>CO操作</span><select data-draft="${actionKey}">${(0, components_js_5.option)('none', 'COなし', actionValue)}${(0, components_js_5.option)('declare', '新規CO', actionValue)}${(0, components_js_5.option)('change', 'CO役職変更', actionValue)}${(0, components_js_5.option)('withdraw', 'CO撤回', actionValue)}</select></label><label class="field"><span>CO役職</span><select data-draft="${roleKey}">${roleItems}</select></label></div><p class="help">現在の配役に存在する役職だけを表示します。COなし・撤回では役職選択を使用しません。</p></details>`;
         }
         humanPriorityAbilityClaimsForm(state, playerId, questionEventId) {
             const policy = (0, claimRolePolicy_js_8.buildClaimRolePolicy)((0, roleComposition_js_8.getPublicRoleComposition)(state));
@@ -27887,7 +28553,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 const prefix = `human-priority-ability:${questionEventId}:${index}`;
                 const roleId = this.host.drafts().get(`${prefix}:role`) ?? defaultRoleId;
                 const definition = (0, publicAbilityClaimPolicy_js_22.getPublicAbilityClaimDefinition)(roleId);
-                const observedDay = this.host.drafts().get(`${prefix}:day`) ?? String(index);
+                const actionDay = this.host.drafts().get(`${prefix}:day`) ?? String(offset);
                 const targetId = this.host.drafts().get(`${prefix}:target`) ?? '';
                 const result = this.host.drafts().get(`${prefix}:result`) ?? definition?.results?.[0] ?? 'unknown';
                 const selectionBasis = this.host.drafts().get(`${prefix}:basis`) ?? 'no-public-information';
@@ -27895,7 +28561,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 const resultItems = (definition?.results ?? ['unknown'])
                     .map((value) => (0, components_js_5.option)(value, (0, publicAbilityClaimPolicy_js_22.publicAbilityResultLabel)(value, roleId), result))
                     .join('');
-                return `<fieldset class="optional-box"><legend>能力結果 ${index}</legend><div class="form-grid compact"><label class="field"><span>主張役職</span><select data-draft="${prefix}:role">${roleItems}</select></label><label class="field"><span>結果Day</span><input type="number" min="1" max="${Math.max(1, Number(state.game.day ?? 1))}" data-draft="${prefix}:day" value="${(0, utils_js_42.escapeHtml)(String(observedDay))}"></label><label class="field"><span>対象</span><select data-draft="${prefix}:target"><option value="">公開しない</option>${(0, components_js_5.playerOptions)(state.players, targetId)}</select></label><label class="field"><span>結果</span><select data-draft="${prefix}:result">${resultItems}</select></label><label class="field"><span>選定根拠</span><select data-draft="${prefix}:basis">${(0, components_js_5.option)('no-public-information', '公開根拠なし', selectionBasis)}${(0, components_js_5.option)('public-evidence', '公開根拠あり', selectionBasis)}${(0, components_js_5.option)('rule-forced', 'ルールで対象固定', selectionBasis)}</select></label><label class="field"><span>公開根拠番号</span><input data-draft="${prefix}:evidence" value="${(0, utils_js_42.escapeHtml)(this.host.drafts().get(`${prefix}:evidence`) ?? '')}" placeholder="#12, #15"></label><label class="field full"><span>選定時点の理由（任意）</span><input data-draft="${prefix}:reason" value="${(0, utils_js_42.escapeHtml)(this.host.drafts().get(`${prefix}:reason`) ?? '')}"></label></div></fieldset>`;
+                return `<fieldset class="optional-box"><legend>能力結果 ${index}</legend><div class="form-grid compact"><label class="field"><span>主張役職</span><select data-draft="${prefix}:role">${roleItems}</select></label><label class="field"><span>能力を実行・成立したDay</span><input type="number" min="0" max="${Math.max(0, Number(state.game.day ?? 1) - 1)}" data-draft="${prefix}:day" value="${(0, utils_js_43.escapeHtml)(String(actionDay))}"></label><label class="field"><span>対象</span><select data-draft="${prefix}:target"><option value="">公開しない</option>${(0, components_js_5.playerOptions)(state.players, targetId)}</select></label><label class="field"><span>結果</span><select data-draft="${prefix}:result">${resultItems}</select></label><label class="field"><span>選定根拠</span><select data-draft="${prefix}:basis">${(0, components_js_5.option)('no-public-information', '公開根拠なし', selectionBasis)}${(0, components_js_5.option)('public-evidence', '公開根拠あり', selectionBasis)}${(0, components_js_5.option)('rule-forced', 'ルールで対象固定', selectionBasis)}</select></label><label class="field"><span>公開根拠番号</span><input data-draft="${prefix}:evidence" value="${(0, utils_js_43.escapeHtml)(this.host.drafts().get(`${prefix}:evidence`) ?? '')}" placeholder="#12, #15"></label><label class="field full"><span>選定時点の理由（任意）</span><input data-draft="${prefix}:reason" value="${(0, utils_js_43.escapeHtml)(this.host.drafts().get(`${prefix}:reason`) ?? '')}"></label></div></fieldset>`;
             }).join('');
             return `<details class="optional-box"${actionValue === 'publish' ? ' open' : ''}><summary>回答に伴う能力結果公開（任意）</summary><label class="field"><span>能力結果操作</span><select data-draft="${actionKey}">${(0, components_js_5.option)('none', '公開しない', actionValue)}${(0, components_js_5.option)('publish', '能力結果を公開する', actionValue)}</select></label>${actionValue === 'publish' ? rows : ''}<p class="help">対象を選択した行だけ登録します。公開する役職と、回答後に有効となるCO役職は一致させてください。</p></details>`;
         }
@@ -27913,22 +28579,22 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 const prefix = `human-testament-ability:${playerId}:${index}`;
                 const roleId = this.host.drafts().get(`${prefix}:role`) ?? defaultRoleId;
                 const definition = (0, publicAbilityClaimPolicy_js_22.getPublicAbilityClaimDefinition)(roleId);
-                const observedDay = this.host.drafts().get(`${prefix}:day`) ?? String(index);
+                const actionDay = this.host.drafts().get(`${prefix}:day`) ?? String(offset);
                 const targetId = this.host.drafts().get(`${prefix}:target`) ?? '';
                 const result = this.host.drafts().get(`${prefix}:result`) ?? definition?.results?.[0] ?? 'unknown';
                 const selectionBasis = this.host.drafts().get(`${prefix}:basis`) ?? 'no-public-information';
                 const roleItems = policy.abilityClaimRoleIds.map((id) => (0, components_js_5.option)(id, (0, selectors_js_3.getRoleName)(id), roleId)).join('');
                 const resultItems = (definition?.results ?? ['unknown']).map((value) => (0, components_js_5.option)(value, (0, publicAbilityClaimPolicy_js_22.publicAbilityResultLabel)(value, roleId), result)).join('');
-                return `<fieldset class="optional-box"><legend>能力結果 ${index}</legend><div class="form-grid compact"><label class="field"><span>主張役職</span><select data-draft="${prefix}:role">${roleItems}</select></label><label class="field"><span>結果Day</span><input type="number" min="1" max="${Math.max(1, Number(state.game.day ?? 1))}" data-draft="${prefix}:day" value="${(0, utils_js_42.escapeHtml)(String(observedDay))}"></label><label class="field"><span>対象</span><select data-draft="${prefix}:target"><option value="">公開しない</option>${(0, components_js_5.playerOptions)(state.players, targetId)}</select></label><label class="field"><span>結果</span><select data-draft="${prefix}:result">${resultItems}</select></label><label class="field"><span>選定根拠</span><select data-draft="${prefix}:basis">${(0, components_js_5.option)('no-public-information', '公開根拠なし', selectionBasis)}${(0, components_js_5.option)('public-evidence', '公開根拠あり', selectionBasis)}${(0, components_js_5.option)('rule-forced', 'ルールで対象固定', selectionBasis)}</select></label><label class="field"><span>公開根拠番号</span><input data-draft="${prefix}:evidence" value="${(0, utils_js_42.escapeHtml)(this.host.drafts().get(`${prefix}:evidence`) ?? '')}" placeholder="#12, #15"></label><label class="field full"><span>選定時点の理由（任意）</span><input data-draft="${prefix}:reason" value="${(0, utils_js_42.escapeHtml)(this.host.drafts().get(`${prefix}:reason`) ?? '')}"></label></div></fieldset>`;
+                return `<fieldset class="optional-box"><legend>能力結果 ${index}</legend><div class="form-grid compact"><label class="field"><span>主張役職</span><select data-draft="${prefix}:role">${roleItems}</select></label><label class="field"><span>能力を実行・成立したDay</span><input type="number" min="0" max="${Math.max(0, Number(state.game.day ?? 1) - 1)}" data-draft="${prefix}:day" value="${(0, utils_js_43.escapeHtml)(String(actionDay))}"></label><label class="field"><span>対象</span><select data-draft="${prefix}:target"><option value="">公開しない</option>${(0, components_js_5.playerOptions)(state.players, targetId)}</select></label><label class="field"><span>結果</span><select data-draft="${prefix}:result">${resultItems}</select></label><label class="field"><span>選定根拠</span><select data-draft="${prefix}:basis">${(0, components_js_5.option)('no-public-information', '公開根拠なし', selectionBasis)}${(0, components_js_5.option)('public-evidence', '公開根拠あり', selectionBasis)}${(0, components_js_5.option)('rule-forced', 'ルールで対象固定', selectionBasis)}</select></label><label class="field"><span>公開根拠番号</span><input data-draft="${prefix}:evidence" value="${(0, utils_js_43.escapeHtml)(this.host.drafts().get(`${prefix}:evidence`) ?? '')}" placeholder="#12, #15"></label><label class="field full"><span>選定時点の理由（任意）</span><input data-draft="${prefix}:reason" value="${(0, utils_js_43.escapeHtml)(this.host.drafts().get(`${prefix}:reason`) ?? '')}"></label></div></fieldset>`;
             }).join('');
             return `<details class="optional-box"${actionValue === 'publish' ? ' open' : ''}><summary>遺言に伴う能力結果公開（任意）</summary><label class="field"><span>能力結果操作</span><select data-draft="${actionKey}">${(0, components_js_5.option)('none', '公開しない', actionValue)}${(0, components_js_5.option)('publish', '能力結果を公開する', actionValue)}</select></label>${actionValue === 'publish' ? rows : ''}<p class="help">対象を選択した行だけ構造化して登録します。遺言本文にも同じ内容を自然文で含めてください。</p></details>`;
         }
         renderDiscussionComplete(state) {
             const reconsideration = state.discussion?.reconsideration;
             if (reconsideration?.pending) {
-                const reasons = (reconsideration.reasons ?? []).map((reason) => `<li>${(0, utils_js_42.escapeHtml)(reason)}</li>`).join('');
+                const reasons = (reconsideration.reasons ?? []).map((reason) => `<li>${(0, utils_js_43.escapeHtml)(reason)}</li>`).join('');
                 const affected = (reconsideration.affectedPlayerIds ?? []).map((id) => (0, selectors_js_3.getPlayerName)(state, id)).filter(Boolean).join('、');
-                return `<div class="success-card"><h3>3巡目のCO後に追加発言が必要です</h3><p>CO発生時点で発言回数が0だった生存者へ、1回ずつ発言機会を与えます。COした本人は対象外です。</p><ul>${reasons || '<li>3巡目にCO状態が更新されました。</li>'}</ul><p class="help">再発言対象: ${(0, utils_js_42.escapeHtml)(affected || '対象者なし')}</p><button class="button primary wide" data-action="targeted-reconsideration" type="button">対象者の追加発言を開始</button></div>`;
+                return `<div class="success-card"><h3>3巡目のCO後に追加発言が必要です</h3><p>CO発生時点で発言回数が0だった生存者へ、1回ずつ発言機会を与えます。COした本人は対象外です。</p><ul>${reasons || '<li>3巡目にCO状態が更新されました。</li>'}</ul><p class="help">再発言対象: ${(0, utils_js_43.escapeHtml)(affected || '対象者なし')}</p><button class="button primary wide" data-action="targeted-reconsideration" type="button">対象者の追加発言を開始</button></div>`;
             }
             return `<div class="success-card"><h3>昼議論が完了しました</h3><p>3巡の発言が完了しました。投票へ進んでください。</p><button class="button primary wide" data-action="begin-vote" type="button">投票へ進む</button></div>`;
         }
@@ -27942,9 +28608,9 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 const done = id in session.votes;
                 const publicTarget = state.game.rules.vote.visibilityDuringInput === 'public' && done
                     ? ` → ${session.votes[id] === 'abstain' ? '棄権' : (0, selectors_js_3.getPlayerName)(state, session.votes[id])}` : '';
-                return `<span class="vote-progress ${done ? 'done' : ''}">${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}${(0, utils_js_42.escapeHtml)(publicTarget)}</span>`;
+                return `<span class="vote-progress ${done ? 'done' : ''}">${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}${(0, utils_js_43.escapeHtml)(publicTarget)}</span>`;
             }).join('');
-            const header = `<div class="task-head"><span class="task-count">${completed + 1}/${session.eligibleVoterIds.length}人目${session.type === 'runoff' ? '・決選投票' : ''}</span><h3>投票者: ${(0, utils_js_42.escapeHtml)(player.name)}</h3><div class="mode-switch"><button class="button small primary" data-action="vote-mode" data-mode="sequential" type="button">順次入力</button><button class="button small ghost" data-action="vote-mode" data-mode="list" type="button">一覧入力</button></div></div><div class="vote-progress-list">${progress}</div>`;
+            const header = `<div class="task-head"><span class="task-count">${completed + 1}/${session.eligibleVoterIds.length}人目${session.type === 'runoff' ? '・決選投票' : ''}</span><h3>投票者: ${(0, utils_js_43.escapeHtml)(player.name)}</h3><div class="mode-switch"><button class="button small primary" data-action="vote-mode" data-mode="sequential" type="button">順次入力</button><button class="button small ghost" data-action="vote-mode" data-mode="list" type="button">一覧入力</button></div></div><div class="vote-progress-list">${progress}</div>`;
             const candidates = (0, standardRules_js_29.getVoteCandidates)(state, playerId, session.candidateIds);
             if (player.controller === 'ai')
                 return `${header}${this.host.renderAiBox(state, player, 'vote', candidates.map((item) => item.id))}${this.renderProxyAction(state, player, 'vote', candidates)}${this.renderRandomAction(player, 'vote', '')}`;
@@ -27957,7 +28623,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 const candidates = (0, standardRules_js_29.getVoteCandidates)(state, voterId, session.candidateIds);
                 const current = session.votes[voterId] ?? '';
                 const locked = state.game.rules.vote.visibilityDuringInput === 'public' && current;
-                return `<div class="list-input-row"><strong>${(0, utils_js_42.escapeHtml)(voter.name)}</strong><select data-vote-list="${(0, utils_js_42.escapeHtml)(voterId)}" ${locked ? 'disabled' : ''}>${(0, components_js_5.playerOptions)(candidates, current, '選択してください', { allowAbstain: state.game.rules.vote.abstentionAllowed })}</select><button class="button small" data-action="save-list-vote" data-player-id="${(0, utils_js_42.escapeHtml)(voterId)}" ${locked ? 'disabled' : ''} type="button">保存</button></div>`;
+                return `<div class="list-input-row"><strong>${(0, utils_js_43.escapeHtml)(voter.name)}</strong><select data-vote-list="${(0, utils_js_43.escapeHtml)(voterId)}" ${locked ? 'disabled' : ''}>${(0, components_js_5.playerOptions)(candidates, current, '選択してください', { allowAbstain: state.game.rules.vote.abstentionAllowed })}</select><button class="button small" data-action="save-list-vote" data-player-id="${(0, utils_js_43.escapeHtml)(voterId)}" ${locked ? 'disabled' : ''} type="button">保存</button></div>`;
             }).join('')}</div>`;
         }
         renderFinalizeVote() {
@@ -27965,8 +28631,8 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
         }
         renderPublishVote(state) {
             const session = state.voteSession;
-            const tally = session.tally.map((item) => `<li><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, item.targetId))}</strong><span>${item.count}票</span></li>`).join('');
-            const ballots = Object.entries(session.votes).map(([voterId, targetId]) => `<li>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, voterId))} → ${(0, utils_js_42.escapeHtml)(targetId === 'abstain' ? '棄権' : (0, selectors_js_3.getPlayerName)(state, targetId))}</li>`).join('');
+            const tally = session.tally.map((item) => `<li><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, item.targetId))}</strong><span>${item.count}票</span></li>`).join('');
+            const ballots = Object.entries(session.votes).map(([voterId, targetId]) => `<li>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, voterId))} → ${(0, utils_js_43.escapeHtml)(targetId === 'abstain' ? '棄権' : (0, selectors_js_3.getPlayerName)(state, targetId))}</li>`).join('');
             const mode = state.game.rules.vote.publicationAfterFinalize;
             const resultLabel = session.result.type === 'execution'
                 ? session.result.resolution === 'random-tie-break'
@@ -27977,27 +28643,27 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                     : session.result.resolution === 'tie-no-execution'
                         ? '決選投票上限後も同票: 吊りなし'
                         : '有効票なし: 吊りなし';
-            return `<div class="task-head"><span class="task-count">公開前確認</span><h3>投票結果</h3></div>${mode !== 'execution-target-only' ? `<ul class="tally-list">${tally}</ul>` : ''}${mode === 'all-ballots' ? `<details class="optional-box" open><summary>全投票先</summary><ul>${ballots}</ul></details>` : ''}<div class="result-banner">${(0, utils_js_42.escapeHtml)(resultLabel)}</div><div class="button-row"><button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button><button class="button primary" data-action="publish-vote" type="button">投票結果を公開</button></div>`;
+            return `<div class="task-head"><span class="task-count">公開前確認</span><h3>投票結果</h3></div>${mode !== 'execution-target-only' ? `<ul class="tally-list">${tally}</ul>` : ''}${mode === 'all-ballots' ? `<details class="optional-box" open><summary>全投票先</summary><ul>${ballots}</ul></details>` : ''}<div class="result-banner">${(0, utils_js_43.escapeHtml)(resultLabel)}</div><div class="button-row"><button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button><button class="button primary" data-action="publish-vote" type="button">投票結果を公開</button></div>`;
         }
         renderExecution(state, playerId) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             const resolution = state.executionResolution;
             if (!resolution) {
-                return `<div class="task-head"><span class="task-count">処刑解決前</span><h3>処刑対象: ${(0, utils_js_42.escapeHtml)(player.name)}</h3></div><p class="help">猫又の場合は道連れ対象をここで一度だけ抽選し、公開前に確定します。</p><button class="button danger wide" data-action="resolve-execution" type="button">処刑内容を解決</button>`;
+                return `<div class="task-head"><span class="task-count">処刑解決前</span><h3>処刑対象: ${(0, utils_js_43.escapeHtml)(player.name)}</h3></div><p class="help">猫又の場合は道連れ対象をここで一度だけ抽選し、公開前に確定します。</p><button class="button danger wide" data-action="resolve-execution" type="button">処刑内容を解決</button>`;
             }
             const collateral = resolution.collateralPlayerId ? (0, selectors_js_3.getPlayerName)(state, resolution.collateralPlayerId) : '';
-            return `<div class="task-head"><span class="task-count">処刑公開前</span><h3>処刑対象: ${(0, utils_js_42.escapeHtml)(player.name)}</h3></div><div class="public-preview">${(0, utils_js_42.escapeHtml)(resolution.publicAnnouncement)}${state.game.rules.vote.revealExecutedRole ? `<br>役職: ${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getRoleName)(player.roleId))}` : ''}</div>${collateral ? `<div class="warning-card">猫又の道連れ: ${(0, utils_js_42.escapeHtml)(collateral)}</div>` : ''}<button class="button danger wide" data-action="publish-execution" type="button">処刑結果を公開して次へ</button>`;
+            return `<div class="task-head"><span class="task-count">処刑公開前</span><h3>処刑対象: ${(0, utils_js_43.escapeHtml)(player.name)}</h3></div><div class="public-preview">${(0, utils_js_43.escapeHtml)(resolution.publicAnnouncement)}${state.game.rules.vote.revealExecutedRole ? `<br>役職: ${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(player.roleId))}` : ''}</div>${collateral ? `<div class="warning-card">猫又の道連れ: ${(0, utils_js_43.escapeHtml)(collateral)}</div>` : ''}<button class="button danger wide" data-action="publish-execution" type="button">処刑結果を公開して次へ</button>`;
         }
         renderTestamentTask(state, playerId) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             if (!player)
                 return '<div class="empty-state"><strong>遺言対象を確認できません</strong><span>記録・管理から処刑状態を確認してください。</span></div>';
-            const header = `<div class="task-head"><span class="task-count">処刑確定・死亡処理前</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}の遺言</h3></div><p class="help">公開発言を1回だけ残せます。通常発言回数は消費せず、質問・回答・再議論は発生しません。</p>`;
+            const header = `<div class="task-head"><span class="task-count">処刑確定・死亡処理前</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}の遺言</h3></div><p class="help">公開発言を1回だけ残せます。通常発言回数は消費せず、質問・回答・再議論は発生しません。</p>`;
             if (player.controller === 'ai') {
-                return `${header}${this.host.renderAiBox(state, player, 'testament', [])}<div class="secondary-actions"><button class="button ghost" data-action="skip-testament" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" type="button">遺言なしで処刑へ進む</button></div>`;
+                return `${header}${this.host.renderAiBox(state, player, 'testament', [])}<div class="secondary-actions"><button class="button ghost" data-action="skip-testament" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" type="button">遺言なしで処刑へ進む</button></div>`;
             }
             const key = `human-testament:${playerId}`;
-            return `${header}<label class="field"><span>公開する遺言</span><textarea data-draft="${(0, utils_js_42.escapeHtml)(key)}" placeholder="最後に残す発言を入力">${(0, utils_js_42.escapeHtml)(this.host.drafts().get(key) ?? '')}</textarea></label>${this.humanCoForm(state, playerId, `testament:${playerId}`, '遺言に伴うCO操作（任意）')}${this.humanTestamentAbilityClaimsForm(state, playerId)}<div class="button-row"><button class="button ghost" data-action="skip-testament" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" type="button">遺言なし</button><button class="button primary" data-action="commit-human-testament" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" type="button">遺言を公開</button></div>`;
+            return `${header}<label class="field"><span>公開する遺言</span><textarea data-draft="${(0, utils_js_43.escapeHtml)(key)}" placeholder="最後に残す発言を入力">${(0, utils_js_43.escapeHtml)(this.host.drafts().get(key) ?? '')}</textarea></label>${this.humanCoForm(state, playerId, `testament:${playerId}`, '遺言に伴うCO操作（任意）')}${this.humanTestamentAbilityClaimsForm(state, playerId)}<div class="button-row"><button class="button ghost" data-action="skip-testament" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" type="button">遺言なし</button><button class="button primary" data-action="commit-human-testament" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" type="button">遺言を公開</button></div>`;
         }
         renderGraveyardConversationTask(state) {
             const session = (0, selectors_js_3.getActiveGraveyardConversation)(state);
@@ -28011,10 +28677,10 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 : (0, graveyardConversationPolicy_js_3.getGraveyardConversationNextSpeakerId)(session);
             this.host.setSelectedGraveyardSpeakerId(selectedId);
             const speaker = selectedId ? (0, standardRules_js_29.getPlayer)(state, selectedId) : null;
-            const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_42.escapeHtml)(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ墓場発言はありません。</div>';
+            const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_43.escapeHtml)(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ墓場発言はありません。</div>';
             const total = session.participantIds.length * session.speechCountPerParticipant;
             const remaining = session.participantIds.reduce((sum, id) => sum + (0, graveyardConversationPolicy_js_3.getGraveyardConversationRemaining)(session, id), 0);
-            const progress = session.participantIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>残り${(0, graveyardConversationPolicy_js_3.getGraveyardConversationRemaining)(session, id)}回</span></div>`).join('');
+            const progress = session.participantIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>残り${(0, graveyardConversationPolicy_js_3.getGraveyardConversationRemaining)(session, id)}回</span></div>`).join('');
             const help = '<p class="help">夜開始時点ですでに死亡している者だけが参加します。過去の墓場会話は継承されますが、死亡後の地上情報は自動共有されません。</p>';
             if (!speaker) {
                 return `<div class="task-head"><span class="task-count">${total}/${total}発言完了</span><h3>墓場会話</h3></div>${help}<div class="chat-history">${this.host.showConfidential() ? history : '<div class="role-hidden">墓場会話は機密情報非表示中です。</div>'}</div><div class="vote-progress-list">${progress}</div><button class="button primary wide" data-action="close-graveyard-chat" type="button">墓場会話を完了する</button>`;
@@ -28031,10 +28697,10 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 : (0, masonConversationPolicy_js_3.getMasonConversationNextSpeakerId)(session);
             this.host.setSelectedMasonSpeakerId(selectedId);
             const speaker = selectedId ? (0, standardRules_js_29.getPlayer)(state, selectedId) : null;
-            const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_42.escapeHtml)(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ共有発言はありません。</div>';
+            const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_43.escapeHtml)(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ共有発言はありません。</div>';
             const total = session.participantIds.length * session.speechCountPerParticipant;
             const remaining = session.participantIds.reduce((sum, id) => sum + (0, masonConversationPolicy_js_3.getMasonConversationRemaining)(session, id), 0);
-            const progress = session.participantIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>残り${(0, masonConversationPolicy_js_3.getMasonConversationRemaining)(session, id)}回</span></div>`).join('');
+            const progress = session.participantIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>残り${(0, masonConversationPolicy_js_3.getMasonConversationRemaining)(session, id)}回</span></div>`).join('');
             if (!speaker) {
                 return `<div class="task-head"><span class="task-count">${total}/${total}発言完了</span><h3>共有者共有会話</h3></div><div class="chat-history">${this.host.showConfidential() ? history : '<div class="role-hidden">共有会話内容は機密情報非表示中です。</div>'}</div><div class="vote-progress-list">${progress}</div><button class="button primary wide" data-action="close-mason-chat" type="button">共有会話を完了する</button>`;
             }
@@ -28050,10 +28716,10 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 : (0, wolfConversationPolicy_js_2.getWolfConversationNextSpeakerId)(session);
             this.host.setSelectedWolfSpeakerId(selectedId);
             const speaker = selectedId ? (0, standardRules_js_29.getPlayer)(state, selectedId) : null;
-            const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_42.escapeHtml)(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ共有発言はありません。</div>';
+            const history = session.messages.length ? session.messages.map((message) => `<div class="chat-message"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, message.speakerId))}</strong><p>${(0, utils_js_43.escapeHtml)(message.content)}</p></div>`).join('') : '<div class="empty-inline">まだ共有発言はありません。</div>';
             const total = session.participantIds.length * session.speechCountPerParticipant;
             const remaining = session.participantIds.reduce((sum, id) => sum + (0, wolfConversationPolicy_js_2.getWolfConversationRemaining)(session, id), 0);
-            const progress = session.participantIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>残り${(0, wolfConversationPolicy_js_2.getWolfConversationRemaining)(session, id)}回</span></div>`).join('');
+            const progress = session.participantIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>残り${(0, wolfConversationPolicy_js_2.getWolfConversationRemaining)(session, id)}回</span></div>`).join('');
             if (!speaker) {
                 return `<div class="task-head"><span class="task-count">${total}/${total}発言完了</span><h3>人狼共有会話</h3></div><div class="chat-history">${this.host.showConfidential() ? history : '<div class="role-hidden">共有会話内容は機密情報非表示中です。</div>'}</div><div class="vote-progress-list">${progress}</div><button class="button primary wide" data-action="close-wolf-chat" type="button">共有会話を完了する</button>`;
             }
@@ -28065,8 +28731,8 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
             const attack = state.night.wolfAttack;
             const completed = attack.voterWolfIds.filter((id) => Boolean(attack.voteByWolfId?.[id])).length;
             const total = attack.voterWolfIds.length;
-            const progress = attack.voterWolfIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>${attack.voteByWolfId?.[id] ? '入力済み' : '未入力'}</span></div>`).join('');
-            const header = `<div class="task-head"><span class="task-count">襲撃先投票 ${completed + 1}/${total}</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}・秘密投票</h3></div><p class="help">他の人狼の投票先は全票確定まで表示されません。最多票の対象を襲撃し、最多同率の場合は同率候補からランダムに決定します。</p><div class="vote-progress-list">${progress}</div>`;
+            const progress = attack.voterWolfIds.map((id) => `<div class="vote-progress-row"><strong>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}</strong><span>${attack.voteByWolfId?.[id] ? '入力済み' : '未入力'}</span></div>`).join('');
+            const header = `<div class="task-head"><span class="task-count">襲撃先投票 ${completed + 1}/${total}</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}・秘密投票</h3></div><p class="help">他の人狼の投票先は全票確定まで表示されません。最多票の対象を襲撃し、最多同率の場合は同率候補からランダムに決定します。</p><div class="vote-progress-list">${progress}</div>`;
             if (player.controller === 'ai') {
                 return `${header}${this.host.renderAiBox(state, player, 'wolf-attack', candidates.map((item) => item.id))}${this.renderProxyAction(state, player, 'wolf-attack', candidates)}${this.renderRandomAction(player, 'wolf-attack', '')}`;
             }
@@ -28076,7 +28742,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
             const player = (0, standardRules_js_29.getPlayer)(state, task.playerId);
             const candidates = (0, standardRules_js_29.getNightActionCandidates)(state, task.type, player.id);
             const label = (0, uiStateFormatters_js_2.nightActionTargetLabel)(task.type);
-            const header = `<div class="task-head"><span class="task-count">夜行動</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}・${(0, utils_js_42.escapeHtml)(label)}</h3></div>`;
+            const header = `<div class="task-head"><span class="task-count">夜行動</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}・${(0, utils_js_43.escapeHtml)(label)}</h3></div>`;
             if (player.controller === 'ai')
                 return `${header}${this.host.renderAiBox(state, player, task.type, candidates.map((item) => item.id), task.slotId)}${this.renderProxyAction(state, player, task.type, candidates, task.slotId)}${this.renderRandomAction(player, task.type, task.slotId)}`;
             return `${header}${(0, humanTaskView_js_1.renderHumanTaskCard)(state, task)}`;
@@ -28084,7 +28750,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
         renderResolveNightTask(state) {
             const attack = state.night.wolfAttack;
             const attackText = state.night.plan.wolfAttackRequired ? (0, selectors_js_3.getPlayerName)(state, attack.finalTargetId) : '襲撃なし';
-            const slots = state.night.slots.map((slot) => `<li>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, slot.actorId))}: ${(0, utils_js_42.escapeHtml)((0, uiStateFormatters_js_2.nightActionLabel)(slot.type))} → ${slot.targetId ? (0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, slot.targetId)) : '行動なし'}${slot.override ? `（${(0, utils_js_42.escapeHtml)(slot.override.selectedBy)}）` : ''}</li>`).join('');
+            const slots = state.night.slots.map((slot) => `<li>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, slot.actorId))}: ${(0, utils_js_43.escapeHtml)((0, uiStateFormatters_js_2.nightActionLabel)(slot.type))} → ${slot.targetId ? (0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, slot.targetId)) : '行動なし'}${slot.override ? `（${(0, utils_js_43.escapeHtml)(slot.override.selectedBy)}）` : ''}</li>`).join('');
             const attackVoteSummary = state.night.plan.wolfAttackRequired && attack.status === 'confirmed'
                 ? (() => {
                     if (!this.host.showConfidential())
@@ -28093,36 +28759,36 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                         const targetId = attack.voteByWolfId?.[wolfId];
                         const override = attack.overrideByWolfId?.[wolfId];
                         const source = override?.type === 'random-fallback' ? '（ランダム代替）' : override?.type === 'gm-proxy' ? '（GM代理）' : '';
-                        return `<li>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, wolfId))} → ${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, targetId))}${(0, utils_js_42.escapeHtml)(source)}</li>`;
+                        return `<li>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, wolfId))} → ${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, targetId))}${(0, utils_js_43.escapeHtml)(source)}</li>`;
                     }).join('');
                     const tallyRows = Object.entries(attack.tally?.countsByTargetId ?? {})
-                        .map(([targetId, count]) => `<li>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, targetId))}: ${Number(count)}票</li>`)
+                        .map(([targetId, count]) => `<li>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, targetId))}: ${Number(count)}票</li>`)
                         .join('');
                     const tieText = attack.tally?.resolutionMethod === 'random-tie'
-                        ? `<p><strong>最多同率:</strong> ${(0, utils_js_42.escapeHtml)((attack.tally.topTargetIds ?? []).map((id) => (0, selectors_js_3.getPlayerName)(state, id)).join('、'))}<br><strong>決定方法:</strong> 同率候補からランダム</p>`
+                        ? `<p><strong>最多同率:</strong> ${(0, utils_js_43.escapeHtml)((attack.tally.topTargetIds ?? []).map((id) => (0, selectors_js_3.getPlayerName)(state, id)).join('、'))}<br><strong>決定方法:</strong> 同率候補からランダム</p>`
                         : '<p><strong>決定方法:</strong> 単独最多</p>';
                     return `<details class="optional-box" open><summary>襲撃先投票の集計</summary><p><strong>各人狼の票</strong></p><ul>${voteRows}</ul><p><strong>対象別票数</strong></p><ul>${tallyRows}</ul>${tieText}</details>`;
                 })()
                 : '';
-            return `<div class="task-head"><span class="task-count">全夜行動入力済み</span><h3>夜行動を同時解決</h3></div><div class="summary-box"><p><strong>確定襲撃先:</strong> ${(0, utils_js_42.escapeHtml)(attackText)}</p>${attackVoteSummary}<ul>${slots || '<li>個人夜行動なし</li>'}</ul></div><button class="button primary wide" data-action="resolve-night" type="button">夜行動を解決</button>`;
+            return `<div class="task-head"><span class="task-count">全夜行動入力済み</span><h3>夜行動を同時解決</h3></div><div class="summary-box"><p><strong>確定襲撃先:</strong> ${(0, utils_js_43.escapeHtml)(attackText)}</p>${attackVoteSummary}<ul>${slots || '<li>個人夜行動なし</li>'}</ul></div><button class="button primary wide" data-action="resolve-night" type="button">夜行動を解決</button>`;
         }
         renderDawnTask(state) {
             const r = state.night.resolution;
             const title = r.publicAnnouncement ? `Day ${state.night.day + 1} 夜明け` : '初日夜処理完了';
             const preview = r.publicAnnouncement ?? '公開事項はありません。個人結果を確定し、1日目の昼を開始します。';
-            const privateResultRows = r.privateResults.map((item) => `<li>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, item.actorId))}: ${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, item.targetId))}は${item.result === 'wolf' ? '人狼' : '人狼ではない'}</li>`).join('');
+            const privateResultRows = r.privateResults.map((item) => `<li>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, item.actorId))}: ${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, item.targetId))}は${item.result === 'wolf' ? '人狼' : '人狼ではない'}</li>`).join('');
             const deathRows = r.deaths.map((death) => {
                 const sourceNames = (death.sourcePlayerIds ?? []).map((id) => (0, selectors_js_3.getPlayerName)(state, id)).filter(Boolean);
                 const sourceText = sourceNames.length ? `／関係者: ${sourceNames.join('、')}` : '';
-                return `<li>${(0, utils_js_42.escapeHtml)((0, selectors_js_3.getPlayerName)(state, death.playerId))}: ${(0, utils_js_42.escapeHtml)((0, uiStateFormatters_js_2.deathCauseLabel)(death.cause))}${(0, utils_js_42.escapeHtml)(sourceText)}</li>`;
+                return `<li>${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, death.playerId))}: ${(0, utils_js_43.escapeHtml)((0, uiStateFormatters_js_2.deathCauseLabel)(death.cause))}${(0, utils_js_43.escapeHtml)(sourceText)}</li>`;
             }).join('');
-            const gmNoteRows = r.gmNotes.map((note) => `<li>${(0, utils_js_42.escapeHtml)(note)}</li>`).join('');
-            return `<div class="task-head"><span class="task-count">${r.publicAnnouncement ? '公開前確認' : '非公開処理確認'}</span><h3>${(0, utils_js_42.escapeHtml)(title)}</h3></div><div class="public-preview">${(0, utils_js_42.escapeHtml)(preview)}</div><details class="optional-box"><summary>個人通知・GM情報</summary><ul>${privateResultRows || '<li>個人通知なし</li>'}${deathRows || '<li>死亡解決なし</li>'}${gmNoteRows}</ul></details><button class="button primary wide" data-action="publish-dawn" type="button">${r.publicAnnouncement ? '夜明けを公開' : '1日目の昼を開始'}</button>`;
+            const gmNoteRows = r.gmNotes.map((note) => `<li>${(0, utils_js_43.escapeHtml)(note)}</li>`).join('');
+            return `<div class="task-head"><span class="task-count">${r.publicAnnouncement ? '公開前確認' : '非公開処理確認'}</span><h3>${(0, utils_js_43.escapeHtml)(title)}</h3></div><div class="public-preview">${(0, utils_js_43.escapeHtml)(preview)}</div><details class="optional-box"><summary>個人通知・GM情報</summary><ul>${privateResultRows || '<li>個人通知なし</li>'}${deathRows || '<li>死亡解決なし</li>'}${gmNoteRows}</ul></details><button class="button primary wide" data-action="publish-dawn" type="button">${r.publicAnnouncement ? '夜明けを公開' : '1日目の昼を開始'}</button>`;
         }
         renderResultConfirm(state) {
             const winner = constants_js_48.TEAM_LABELS[state.result.winner] ?? 'ゲーム終了';
             const headline = state.result.winner === 'draw' ? winner : `${winner}の勝利`;
-            return `<div class="task-head"><span class="task-count">勝敗検出</span><h3>${(0, utils_js_42.escapeHtml)(headline)}</h3></div><div class="result-banner large">${(0, utils_js_42.escapeHtml)(state.result.reason)}</div><label class="check-row"><input type="checkbox" data-draft="result-reveal-roles" checked>全役職を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-chat">人狼共有会話を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-mason-chat">共有者共有会話を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-graveyard-chat">墓場会話を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-memos">内部メモ・心の声を公開する</label><button class="button primary wide" data-action="confirm-result" type="button">公開内容を確認</button>`;
+            return `<div class="task-head"><span class="task-count">勝敗検出</span><h3>${(0, utils_js_43.escapeHtml)(headline)}</h3></div><div class="result-banner large">${(0, utils_js_43.escapeHtml)(state.result.reason)}</div><label class="check-row"><input type="checkbox" data-draft="result-reveal-roles" checked>全役職を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-chat">人狼共有会話を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-mason-chat">共有者共有会話を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-graveyard-chat">墓場会話を公開する</label><label class="check-row"><input type="checkbox" data-draft="result-reveal-memos">内部メモ・心の声を公開する</label><button class="button primary wide" data-action="confirm-result" type="button">公開内容を確認</button>`;
         }
         renderResultPublish(state) {
             return `<div class="task-head"><span class="task-count">結果公開前</span><h3>公開内容を確認済みです</h3></div><ul><li>全役職: ${state.result.revealAllRoles ? '公開' : '非公開'}</li><li>人狼共有会話: ${state.result.revealWolfConversation ? '公開' : '非公開'}</li><li>共有者共有会話: ${state.result.revealMasonConversation ? '公開' : '非公開'}</li><li>墓場会話: ${state.result.revealGraveyardConversation ? '公開' : '非公開'}</li><li>内部メモ・心の声: ${state.result.revealInternalMemos ? '公開' : '非公開'}</li></ul><button class="button primary wide" data-action="publish-result" type="button">ゲーム結果を公開して感想へ</button>`;
@@ -28130,20 +28796,20 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
         renderResultImpression(state, playerId) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             const completed = state.events.filter((event) => event.type === 'result-impression' && event.status === 'published').length;
-            const header = `<div class="task-head"><span class="task-count">${completed + 1}/${state.players.length}</span><h3>${(0, utils_js_42.escapeHtml)(player.name)}の勝敗後感想</h3></div><p class="help">投票・夜行動・勝敗を受けた短い公開感想を登録します。公開表示へそのまま掲載されます。</p>`;
+            const header = `<div class="task-head"><span class="task-count">${completed + 1}/${state.players.length}</span><h3>${(0, utils_js_43.escapeHtml)(player.name)}の勝敗後感想</h3></div><p class="help">投票・夜行動・勝敗を受けた短い公開感想を登録します。公開表示へそのまま掲載されます。</p>`;
             if (player.controller === 'ai')
                 return `${header}${this.host.renderAiBox(state, player, 'result-impression', [])}`;
             const key = `human-result-impression:${playerId}`;
-            return `${header}<label class="field"><span>公開感想</span><textarea data-draft="${(0, utils_js_42.escapeHtml)(key)}" placeholder="1～2文の短い感想を入力">${(0, utils_js_42.escapeHtml)(this.host.drafts().get(key) ?? '')}</textarea></label><button class="button primary wide" data-action="commit-human-result-impression" data-player-id="${(0, utils_js_42.escapeHtml)(playerId)}" type="button">感想を公開</button>`;
+            return `${header}<label class="field"><span>公開感想</span><textarea data-draft="${(0, utils_js_43.escapeHtml)(key)}" placeholder="1～2文の短い感想を入力">${(0, utils_js_43.escapeHtml)(this.host.drafts().get(key) ?? '')}</textarea></label><button class="button primary wide" data-action="commit-human-result-impression" data-player-id="${(0, utils_js_43.escapeHtml)(playerId)}" type="button">感想を公開</button>`;
         }
         renderEnded(state) {
-            return `<div class="success-card"><h3>${(0, utils_js_42.escapeHtml)(constants_js_48.TEAM_LABELS[state.result?.winner] ?? 'ゲーム終了')}</h3><p>${(0, utils_js_42.escapeHtml)(state.result?.reason ?? state.game.winnerReason)}</p><div class="button-row"><button class="button ghost" data-action="go-records" type="button">全記録を見る</button><button class="button primary" data-action="go-public" type="button">公開表示を見る</button></div></div>`;
+            return `<div class="success-card"><h3>${(0, utils_js_43.escapeHtml)(constants_js_48.TEAM_LABELS[state.result?.winner] ?? 'ゲーム終了')}</h3><p>${(0, utils_js_43.escapeHtml)(state.result?.reason ?? state.game.winnerReason)}</p><div class="button-row"><button class="button ghost" data-action="go-records" type="button">全記録を見る</button><button class="button primary" data-action="go-public" type="button">公開表示を見る</button></div></div>`;
         }
         renderProxyAction(state, player, taskType, candidates, slotId = '') {
-            return `<details class="optional-box"><summary>AI回答が無効な場合のGM代理入力</summary><label class="field"><span>代理対象</span><select data-draft="proxy:${(0, utils_js_42.escapeHtml)(taskType)}:${(0, utils_js_42.escapeHtml)(player.id)}:${(0, utils_js_42.escapeHtml)(slotId)}">${(0, components_js_5.playerOptions)(candidates, '', '選択してください', { allowAbstain: taskType === 'vote' && state.game.rules.vote.abstentionAllowed })}</select></label><label class="field"><span>代理理由</span><input data-draft="proxy-reason:${(0, utils_js_42.escapeHtml)(taskType)}:${(0, utils_js_42.escapeHtml)(player.id)}:${(0, utils_js_42.escapeHtml)(slotId)}" value="AI回答を正常に取得できないため"></label><button class="button ghost wide" data-action="commit-proxy" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_42.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_42.escapeHtml)(slotId)}" type="button">GM代理入力を登録</button></details>`;
+            return `<details class="optional-box"><summary>AI回答が無効な場合のGM代理入力</summary><label class="field"><span>代理対象</span><select data-draft="proxy:${(0, utils_js_43.escapeHtml)(taskType)}:${(0, utils_js_43.escapeHtml)(player.id)}:${(0, utils_js_43.escapeHtml)(slotId)}">${(0, components_js_5.playerOptions)(candidates, '', '選択してください', { allowAbstain: taskType === 'vote' && state.game.rules.vote.abstentionAllowed })}</select></label><label class="field"><span>代理理由</span><input data-draft="proxy-reason:${(0, utils_js_43.escapeHtml)(taskType)}:${(0, utils_js_43.escapeHtml)(player.id)}:${(0, utils_js_43.escapeHtml)(slotId)}" value="AI回答を正常に取得できないため"></label><button class="button ghost wide" data-action="commit-proxy" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_43.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_43.escapeHtml)(slotId)}" type="button">GM代理入力を登録</button></details>`;
         }
         renderRandomAction(player, taskType, slotId) {
-            return `<details class="optional-box"><summary>ランダム決定</summary><p class="help">GM代理入力も困難な場合だけ使用してください。監査履歴へ理由を残します。</p><button class="button danger-ghost wide" data-action="random-action" data-player-id="${(0, utils_js_42.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_42.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_42.escapeHtml)(slotId)}" type="button">有効候補からランダム決定</button></details>`;
+            return `<details class="optional-box"><summary>ランダム決定</summary><p class="help">GM代理入力も困難な場合だけ使用してください。監査履歴へ理由を残します。</p><button class="button danger-ghost wide" data-action="random-action" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_43.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_43.escapeHtml)(slotId)}" type="button">有効候補からランダム決定</button></details>`;
         }
     }
     exports.WorkbenchTaskRenderer = WorkbenchTaskRenderer;
@@ -28152,7 +28818,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
  * 責務: AI応答入力欄、プロンプト診断、解析プレビュー、登録操作のHTML生成を所有する。
  * 変更ルール: AI応答の解析・検証・状態更新を行わず、AppUIから渡された解析済みViewModelだけを描画する。ユーザー入力・AI出力・識別子は本ファイル内で必ずescapeHtmlを通す。
  */
-define("js/ui/views/workbench/aiResponseBoxView", ["require", "exports", "js/config/discussionAiTaskTypes", "js/state/selectors", "js/shared/utils", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_20, selectors_js_4, utils_js_43, uiStateFormatters_js_3) {
+define("js/ui/views/workbench/aiResponseBoxView", ["require", "exports", "js/config/discussionAiTaskTypes", "js/state/selectors", "js/shared/utils", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_21, selectors_js_4, utils_js_44, uiStateFormatters_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderPromptDiagnostics = renderPromptDiagnostics;
@@ -28171,12 +28837,12 @@ define("js/ui/views/workbench/aiResponseBoxView", ["require", "exports", "js/con
                         ? '夜判断用履歴'
                         : '全履歴・無圧縮';
         return `<div class="prompt-diagnostics">
-    <span>アプリ ${(0, utils_js_43.escapeHtml)(diagnostics.appVersion)}</span>
-    <span>Build ${(0, utils_js_43.escapeHtml)(diagnostics.buildId.slice(0, 8))}</span>
-    <span>Prompt ${(0, utils_js_43.escapeHtml)(String(diagnostics.promptSpecVersion))}</span>
-    <span>可視性監査 ${(0, utils_js_43.escapeHtml)(diagnostics.visibilityAudit)}</span>
+    <span>アプリ ${(0, utils_js_44.escapeHtml)(diagnostics.appVersion)}</span>
+    <span>Build ${(0, utils_js_44.escapeHtml)(diagnostics.buildId.slice(0, 8))}</span>
+    <span>Prompt ${(0, utils_js_44.escapeHtml)(String(diagnostics.promptSpecVersion))}</span>
+    <span>可視性監査 ${(0, utils_js_44.escapeHtml)(diagnostics.visibilityAudit)}</span>
     <span>${diagnostics.aliveCount}人生存・過半数${diagnostics.majorityThreshold}票</span>
-    <span>公開履歴 ${(0, utils_js_43.escapeHtml)(historyLabel)}</span>
+    <span>公開履歴 ${(0, utils_js_44.escapeHtml)(historyLabel)}</span>
   </div>`;
     }
     function renderParsedPreview({ state, taskType, parsed, parseErrors }) {
@@ -28196,35 +28862,35 @@ define("js/ui/views/workbench/aiResponseBoxView", ["require", "exports", "js/con
                 : '公開発言';
         const freezeWolfNames = parsed.estimatedWerewolfIds?.map((id) => (0, selectors_js_4.getPlayerName)(state, id)).join('、') || 'なし';
         const freezeAttackNames = parsed.predictedAttackTargetIds?.map((id) => (0, selectors_js_4.getPlayerName)(state, id)).join('、') || 'なし';
-        const interaction = (0, discussionAiTaskTypes_js_20.isNormalSpeechTask)(taskType) && parsed.speechInteraction
-            ? `<span>質問先: ${(0, utils_js_43.escapeHtml)(parsed.speechInteraction.questionTargetNames.join('、') || 'なし')} / 回答元: ${(0, utils_js_43.escapeHtml)(parsed.speechInteraction.answerToRefs.map((sequence) => `#${sequence}`).join('、') || 'なし')}</span>`
+        const interaction = (0, discussionAiTaskTypes_js_21.isNormalSpeechTask)(taskType) && parsed.speechInteraction
+            ? `<span>質問先: ${(0, utils_js_44.escapeHtml)(parsed.speechInteraction.questionTargetNames.join('、') || 'なし')} / 回答元: ${(0, utils_js_44.escapeHtml)(parsed.speechInteraction.answerToRefs.map((sequence) => `#${sequence}`).join('、') || 'なし')}</span>`
             : '';
-        const coOperation = ((0, discussionAiTaskTypes_js_20.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.coOperation
-            ? `<span>CO操作: ${(0, utils_js_43.escapeHtml)(parsed.coOperation.action)}${parsed.coOperation.action === 'withdraw' ? '' : ` / ${(0, utils_js_43.escapeHtml)(parsed.coOperation.roleId)}`} </span>`
+        const coOperation = ((0, discussionAiTaskTypes_js_21.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.coOperation
+            ? `<span>CO操作: ${(0, utils_js_44.escapeHtml)(parsed.coOperation.action)}${parsed.coOperation.action === 'withdraw' ? '' : ` / ${(0, utils_js_44.escapeHtml)(parsed.coOperation.roleId)}`} </span>`
             : '';
-        const abilityClaims = ((0, discussionAiTaskTypes_js_20.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.abilityClaims?.action === 'publish'
-            ? `<span>能力結果公開: ${(0, utils_js_43.escapeHtml)(String(parsed.abilityClaims.claims?.length ?? 0))}件</span>`
+        const abilityClaims = ((0, discussionAiTaskTypes_js_21.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.abilityClaims?.action === 'publish'
+            ? `<span>能力結果公開: ${(0, utils_js_44.escapeHtml)(String(parsed.abilityClaims.claims?.length ?? 0))}件</span>`
             : '';
         const decisionUpdate = parsed.decisionUpdate
-            ? `<span>${(0, utils_js_43.escapeHtml)((0, uiStateFormatters_js_3.formatDecisionUpdatePreview)(parsed.decisionUpdate))}</span>`
+            ? `<span>${(0, utils_js_44.escapeHtml)((0, uiStateFormatters_js_3.formatDecisionUpdatePreview)(parsed.decisionUpdate))}</span>`
             : '';
         const attackAssessment = parsed.attackAssessment
-            ? `<span>襲撃判断: 狩人生存 ${(0, utils_js_43.escapeHtml)(parsed.attackAssessment.hunterAliveChance || 'なし')} / 護衛リスク ${(0, utils_js_43.escapeHtml)(parsed.attackAssessment.selectedTargetGuardRisk || 'なし')}</span>`
+            ? `<span>襲撃判断: 狩人生存 ${(0, utils_js_44.escapeHtml)(parsed.attackAssessment.hunterAliveChance || 'なし')} / 護衛リスク ${(0, utils_js_44.escapeHtml)(parsed.attackAssessment.selectedTargetGuardRisk || 'なし')}</span>`
             : '';
         const freezePreview = taskType === 'freeze'
-            ? `<span>雪女戦術: 人狼候補 ${(0, utils_js_43.escapeHtml)(freezeWolfNames)} / 予想襲撃先 ${(0, utils_js_43.escapeHtml)(freezeAttackNames)}</span>`
+            ? `<span>雪女戦術: 人狼候補 ${(0, utils_js_44.escapeHtml)(freezeWolfNames)} / 予想襲撃先 ${(0, utils_js_44.escapeHtml)(freezeAttackNames)}</span>`
             : '';
         const discussionControl = taskType === 'speech-designated'
-            ? `<span>次発言者希望: ${(0, utils_js_43.escapeHtml)(parsed.nextSpeakerPreference || '指名なし')}</span>`
+            ? `<span>次発言者希望: ${(0, utils_js_44.escapeHtml)(parsed.nextSpeakerPreference || '指名なし')}</span>`
             : taskType === 'speech-free'
-                ? `<span>次巡希望: ${(0, utils_js_43.escapeHtml)(parsed.discussionPreference || 'NORMAL')}</span>`
+                ? `<span>次巡希望: ${(0, utils_js_44.escapeHtml)(parsed.discussionPreference || 'NORMAL')}</span>`
                 : taskType === 'discussion-opening-preference'
-                    ? `<span>1巡目発言順希望: ${(0, utils_js_43.escapeHtml)(parsed.openingPreference || '')}</span>`
+                    ? `<span>1巡目発言順希望: ${(0, utils_js_44.escapeHtml)(parsed.openingPreference || '')}</span>`
                     : '';
         return `<div class="parse-preview ${parseErrors.length ? 'has-error' : ''}">
     <strong>解析結果</strong>
-    ${speechPreview ? `<span>${speechLabel}: ${(0, utils_js_43.escapeHtml)(speechPreview)}</span>` : ''}
-    ${parsed.selectionRationale ? `<span>選択理由: ${(0, utils_js_43.escapeHtml)(parsed.selectionRationale)}</span>` : ''}
+    ${speechPreview ? `<span>${speechLabel}: ${(0, utils_js_44.escapeHtml)(speechPreview)}</span>` : ''}
+    ${parsed.selectionRationale ? `<span>選択理由: ${(0, utils_js_44.escapeHtml)(parsed.selectionRationale)}</span>` : ''}
     <span>心の声: ${parsed.heartVoice ? 'あり' : 'なし'}</span>
     <span>内部メモ更新: ${parsed.internalMemoUpdate ? '追記' : parsed.fullMemo ? '整理' : 'なし'}</span>
     ${interaction}
@@ -28235,22 +28901,22 @@ define("js/ui/views/workbench/aiResponseBoxView", ["require", "exports", "js/con
     ${freezePreview}
     ${discussionControl}
     ${parsed.sharedStrategyPatch ? '<span>共有作戦更新: あり</span>' : ''}
-    ${parsed.actionAnswer ? `<span>行動回答: ${(0, utils_js_43.escapeHtml)(parsed.actionAnswer)}</span>` : ''}
-    ${parseErrors.map((error) => `<em>${(0, utils_js_43.escapeHtml)(error)}</em>`).join('')}
+    ${parsed.actionAnswer ? `<span>行動回答: ${(0, utils_js_44.escapeHtml)(parsed.actionAnswer)}</span>` : ''}
+    ${parseErrors.map((error) => `<em>${(0, utils_js_44.escapeHtml)(error)}</em>`).join('')}
   </div>`;
     }
     function renderAiResponseBox({ state, player, taskType, slotId = '', key, cache, raw, parsed, parseErrors = [], manualNotice = '' }) {
-        const playerId = (0, utils_js_43.escapeHtml)(player.id);
-        const safeTaskType = (0, utils_js_43.escapeHtml)(taskType);
-        const safeSlotId = (0, utils_js_43.escapeHtml)(slotId);
+        const playerId = (0, utils_js_44.escapeHtml)(player.id);
+        const safeTaskType = (0, utils_js_44.escapeHtml)(taskType);
+        const safeSlotId = (0, utils_js_44.escapeHtml)(slotId);
         const promptSection = cache
             ? `${renderPromptDiagnostics(cache)}
       <details class="prompt-preview">
         <summary>生成したプロンプトを確認</summary>
-        <textarea readonly>${(0, utils_js_43.escapeHtml)(cache.text)}</textarea>
+        <textarea readonly>${(0, utils_js_44.escapeHtml)(cache.text)}</textarea>
       </details>`
             : '';
-        return `<div class="ai-box" data-ai-key="${(0, utils_js_43.escapeHtml)(key)}">
+        return `<div class="ai-box" data-ai-key="${(0, utils_js_44.escapeHtml)(key)}">
     ${manualNotice}
     <div class="ai-actions">
       <button class="button primary" data-action="copy-prompt" data-player-id="${playerId}" data-task-type="${safeTaskType}" data-slot-id="${safeSlotId}" type="button">${cache ? '最新プロンプトを再コピー' : 'プロンプトをコピー'}</button>
@@ -28259,7 +28925,7 @@ define("js/ui/views/workbench/aiResponseBoxView", ["require", "exports", "js/con
     ${promptSection}
     <label class="field">
       <span>AI JSON応答</span>
-      <textarea data-draft="ai-response:${(0, utils_js_43.escapeHtml)(key)}" placeholder="AIが返したJSONオブジェクトをそのまま貼り付けてください">${(0, utils_js_43.escapeHtml)(raw)}</textarea>
+      <textarea data-draft="ai-response:${(0, utils_js_44.escapeHtml)(key)}" placeholder="AIが返したJSONオブジェクトをそのまま貼り付けてください">${(0, utils_js_44.escapeHtml)(raw)}</textarea>
     </label>
     ${renderParsedPreview({ state, taskType, parsed, parseErrors })}
     <div class="button-row">
@@ -28470,7 +29136,7 @@ ${renderPromptDataBlock('vote-retry', retryData)}
  * 責務: AIプロファイルとタスク種別から生成深度・工程・工程担当プロファイルを決定する。
  * 変更ルール: API通信、プロンプト本文生成、DOM、ゲーム状態更新を行わない。モデル名から性能を推測せず、保存済み設定だけを正本とする。深度3と4のdraft・renderは同一配列を正本とし、深度4だけが通常の昼公開発言と回答優先発言へproofreadを後置する。
  */
-define("js/services/generationDepthPolicy", ["require", "exports", "js/config/generationTaskCategories", "js/config/discussionAiTaskTypes", "js/config/generationTaskCategories", "js/ai/responseRetryPolicy"], function (require, exports, generationTaskCategories_js_2, discussionAiTaskTypes_js_21, generationTaskCategories_js_3) {
+define("js/services/generationDepthPolicy", ["require", "exports", "js/config/generationTaskCategories", "js/config/discussionAiTaskTypes", "js/config/generationTaskCategories", "js/ai/responseRetryPolicy"], function (require, exports, generationTaskCategories_js_2, discussionAiTaskTypes_js_22, generationTaskCategories_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.GENERATION_DEPTHS = exports.TASK_GENERATION_CATEGORY = void 0;
@@ -28499,7 +29165,7 @@ define("js/services/generationDepthPolicy", ["require", "exports", "js/config/ge
     function stagesForGenerationDepth(depth, taskType = 'speech') {
         const normalized = Number(depth);
         const stageIds = [...(STAGES_BY_DEPTH[normalized] ?? [])];
-        if ((0, discussionAiTaskTypes_js_21.isNormalSpeechTask)(taskType) || taskType === 'priority-answer')
+        if ((0, discussionAiTaskTypes_js_22.isNormalSpeechTask)(taskType) || taskType === 'priority-answer')
             return stageIds;
         return stageIds.filter((stageId) => stageId !== 'proofread');
     }
@@ -28532,7 +29198,7 @@ define("js/services/generationDepthPolicy", ["require", "exports", "js/config/ge
             profilesById.set(String(ownerProfile.id), ownerProfile);
         const standardDepth = Number(ownerProfile.generation?.depth ?? 1);
         const override = ownerProfile.generation?.taskOverrides?.[taskCategory] ?? null;
-        const depth = taskType === discussionAiTaskTypes_js_21.DISCUSSION_OPENING_PREFERENCE_TASK
+        const depth = taskType === discussionAiTaskTypes_js_22.DISCUSSION_OPENING_PREFERENCE_TASK
             ? 1
             : override === null ? standardDepth : Number(override);
         if (!exports.GENERATION_DEPTHS.includes(depth))
@@ -28559,9 +29225,9 @@ define("js/services/generationDepthPolicy", ["require", "exports", "js/config/ge
 });
 /**
  * 責務: 工程、タスク種別、検証済み候補から、工程プロンプトへ含める文章フィールド、固定構造、本人可視情報、キャラクター情報、履歴範囲を許可リスト方式で決定する。
- * 変更ルール: プロンプト本文、API通信、DOM、ゲーム状態更新を扱わない。生のcontextや候補全体を許可せず、新規区画・新規キーは明示登録されるまで出力対象にしない。公開発言化へ盤面全体を渡さず、currentMoment・characterSurface・callNamesと、会話開始・序盤反応に意味があるspeechGuidanceだけを許可する。文字数値は各工程末尾の最終確認へ集約し、人間向け発言量ラベルや長さ区分を中間工程へ渡さない。「最終確認」以下は各工程の固定末尾として位置・内容を維持し、キャッシュや中間区画整理のために前方へ移さない。深度3と4のdraft・render契約は共通とし、深度4だけがspeechとpriority-answerのpublicSpeech校正を後置する。heartVoiceの文章化対象は通常昼発言系とpriority-answerだけに限定し、遺言・墓場会話では生成工程へ渡さない。
+ * 変更ルール: プロンプト本文、API通信、DOM、ゲーム状態更新を扱わない。生のcontextや候補全体を許可せず、新規区画・新規キーは明示登録されるまで出力対象にしない。公開発言化へ盤面全体を渡さず、currentMoment・characterSurface・callNamesと、会話開始・序盤反応に意味があるspeechGuidanceだけを許可する。墓場会話の構造草案には昼推理用characterReasoningを渡さず、口調・人格はrender側のcharacterSurfaceだけで維持する。文字数値は各工程末尾の最終確認へ集約し、人間向け発言量ラベルや長さ区分を中間工程へ渡さない。「最終確認」以下は各工程の固定末尾として位置・内容を維持し、キャッシュや中間区画整理のために前方へ移さない。深度3と4のdraft・render契約は共通とし、深度4だけがspeechとpriority-answerのpublicSpeech校正を後置する。heartVoiceの文章化対象は通常昼発言系とpriority-answerだけに限定し、遺言・墓場会話では生成工程へ渡さない。
  */
-define("js/prompts/stages/generationStagePromptPolicy", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/personalNightActionTasks"], function (require, exports, discussionAiTaskTypes_js_22, personalNightActionTasks_js_11) {
+define("js/prompts/stages/generationStagePromptPolicy", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/personalNightActionTasks"], function (require, exports, discussionAiTaskTypes_js_23, personalNightActionTasks_js_11) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.textFieldsForTaskType = textFieldsForTaskType;
@@ -28606,7 +29272,7 @@ define("js/prompts/stages/generationStagePromptPolicy", ["require", "exports", "
         'result-impression': Object.freeze(['currentMoment', 'resultSummary', 'characterReasoning']),
         'wolf-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'recentWolfConversation', 'existingInternalMemo']),
         'mason-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'recentMasonConversation', 'existingInternalMemo']),
-        'graveyard-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'recentGraveyardConversation', 'pastGraveyardConversations', 'existingInternalMemo']),
+        'graveyard-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'recentGraveyardConversation', 'pastGraveyardConversations', 'existingInternalMemo']),
         'memo-consolidate': Object.freeze(['currentMoment', 'existingInternalMemo']),
         'wolf-attack': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'histories']),
     });
@@ -28646,7 +29312,7 @@ define("js/prompts/stages/generationStagePromptPolicy", ["require", "exports", "
             throw new RangeError(`文章工程ではないstageIdです: ${stageId}`);
         const taskFields = textFieldsForTaskType(taskType);
         const allowedFields = stageId === 'proofread'
-            ? (((0, discussionAiTaskTypes_js_22.isNormalSpeechTask)(taskType) || taskType === 'priority-answer') ? ['publicSpeech'] : [])
+            ? (((0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskType) || taskType === 'priority-answer') ? ['publicSpeech'] : [])
             : taskFields;
         if (!candidateObject || typeof candidateObject !== 'object')
             return [];
@@ -28703,12 +29369,12 @@ define("js/prompts/stages/generationStagePromptPolicy", ["require", "exports", "
  * - draftへ生公開イベントを渡さずgenerationStageSourceの公開履歴射影を使用し、空値を除去したminified JSONだけを掲載する。
  * - 各工程の中間区画は判断・表現・意味ロックだけを説明し、AI向け必須出力・原則出力、主JSON例、返却キー、文字数制約は各工程末尾の最終確認へ一度だけ集約する。heartVoiceは文数を指定せずmaxHeartVoiceLengthの文字数上限だけを提示する。
  * - 回答検証上のrequiredTopLevelKeysは原則出力項目を省く根拠にせず、recommendedTopLevelKeysと主JSON例へ検証任意項目の生成機会を維持する。
- * - 公開発言量の人間向けラベルや長さ区分は中間工程へ出さず、会話開始・序盤反応に意味がある追加指示だけroleTaskData.promptGuidanceから引き継ぐ。
+ * - 公開発言量の人間向けラベルや長さ区分は中間工程へ出さず、会話開始・序盤反応に意味がある追加指示だけroleTaskData.promptGuidanceから引き継ぐ。通常昼議論第1巡の初期役職構成由来ガイドはpublicState内の解釈補助として直接生成と同じ条件で引き継ぐ。墓場会話では生存中のdecisionと昼推理用characterReasoningを草案へ再投入せず、memoAddをプロンプト契約から外して秘密共有・答え合わせ・感想の会話目的を維持する。
  * - 内部UUIDは雪女の明示ID契約以外へ出さず表示名またはイベント番号へ変換する。
  * - renderではsourceTextを唯一の意味正本とし、話者・口調・呼称・意味ロックだけを渡して他人の公開発言本文や候補全体を渡さない。
  * - 校正ではpublicSpeech以外、生の公開イベント、実役職、未許可区画を出力しない。
  */
-define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/policies/taskInstructionPolicy", "js/prompts/policies/voteResponseGuidancePolicy", "js/prompts/templates/characterReasoningDirectiveTemplates", "js/prompts/response/responseContract", "js/prompts/serialization/promptDataSerializer"], function (require, exports, discussionAiTaskTypes_js_23, constants_js_49, publicAbilityClaimPolicy_js_23, taskInstructionPolicy_js_3, voteResponseGuidancePolicy_js_2, characterReasoningDirectiveTemplates_js_2, responseContract_js_12, promptDataSerializer_js_11) {
+define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/prompts/policies/taskInstructionPolicy", "js/prompts/policies/voteResponseGuidancePolicy", "js/prompts/templates/characterReasoningDirectiveTemplates", "js/prompts/response/responseContract", "js/prompts/serialization/promptDataSerializer"], function (require, exports, discussionAiTaskTypes_js_24, constants_js_49, publicAbilityClaimPolicy_js_23, abilityClaimTimingPolicy_js_10, taskInstructionPolicy_js_3, voteResponseGuidancePolicy_js_2, characterReasoningDirectiveTemplates_js_2, responseContract_js_12, promptDataSerializer_js_11) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildSpeechProofreadInput = buildSpeechProofreadInput;
@@ -28876,6 +29542,7 @@ define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", 
             publicLocks: sanitizePromptValue(source, source?.publicState?.publicLocks ?? {}),
             currentVoteState: sanitizePromptValue(source, source?.publicState?.currentVoteState ?? null),
             recentOutcomeSummary: sanitizePromptValue(source, source?.publicState?.recentOutcomeSummary ?? []),
+            roleCompositionSituationGuide: sanitizePromptValue(source, source?.publicState?.roleCompositionSituationGuide ?? null),
         };
     }
     function draftPrivateState(source) {
@@ -28896,6 +29563,8 @@ define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", 
         const result = sanitizePromptValue(source, roleTaskData);
         delete result.validTargetNames;
         delete result.validTargetIds;
+        if (taskType === 'graveyard-conversation')
+            delete result.decision;
         if (taskType === 'freeze') {
             result.validTargetPlayers = (roleTaskData.validTargetIds ?? []).map((id) => ({
                 id: String(id),
@@ -28944,7 +29613,10 @@ define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", 
             return {
                 ...common,
                 roleId: String(claim?.roleId ?? ''),
-                resultDay: Number(claim?.resultDay ?? 0),
+                actionDay: Number(claim?.actionDay ?? 0),
+                actionPhase: String(claim?.actionPhase ?? ''),
+                availableDay: Number(claim?.availableDay ?? 0),
+                availablePhase: String(claim?.availablePhase ?? ''),
                 target: String(claim?.target ?? ''),
                 result: String(claim?.result ?? ''),
             };
@@ -28983,8 +29655,8 @@ define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", 
             const actor = displayPlayerName(source, claim?.actorId);
             const target = displayPlayerName(source, claim?.targetId);
             const role = roleLabel(claim?.claimedRoleId ?? claim?.roleId);
-            const day = Number(claim?.observedDay ?? claim?.resultDay ?? 0);
-            return `Day ${day} ${actor}（${role}）→ ${target}: ${(0, publicAbilityClaimPolicy_js_23.publicAbilityResultLabel)(claim?.result, claim?.claimedRoleId ?? claim?.roleId)}`;
+            const timing = (0, abilityClaimTimingPolicy_js_10.formatAbilityClaimTiming)(claim);
+            return `${timing} ${actor}（${role}）→ ${target}: ${(0, publicAbilityClaimPolicy_js_23.publicAbilityResultLabel)(claim?.result, claim?.claimedRoleId ?? claim?.roleId)}`;
         });
     }
     function buildProofreadPublicSituation(source) {
@@ -29011,7 +29683,9 @@ define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", 
     }
     function compactClaimHistoryItem(source, claim) {
         return {
-            day: Number(claim?.observedDay ?? claim?.resultDay ?? 0),
+            timing: (0, abilityClaimTimingPolicy_js_10.formatAbilityClaimTiming)(claim),
+            actionDay: Number(claim?.actionDay ?? 0),
+            availableDay: Number(claim?.availableDay ?? 0),
             targetName: claim?.targetId
                 ? displayPlayerName(source, claim.targetId)
                 : String(claim?.target ?? ''),
@@ -29046,7 +29720,7 @@ define("js/prompts/stages/generationStagePromptBuilder", ["require", "exports", 
         };
     }
     function buildSpeechProofreadInput({ taskArtifact, candidateObject }) {
-        if (!((0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskArtifact?.taskType) || taskArtifact?.taskType === 'priority-answer'))
+        if (!((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskArtifact?.taskType) || taskArtifact?.taskType === 'priority-answer'))
             throw new RangeError('校正プロンプトは昼の公開発言だけ（通常発言・回答優先発言）を対象にします。');
         const source = taskArtifact.stageSource;
         return {
@@ -29366,6 +30040,19 @@ ${JSON.stringify(example)}${constraints ? `
             lines.push('- result-commentはresultSummaryと一致する自然で短い感想にしてください。ゲーム経過を読み上げず、knowledgeTimingがafter-exitの区画を生存中から知っていたように書かず、推理や投票判断を再実行しないでください。callNamesがある相手は指定呼称を使用してください。');
         return lines.join('\n');
     }
+    function promptContractForDraft(contract, taskType) {
+        const result = structuredClone(contract ?? {});
+        if (taskType !== 'graveyard-conversation')
+            return result;
+        // 墓場ではmemoAddを回答検証契約から削除せず、LLMへ見せる草案契約だけから外す。
+        result.allowedTopLevelKeys = (result.allowedTopLevelKeys ?? []).filter((key) => key !== 'memoAdd');
+        result.optionalTopLevelKeys = (result.optionalTopLevelKeys ?? []).filter((key) => key !== 'memoAdd');
+        if (result.fieldDescriptions)
+            delete result.fieldDescriptions.memoAdd;
+        if (result.completeExample)
+            delete result.completeExample.memoAdd;
+        return result;
+    }
     function buildDraftStagePrompt({ taskArtifact, policy }) {
         if (!policy?.applicable)
             throw new RangeError('構造草案ポリシーが適用不能です。');
@@ -29377,10 +30064,10 @@ ${JSON.stringify(example)}${constraints ? `
         const isFirstDay = Number(source?.currentMoment?.day ?? 0) === 1;
         const firstDaySparseEvidence = isFirstDay
             && (source?.publicState?.publicAbilityClaims ?? []).filter((claim) => claim.status !== 'voided').length <= 1;
-        const internalReasoningDirective = (0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskArtifact.taskType)
+        const internalReasoningDirective = (0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskArtifact.taskType)
             ? (0, characterReasoningDirectiveTemplates_js_2.renderInternalReasoningDirective)(source.internalReasoningDirective ?? null, { isFirstDay })
             : '';
-        const contract = structuredClone(source.responseContract ?? {});
+        const contract = promptContractForDraft(source.responseContract ?? {}, taskArtifact.taskType);
         const allowedKeys = new Set(contract.allowedTopLevelKeys ?? []);
         const conditionalKeys = [...new Set([
                 ...Object.keys(contract.conditionalExamples ?? {}),
@@ -29388,7 +30075,7 @@ ${JSON.stringify(example)}${constraints ? `
             ])];
         const recommendedKeys = (contract.optionalTopLevelKeys ?? [])
             .filter((key) => !conditionalKeys.includes(key))
-            .filter((key) => !((0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskArtifact.taskType) && key === 'publicSpeech'));
+            .filter((key) => !((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskArtifact.taskType) && key === 'publicSpeech'));
         const contractView = draftContractView(contract, recommendedKeys, conditionalKeys);
         const recommendedRule = recommendedKeys.length
             ? `\n- response-contract.recommendedTopLevelKeysの ${recommendedKeys.join(' / ')} は回答検証上は任意ですが、現在の入力から意味のある内容を生成できる限り原則出力してください。情報不足または該当なしで適切な内容を生成できない場合に限り省略でき、欠落だけでエラーにはなりません。`
@@ -29405,13 +30092,13 @@ ${JSON.stringify(example)}${constraints ? `
         const rationaleRule = allowedKeys.has('rationale')
             ? `\n- rationaleは結果判明前の具体的な選択理由を${taskArtifact.taskType === 'freeze' ? '1～3文' : '1～2文'}で簡潔に記録してください。`
             : '';
-        const privateTeamStrategyRule = ((0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskArtifact.taskType) || taskArtifact.taskType === 'priority-answer')
+        const privateTeamStrategyRule = ((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskArtifact.taskType) || taskArtifact.taskType === 'priority-answer')
             && nonEmpty(taskData?.histories?.privateTeamStrategy)
             ? '\n- histories.privateTeamStrategyは本人限定の判断材料です。文面をpublicSpeechへ引用・転用せず、公開発言は公開情報だけでも成立する表現にしてください。'
             : '';
         const executionValuePolicy = String(source?.roleTaskData?.promptGuidance?.executionValuePolicy ?? '').trim();
         const executionFactionPolicy = String(source?.roleTaskData?.promptGuidance?.executionFactionPolicy ?? '').trim();
-        const speechRules = (0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskArtifact.taskType)
+        const speechRules = (0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskArtifact.taskType)
             ? `
 ${(0, taskInstructionPolicy_js_3.renderPublicSpeechSemanticRules)({ firstDaySparseEvidence })}
 ${executionValuePolicy}
@@ -29431,15 +30118,21 @@ ${(0, taskInstructionPolicy_js_3.renderVoteReevaluationRule)()}
 ${executionValuePolicy}
 ${executionFactionPolicy}
 ${(0, voteResponseGuidancePolicy_js_2.renderVoteDecisionPatchGuidance)((0, responseContract_js_12.getDecisionPatchKeys)('vote'))}`
-                    : taskArtifact.taskType === 'wolf-attack'
+                    : taskArtifact.taskType === 'graveyard-conversation'
                         ? `
+- 墓場会話の主目的は、生前の秘密を共有し、答え合わせや感想を交わすことです。
+- roleTaskData.promptGuidance.graveyardConversationGuidanceがある場合は、その参加状況に応じた会話目的を優先してください。`
+                        : taskArtifact.taskType === 'wolf-attack'
+                            ? `
 ${(0, taskInstructionPolicy_js_3.renderWolfAttackSemanticRules)()}`
-                        : '';
+                            : '';
         const finalConfirmation = draftFinalConfirmation(source, taskArtifact.taskType, contract, recommendedKeys, conditionalKeys);
+        const draftLead = taskArtifact.taskType === 'graveyard-conversation'
+            ? '墓場で共有する生前の秘密、答え合わせ、感想を整理してください。\n文章表現の完成度より、誰が何を実際に知っているかと、墓場で共有済みかどうかの整合を優先してください。'
+            : 'ゲーム判断と構造化情報を確定してください。\n文章表現の完成度より、対象、結果、時系列、公開情報との整合を優先してください。';
         return `# 構造草案工程
 
-ゲーム判断と構造化情報を確定してください。
-文章表現の完成度より、対象、結果、時系列、公開情報との整合を優先してください。
+${draftLead}
 
 タスク固有情報:
 [game-data:draft-task-data]
@@ -29509,7 +30202,7 @@ ${JSON.stringify(exactTextPatchExample(policy.targetTextFields))}${constraints ?
         return buildTextStagePrompt({ stageId: 'render', taskArtifact, candidateObject, policy });
     }
     function buildProofreadStagePrompt({ taskArtifact, candidateObject, policy }) {
-        if (!((0, discussionAiTaskTypes_js_23.isNormalSpeechTask)(taskArtifact?.taskType) || taskArtifact?.taskType === 'priority-answer'))
+        if (!((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskArtifact?.taskType) || taskArtifact?.taskType === 'priority-answer'))
             throw new RangeError('校正プロンプトは昼の公開発言だけ（通常発言・回答優先発言）を対象にします。');
         if (!policy?.applicable || policy.targetTextFields?.length !== 1 || policy.targetTextFields[0] !== 'publicSpeech') {
             throw new RangeError('校正対象はpublicSpeechだけです。');
@@ -29720,7 +30413,7 @@ define("js/services/generationTextPatchService", ["require", "exports", "js/prom
  * 責務: 手動多段AI生成の計画解決、セッション署名、工程プロンプト、工程ごとのsystem指示、textPatch共通検証、工程監査、画面表示、回答検証から最終登録までの手動生成ワークフローを管理する。
  * 変更ルール: 中間工程でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ工程状態遷移を戻さない。発言化・校正は専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
  */
-define("js/ui/ai/manualGenerationController", ["require", "exports", "js/services/generationDepthPolicy", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/response/responseAutoRepair", "js/services/generationTextPatchService", "js/shared/utils", "js/services/aiTaskService"], function (require, exports, generationDepthPolicy_js_1, generationStagePromptPolicy_js_1, generationStagePromptBuilder_js_1, responseAutoRepair_js_2, generationTextPatchService_js_1, utils_js_44, aiTaskService_js_1) {
+define("js/ui/ai/manualGenerationController", ["require", "exports", "js/services/generationDepthPolicy", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/response/responseAutoRepair", "js/services/generationTextPatchService", "js/shared/utils", "js/services/aiTaskService"], function (require, exports, generationDepthPolicy_js_1, generationStagePromptPolicy_js_1, generationStagePromptBuilder_js_1, responseAutoRepair_js_2, generationTextPatchService_js_1, utils_js_45, aiTaskService_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.ManualGenerationController = exports.ZERO_GENERATION_USAGE = exports.MANUAL_TEXT_STAGE_SYSTEM_INSTRUCTION = exports.MANUAL_STAGE_LABELS = void 0;
@@ -29894,7 +30587,7 @@ define("js/ui/ai/manualGenerationController", ["require", "exports", "js/service
                         : audit.status === 'fallback' ? '前の有効候補を採用'
                             : '完了'
                     : active ? '回答待ち' : index < session.stageIndex ? '完了' : '未開始';
-                return `<div class="ai-manual-stage${audit?.status === 'skipped' ? ' is-skipped' : ''}"><strong>${index + 1}. ${(0, utils_js_44.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId] ?? stage.stageId)}</strong><span>${(0, utils_js_44.escapeHtml)(stateLabel)}</span></div>`;
+                return `<div class="ai-manual-stage${audit?.status === 'skipped' ? ' is-skipped' : ''}"><strong>${index + 1}. ${(0, utils_js_45.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId] ?? stage.stageId)}</strong><span>${(0, utils_js_45.escapeHtml)(stateLabel)}</span></div>`;
             });
             rows.push(`<div class="ai-manual-stage"><strong>${plan.stages.length + 1}. 最終登録</strong><span>${session.stageIndex >= plan.stages.length ? '回答待ち' : '未開始'}</span></div>`);
             return rows.join('');
@@ -29933,7 +30626,7 @@ define("js/ui/ai/manualGenerationController", ["require", "exports", "js/service
                     systemInstruction: manualStageSystemInstruction(artifact, stage.stageId),
                     text: prompt,
                 });
-                (0, utils_js_44.copyText)(manualPrompt)
+                (0, utils_js_45.copyText)(manualPrompt)
                     .then(() => this.host.toast(`${exports.MANUAL_STAGE_LABELS[stage.stageId]}プロンプトをコピーしました。`, 'success', { key: 'manual-stage-copy' }))
                     .catch((error) => this.host.toast(error.message, 'error'));
             }
@@ -30066,14 +30759,14 @@ define("js/ui/ai/manualGenerationController", ["require", "exports", "js/service
             this.advanceManualSkippedStages(session, taskArtifact, plan);
             const stage = plan.stages[session.stageIndex] ?? null;
             const previousCandidate = session.candidateRawResponse
-                ? `<details class="prompt-preview"><summary>前工程の有効候補を確認</summary><textarea readonly>${(0, utils_js_44.escapeHtml)(session.candidateRawResponse)}</textarea></details>`
+                ? `<details class="prompt-preview"><summary>前工程の有効候補を確認</summary><textarea readonly>${(0, utils_js_45.escapeHtml)(session.candidateRawResponse)}</textarea></details>`
                 : '';
             if (!stage) {
-                return `<div class="ai-box ai-manual-generation" data-ai-key="${(0, utils_js_44.escapeHtml)(key)}">
+                return `<div class="ai-box ai-manual-generation" data-ai-key="${(0, utils_js_45.escapeHtml)(key)}">
         <div class="ai-manual-stage-list">${this.manualStageRows(plan, session)}</div>
         ${previousCandidate}
         <div class="validation success">全工程が完了しました。最終候補だけをゲームへ登録します。</div>
-        <button class="button primary wide" data-action="commit-manual-generation" data-player-id="${(0, utils_js_44.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_44.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_44.escapeHtml)(slotId)}" type="button">最終候補を登録</button>
+        <button class="button primary wide" data-action="commit-manual-generation" data-player-id="${(0, utils_js_45.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_45.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_45.escapeHtml)(slotId)}" type="button">最終候補を登録</button>
       </div>`;
             }
             const prompt = this.manualStagePrompt(session, taskArtifact, stage);
@@ -30081,13 +30774,13 @@ define("js/ui/ai/manualGenerationController", ["require", "exports", "js/service
             const raw = this.host.drafts().get(draftKey) ?? '';
             const fallback = session.pendingFallback;
             const fallbackHtml = fallback
-                ? `<div class="validation error"><strong>${(0, utils_js_44.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId])}の回答を適用できません。</strong>${fallback.issues.map((issue) => `<span>${(0, utils_js_44.escapeHtml)(issue.message)}</span>`).join('')}</div><button class="button ghost wide" data-action="use-manual-stage-fallback" data-player-id="${(0, utils_js_44.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_44.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_44.escapeHtml)(slotId)}" type="button">前の有効候補を使用して次へ</button>`
-                : `<label class="field"><span>${(0, utils_js_44.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId])}の回答JSON</span><textarea data-draft="${(0, utils_js_44.escapeHtml)(draftKey)}" placeholder="この工程のJSON回答を貼り付けてください">${(0, utils_js_44.escapeHtml)(raw)}</textarea></label><button class="button primary wide" data-action="advance-manual-stage" data-player-id="${(0, utils_js_44.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_44.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_44.escapeHtml)(slotId)}" type="button">検証して次へ</button>`;
-            return `<div class="ai-box ai-manual-generation" data-ai-key="${(0, utils_js_44.escapeHtml)(key)}">
+                ? `<div class="validation error"><strong>${(0, utils_js_45.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId])}の回答を適用できません。</strong>${fallback.issues.map((issue) => `<span>${(0, utils_js_45.escapeHtml)(issue.message)}</span>`).join('')}</div><button class="button ghost wide" data-action="use-manual-stage-fallback" data-player-id="${(0, utils_js_45.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_45.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_45.escapeHtml)(slotId)}" type="button">前の有効候補を使用して次へ</button>`
+                : `<label class="field"><span>${(0, utils_js_45.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId])}の回答JSON</span><textarea data-draft="${(0, utils_js_45.escapeHtml)(draftKey)}" placeholder="この工程のJSON回答を貼り付けてください">${(0, utils_js_45.escapeHtml)(raw)}</textarea></label><button class="button primary wide" data-action="advance-manual-stage" data-player-id="${(0, utils_js_45.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_45.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_45.escapeHtml)(slotId)}" type="button">検証して次へ</button>`;
+            return `<div class="ai-box ai-manual-generation" data-ai-key="${(0, utils_js_45.escapeHtml)(key)}">
       <div class="ai-manual-stage-list">${this.manualStageRows(plan, session)}</div>
       ${previousCandidate}
-      <div class="ai-actions"><button class="button primary" data-action="copy-manual-stage-prompt" data-player-id="${(0, utils_js_44.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_44.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_44.escapeHtml)(slotId)}" type="button">${(0, utils_js_44.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId])}プロンプトをコピー</button></div>
-      <details class="prompt-preview" open><summary>現在の工程プロンプト</summary><textarea readonly>${(0, utils_js_44.escapeHtml)(prompt)}</textarea></details>
+      <div class="ai-actions"><button class="button primary" data-action="copy-manual-stage-prompt" data-player-id="${(0, utils_js_45.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_45.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_45.escapeHtml)(slotId)}" type="button">${(0, utils_js_45.escapeHtml)(exports.MANUAL_STAGE_LABELS[stage.stageId])}プロンプトをコピー</button></div>
+      <details class="prompt-preview" open><summary>現在の工程プロンプト</summary><textarea readonly>${(0, utils_js_45.escapeHtml)(prompt)}</textarea></details>
       ${fallbackHtml}
     </div>`;
         }
@@ -30335,7 +31028,7 @@ define("js/domain/setup/playerOrder", ["require", "exports"], function (require,
  * - キャラクターカードは同一ゲーム内で重複させない。
  * - 役職のランダム配置では現在設定されている役職数を変更しない。
  */
-define("js/characters/setupRandomizer", ["require", "exports", "js/characters/cards/characterCards", "js/characters/catalog/characterCatalog", "js/shared/utils", "js/domain/setup/setupRoles"], function (require, exports, characterCards_js_2, characterCatalog_js_8, utils_js_45, setupRoles_js_2) {
+define("js/characters/setupRandomizer", ["require", "exports", "js/characters/cards/characterCards", "js/characters/catalog/characterCatalog", "js/shared/utils", "js/domain/setup/setupRoles"], function (require, exports, characterCards_js_2, characterCatalog_js_8, utils_js_46, setupRoles_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.assignCharacterCard = assignCharacterCard;
@@ -30375,7 +31068,7 @@ define("js/characters/setupRandomizer", ["require", "exports", "js/characters/ca
         if (players.length > availableCards.length) {
             return { ok: false, message: '参加人数分の重複しないキャラクターカードを用意できません。' };
         }
-        const selectedCards = (0, utils_js_45.shuffle)(availableCards).slice(0, players.length);
+        const selectedCards = (0, utils_js_46.shuffle)(availableCards).slice(0, players.length);
         players.forEach((player, index) => {
             const card = selectedCards[index];
             const preset = (0, characterCards_js_2.createCharacterPlayerPreset)(card.id);
@@ -30392,7 +31085,7 @@ define("js/characters/setupRandomizer", ["require", "exports", "js/characters/ca
             counts[player.roleId] = (counts[player.roleId] ?? 0) + 1;
             return counts;
         }, {});
-        const shuffledRoles = (0, utils_js_45.shuffle)(players.map((player) => player.roleId));
+        const shuffledRoles = (0, utils_js_46.shuffle)(players.map((player) => player.roleId));
         (0, setupRoles_js_2.applySetupRoles)(players, shuffledRoles);
         const afterCounts = players.reduce((counts, player) => {
             counts[player.roleId] = (counts[player.roleId] ?? 0) + 1;
@@ -30552,7 +31245,7 @@ define("js/domain/setup/playerDetailCommands", ["require", "exports", "js/config
  * 責務: ゲーム準備画面から実行する開始・配役・人数・ルール・プレイヤー詳細更新と、準備から役職通知へ続く初期提示記録を所有する。
  * 変更ルール: ゲーム規則を独自実装せず、gameRulePolicy.jsの正式な値変換・検証を使用する。入力項目の変更では準備画面専用commit窓口を使い、状態保存のたびに全画面再描画しない。AppUI全体へ依存せず、store・通知・描画・準備画面局所同期だけを明示依存として受け取る。
  */
-define("js/ui/controllers/setupActionController", ["require", "exports", "js/domain/setup/playerOrder", "js/domain/setup/setupRoles", "js/domain/setup/playerCountPolicy", "js/characters/setupRandomizer", "js/shared/utils", "js/state/stateStore", "js/domain/game/gameRulePolicy", "js/domain/briefing/briefingCommands", "js/domain/setup/playerDetailCommands"], function (require, exports, playerOrder_js_1, setupRoles_js_3, playerCountPolicy_js_3, setupRandomizer_js_1, utils_js_46, stateStore_js_2, gameRulePolicy_js_4, briefingCommands_js_1, playerDetailCommands_js_1) {
+define("js/ui/controllers/setupActionController", ["require", "exports", "js/domain/setup/playerOrder", "js/domain/setup/setupRoles", "js/domain/setup/playerCountPolicy", "js/characters/setupRandomizer", "js/shared/utils", "js/state/stateStore", "js/domain/game/gameRulePolicy", "js/domain/briefing/briefingCommands", "js/domain/setup/playerDetailCommands"], function (require, exports, playerOrder_js_1, setupRoles_js_3, playerCountPolicy_js_3, setupRandomizer_js_1, utils_js_47, stateStore_js_2, gameRulePolicy_js_4, briefingCommands_js_1, playerDetailCommands_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createSetupActionController = createSetupActionController;
@@ -30725,7 +31418,7 @@ define("js/ui/controllers/setupActionController", ["require", "exports", "js/dom
         function _applyPreset() {
             try {
                 const state = store.getState();
-                const roles = (0, utils_js_46.shuffle)((0, playerCountPolicy_js_3.getPresetRolesForPlayerCount)(state.players.length));
+                const roles = (0, utils_js_47.shuffle)((0, playerCountPolicy_js_3.getPresetRolesForPlayerCount)(state.players.length));
                 store.commit('推奨配役適用', (draft) => {
                     (0, setupRoles_js_3.applySetupRoles)(draft.players, roles);
                 });
@@ -31068,7 +31761,7 @@ define("js/ui/controllers/appDialogController", ["require", "exports"], function
  * 責務: AI候補の検証、正常項目保持、必須項目代替、正式runtime登録を所有する。
  * 変更ルール: ゲーム規則を独自実装せず、store・AI入力キャッシュ・プロンプト状態・正式runtime実行等の必要依存だけを使用する。各runtime登録にはそのタスク契約が所有する項目だけを渡し、共通生成情報から無関係な項目を流入させない。通常発言は検証済みpublicSpeechを登録し、AI生成失敗時の自動代替だけを発言フォールバックとして扱う。投票・襲撃の対象代替は選択戦略と対象をoverride監査情報へ必ず記録する。AppUI全体へ依存せず、処理本体をFacadeへ戻さない。
  */
-define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/config/discussionAiTaskTypes", "js/domain/game/aiTurnRegistrationPolicy", "js/domain/night/nightCommands", "js/domain/discussion/discussionCommands", "js/domain/vote/voteCommands", "js/domain/execution/testamentCommands", "js/domain/result/resultCommands", "js/domain/memory/memoryCommands", "js/services/aiTaskService", "js/services/aiTaskFallbackService", "js/prompts/response/responseParser", "js/prompts/response/responseAutoRepair", "js/state/selectors", "js/ui/controllers/uiStateFormatters", "js/ui/ai/manualGenerationController", "js/ui/controllers/appDialogController"], function (require, exports, discussionAiTaskTypes_js_24, aiTurnRegistrationPolicy_js_2, nightCommands_js_1, discussionCommands_js_1, voteCommands_js_1, testamentCommands_js_1, resultCommands_js_1, memoryCommands_js_1, aiTaskService_js_2, aiTaskFallbackService_js_1, responseParser_js_2, responseAutoRepair_js_3, selectors_js_5, uiStateFormatters_js_5, manualGenerationController_js_1, appDialogController_js_1) {
+define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/config/discussionAiTaskTypes", "js/domain/game/aiTurnRegistrationPolicy", "js/domain/night/nightCommands", "js/domain/discussion/discussionCommands", "js/domain/vote/voteCommands", "js/domain/execution/testamentCommands", "js/domain/result/resultCommands", "js/domain/memory/memoryCommands", "js/services/aiTaskService", "js/services/aiTaskFallbackService", "js/prompts/response/responseParser", "js/prompts/response/responseAutoRepair", "js/state/selectors", "js/ui/controllers/uiStateFormatters", "js/ui/ai/manualGenerationController", "js/ui/controllers/appDialogController"], function (require, exports, discussionAiTaskTypes_js_25, aiTurnRegistrationPolicy_js_2, nightCommands_js_1, discussionCommands_js_1, voteCommands_js_1, testamentCommands_js_1, resultCommands_js_1, memoryCommands_js_1, aiTaskService_js_2, aiTaskFallbackService_js_1, responseParser_js_2, responseAutoRepair_js_3, selectors_js_5, uiStateFormatters_js_5, manualGenerationController_js_1, appDialogController_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createAiTaskCommitController = createAiTaskCommitController;
@@ -31238,7 +31931,7 @@ define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/co
             };
             let command = null;
             let options = {};
-            if ((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskType)) {
+            if ((0, discussionAiTaskTypes_js_25.isNormalSpeechTask)(taskType)) {
                 command = (draft) => domainCommands.recordAiSpeechPass(draft, { ...common, aiTaskType: taskType, discussionPreference: taskType === 'speech-free' ? 'NORMAL' : null });
                 options = { publicBarrier: true };
             }
@@ -31308,7 +32001,7 @@ define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/co
             if (response?.ok) {
                 promptCache.delete(key);
                 drafts.delete(`ai-response:${key}`);
-                if ((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskType))
+                if ((0, discussionAiTaskTypes_js_25.isNormalSpeechTask)(taskType))
                     clearSpeechMetadata(playerId);
             }
             return {
@@ -31441,7 +32134,7 @@ define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/co
                 });
                 options = { publicBarrier: true };
             }
-            else if ((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskType)) {
+            else if ((0, discussionAiTaskTypes_js_25.isNormalSpeechTask)(taskType)) {
                 const speechInput = {
                     playerId,
                     rawResponse: common.rawResponse,
@@ -31521,7 +32214,7 @@ define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/co
             if (response?.ok) {
                 promptCache.delete(key);
                 drafts.delete(`ai-response:${key}`);
-                if ((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskType))
+                if ((0, discussionAiTaskTypes_js_25.isNormalSpeechTask)(taskType))
                     clearSpeechMetadata(playerId);
                 if (completesFullHistorySync)
                     completeFullPublicHistorySync(playerId);
@@ -31571,7 +32264,7 @@ define("js/ui/controllers/aiTaskCommitController", ["require", "exports", "js/co
                     return report({ ok: false, message: 'AI応答の警告確認がキャンセルされました。', issues: [{ code: 'USER_CANCELLED', category: 'user-action', path: '', message: 'AI応答の警告確認がキャンセルされました。' }] });
             }
             const parsed = evaluation.parsed;
-            if (((0, discussionAiTaskTypes_js_24.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.coOperation && parsed.coOperation.action !== 'none') {
+            if (((0, discussionAiTaskTypes_js_25.isNormalSpeechTask)(taskType) || ['priority-answer', 'testament'].includes(taskType)) && parsed.coOperation && parsed.coOperation.action !== 'none') {
                 const roleLabel = parsed.coOperation.action === 'withdraw'
                     ? '現在のCOを撤回'
                     : `${(0, selectors_js_5.getRoleName)(parsed.coOperation.roleId)}を${parsed.coOperation.action === 'declare' ? '新規CO' : 'CO変更'}`;
@@ -31887,7 +32580,7 @@ define("js/domain/correction/correctionCommands", ["require", "exports", "js/dom
  * 責務: 公開・私有イベント訂正、復元点選択と復元操作を所有する。
  * 変更ルール: 自動実行セッション中は訂正・復元による競合を拒否する。ゲーム規則を独自実装せず、store・dialog・描画・自動実行ロック等の正式依存だけを使用する。AppUI全体へ依存せず、処理本体をFacadeへ戻さない。
  */
-define("js/ui/controllers/correctionController", ["require", "exports", "js/config/constants", "js/domain/correction/correctionCommands", "js/domain/correction/restoreCorrectionService", "js/domain/game/standardRules", "js/shared/utils", "js/ui/components/components", "js/ui/controllers/uiStateFormatters", "js/ui/controllers/appDialogController"], function (require, exports, constants_js_51, correctionCommands_js_1, restoreCorrectionService_js_2, standardRules_js_32, utils_js_47, components_js_6, uiStateFormatters_js_6, appDialogController_js_3) {
+define("js/ui/controllers/correctionController", ["require", "exports", "js/config/constants", "js/domain/correction/correctionCommands", "js/domain/correction/restoreCorrectionService", "js/domain/policies/abilityClaimTimingPolicy", "js/domain/game/standardRules", "js/shared/utils", "js/ui/components/components", "js/ui/controllers/uiStateFormatters", "js/ui/controllers/appDialogController"], function (require, exports, constants_js_51, correctionCommands_js_1, restoreCorrectionService_js_2, abilityClaimTimingPolicy_js_11, standardRules_js_32, utils_js_48, components_js_6, uiStateFormatters_js_6, appDialogController_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createCorrectionController = createCorrectionController;
@@ -31943,7 +32636,7 @@ define("js/ui/controllers/correctionController", ["require", "exports", "js/conf
                                 actionType: abilityRoleId === 'medium' ? 'medium' : abilityRoleId === 'guard' ? 'guard' : 'inspect',
                                 targetId: abilityTargetId === 'none' ? null : abilityTargetId,
                                 result: abilityResult === 'none' ? '' : abilityResult,
-                                observedDay: Number(controlValue('correction-ability-day', '0')),
+                                ...((0, abilityClaimTimingPolicy_js_11.buildAbilityClaimTiming)(abilityRoleId, Number(controlValue('correction-ability-day', '0'))) ?? {}),
                                 selectionBasis: controlValue('correction-ability-basis', 'no-public-information'),
                                 evidenceEventIds: String(controlValue('correction-ability-evidence', ''))
                                     .split(/\s*,\s*/u)
@@ -31991,13 +32684,13 @@ define("js/ui/controllers/correctionController", ["require", "exports", "js/conf
                 }
                 const actionType = event.payload?.actionType;
                 const candidates = (0, standardRules_js_32.getNightActionCandidates)(state, actionType, event.actorId);
-                control = `<label class="field"><span>${(0, utils_js_47.escapeHtml)((0, uiStateFormatters_js_6.nightActionTargetLabel)(actionType))}</span><select name="targetId">${(0, components_js_6.playerOptions)(candidates, event.payload?.targetId ?? '')}</select></label>`;
+                control = `<label class="field"><span>${(0, utils_js_48.escapeHtml)((0, uiStateFormatters_js_6.nightActionTargetLabel)(actionType))}</span><select name="targetId">${(0, components_js_6.playerOptions)(candidates, event.payload?.targetId ?? '')}</select></label>`;
             }
             else if (['wolf-conversation', 'mason-conversation', 'graveyard-conversation'].includes(event.type)) {
                 if (state.game.phase !== 'night' || (event.type === 'wolf-conversation' && state.night?.wolfAttack?.status === 'confirmed')) {
                     return toast(event.type === 'wolf-conversation' ? '襲撃先投票確定後は共有発言を通常修正できません。' : '夜フェーズ終了後は機密会話を通常修正できません。', 'error');
                 }
-                control = `<label class="field"><span>共有発言</span><textarea name="content" rows="8">${(0, utils_js_47.escapeHtml)(event.payload?.content ?? '')}</textarea></label>`;
+                control = `<label class="field"><span>共有発言</span><textarea name="content" rows="8">${(0, utils_js_48.escapeHtml)(event.payload?.content ?? '')}</textarea></label>`;
             }
             else {
                 return toast('この種類のイベントは通常の部分修正対象ではありません。', 'error');
@@ -32062,14 +32755,14 @@ define("js/ui/controllers/correctionController", ["require", "exports", "js/conf
                 const pointStatus = `Day ${pointDay}・${pointPhase}`;
                 const impact = (0, restoreCorrectionService_js_2.summarizeRestoreImpact)(state, point.id);
                 const impactText = impact ? ` / 後続${impact.supersededEventCount}件` : '';
-                return `<option value="${(0, utils_js_47.escapeHtml)(point.id)}" ${point.id === selectedId ? 'selected' : ''}>${(0, utils_js_47.escapeHtml)(point.label)} / ${(0, utils_js_47.escapeHtml)(pointStatus)}${(0, utils_js_47.escapeHtml)(impactText)} / ${(0, utils_js_47.escapeHtml)(new Date(point.createdAt).toLocaleString('ja-JP'))}</option>`;
+                return `<option value="${(0, utils_js_48.escapeHtml)(point.id)}" ${point.id === selectedId ? 'selected' : ''}>${(0, utils_js_48.escapeHtml)(point.label)} / ${(0, utils_js_48.escapeHtml)(pointStatus)}${(0, utils_js_48.escapeHtml)(impactText)} / ${(0, utils_js_48.escapeHtml)(new Date(point.createdAt).toLocaleString('ja-JP'))}</option>`;
             }).join('');
             const currentStatus = `Day ${state.game.day}・${constants_js_51.PHASE_LABELS[state.game.phase] ?? state.game.phase}`;
             const targetEvent = targetEventId ? state.events.find((event) => event.id === targetEventId) : null;
             const targetNotice = targetEvent
-                ? `<div class="alert warning"><strong>訂正対象: #${targetEvent.sequence} ${(0, utils_js_47.escapeHtml)(targetEvent.payload?.text ?? targetEvent.type)}</strong><span>この結果の直前に対応する復元ポイントを選択済みです。復元後に内容を修正し、同じ進行を再実行してください。</span></div>`
+                ? `<div class="alert warning"><strong>訂正対象: #${targetEvent.sequence} ${(0, utils_js_48.escapeHtml)(targetEvent.payload?.text ?? targetEvent.type)}</strong><span>この結果の直前に対応する復元ポイントを選択済みです。復元後に内容を修正し、同じ進行を再実行してください。</span></div>`
                 : '';
-            modal.innerHTML = `<form><div class="modal-header"><h3>訂正・復元</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body"><p>現在の状態: <strong>${(0, utils_js_47.escapeHtml)(currentStatus)}</strong></p><p class="help">公開前の入力は記録画面で内容だけ修正できます。公開済みの発言・CO・能力結果は訂正履歴を残して修正し、投票・処刑・夜明け・勝敗など進行結果は復元ポイントへ戻して再進行します。</p>${targetNotice}${points.length ? `<label class="field"><span>復元先</span><select name="pointId" required>${pointOptions}</select></label><div class="alert" data-role="restore-impact"></div><label class="field"><span>訂正・復元理由</span><textarea name="reason" required placeholder="何を誤り、どの状態からやり直すかを入力してください。"></textarea></label>` : '<div class="alert warning"><strong>利用可能な復元ポイントがありません</strong><span>重要操作を行うと自動作成されます。</span></div>'}</div><div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button ghost" data-action="go-records-from-correction" type="button">記録・管理を開く</button>${points.length ? '<button class="button danger" type="submit">この地点へ復元</button>' : ''}</div></form>`;
+            modal.innerHTML = `<form><div class="modal-header"><h3>訂正・復元</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body"><p>現在の状態: <strong>${(0, utils_js_48.escapeHtml)(currentStatus)}</strong></p><p class="help">公開前の入力は記録画面で内容だけ修正できます。公開済みの発言・CO・能力結果は訂正履歴を残して修正し、投票・処刑・夜明け・勝敗など進行結果は復元ポイントへ戻して再進行します。</p>${targetNotice}${points.length ? `<label class="field"><span>復元先</span><select name="pointId" required>${pointOptions}</select></label><div class="alert" data-role="restore-impact"></div><label class="field"><span>訂正・復元理由</span><textarea name="reason" required placeholder="何を誤り、どの状態からやり直すかを入力してください。"></textarea></label>` : '<div class="alert warning"><strong>利用可能な復元ポイントがありません</strong><span>重要操作を行うと自動作成されます。</span></div>'}</div><div class="modal-footer"><button class="button ghost" data-modal-close type="button">キャンセル</button><button class="button ghost" data-action="go-records-from-correction" type="button">記録・管理を開く</button>${points.length ? '<button class="button danger" type="submit">この地点へ復元</button>' : ''}</div></form>`;
             const form = modal.querySelector('form');
             const pointSelect = form.elements.pointId;
             const impactElement = form.querySelector('[data-role="restore-impact"]');
@@ -32082,7 +32775,7 @@ define("js/ui/controllers/correctionController", ["require", "exports", "js/conf
                     return;
                 }
                 const phaseLabel = constants_js_51.PHASE_LABELS[impact.phase] ?? impact.phase;
-                impactElement.innerHTML = `<strong>復元後: Day ${impact.day}・${(0, utils_js_47.escapeHtml)(phaseLabel)}</strong><span>現在状態から外れるイベント ${impact.supersededEventCount}件（公開 ${impact.publicEventCount}件）、AIターン ${impact.aiTurnCount}件。訂正前のイベントはGM監査履歴へ保存されます。</span>`;
+                impactElement.innerHTML = `<strong>復元後: Day ${impact.day}・${(0, utils_js_48.escapeHtml)(phaseLabel)}</strong><span>現在状態から外れるイベント ${impact.supersededEventCount}件（公開 ${impact.publicEventCount}件）、AIターン ${impact.aiTurnCount}件。訂正前のイベントはGM監査履歴へ保存されます。</span>`;
             };
             pointSelect?.addEventListener('change', updateImpact);
             updateImpact();
@@ -32151,7 +32844,7 @@ define("js/ui/views/briefing/briefingView", ["require", "exports", "js/ui/views/
  * 責務: 人間プレイヤーの公開発言・投票・夜行動・秘密会話・役職確認などを値ベースで正式ドメインコマンドへ登録する単一窓口を提供する。
  * 変更ルール: 人間操作は現在の進行卓上で完結させ、別画面DOMへ依存しない。操作値は呼び出し元から受け取り、ゲーム規則は各domain commandへ委譲する。登録成功時だけ人間タスク完了イベントを通知し、自動実行の再開判断はautomation側へ委譲する。
  */
-define("js/ui/controllers/humanPlayerActionController", ["require", "exports", "js/domain/briefing/briefingCommands", "js/domain/discussion/discussionCommands", "js/domain/execution/testamentCommands", "js/domain/night/nightCommands", "js/domain/result/resultCommands", "js/domain/vote/voteCommands", "js/ui/views/briefing/briefingView"], function (require, exports, briefingCommands_js_3, discussionCommands_js_3, testamentCommands_js_3, nightCommands_js_3, resultCommands_js_3, voteCommands_js_3, briefingView_js_1) {
+define("js/ui/controllers/humanPlayerActionController", ["require", "exports", "js/domain/briefing/briefingCommands", "js/domain/discussion/discussionCommands", "js/domain/execution/testamentCommands", "js/domain/night/nightCommands", "js/domain/result/resultCommands", "js/domain/vote/voteCommands", "js/domain/policies/abilityClaimTimingPolicy", "js/ui/views/briefing/briefingView"], function (require, exports, briefingCommands_js_3, discussionCommands_js_3, testamentCommands_js_3, nightCommands_js_3, resultCommands_js_3, voteCommands_js_3, abilityClaimTimingPolicy_js_12, briefingView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createHumanPlayerActionController = createHumanPlayerActionController;
@@ -32171,12 +32864,14 @@ define("js/ui/controllers/humanPlayerActionController", ["require", "exports", "
             if (!targetId)
                 return null;
             const evidenceEventIds = String(field('evidence')).split(/[\s,、]+/u).map((item) => Number(item.replace(/^#/u, ''))).filter(Number.isInteger).map((sequence) => bySequence.get(sequence)).filter(Boolean);
+            const claimedRoleId = field('claimedRoleId');
+            const timing = (0, abilityClaimTimingPolicy_js_12.buildAbilityClaimTiming)(claimedRoleId, Number(field('actionDay', '0')));
             return {
                 action: 'publish',
-                claimedRoleId: field('claimedRoleId'),
+                claimedRoleId,
+                ...(timing ?? {}),
                 targetId,
                 result: field('result'),
-                observedDay: Number(field('observedDay', '1')),
                 selectionBasis: field('selectionBasis', 'no-public-information'),
                 evidenceEventIds,
                 selectionReasonAtTime: String(field('selectionReasonAtTime')).trim(),
@@ -32312,7 +33007,7 @@ define("generated/publicViewStyles", ["require", "exports"], function (require, 
  * 責務: 出力時点で選択された公開専用スナップショットと公開表示外観だけを、画面版と同じ話者メタ情報・改行・投票内訳を保った外部依存のない単一HTMLへ固定化して出力する。
  * 変更ルール: 完全状態や表示対象外スナップショットをHTMLへ埋め込まない。機密情報の表示可否は出力前に確定し、出力HTML自身には機密情報の切替機能・別表示用データ・実行スクリプトを持たせない。
  */
-define("js/public/publicHtmlExport", ["require", "exports", "js/shared/utils", "js/ui/views/public/publicView", "js/appearance/appearanceModel", "generated/publicViewStyles"], function (require, exports, utils_js_48, publicView_js_1, appearanceModel_js_1, publicViewStyles_js_1) {
+define("js/public/publicHtmlExport", ["require", "exports", "js/shared/utils", "js/ui/views/public/publicView", "js/appearance/appearanceModel", "generated/publicViewStyles"], function (require, exports, utils_js_49, publicView_js_1, appearanceModel_js_1, publicViewStyles_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildStandalonePublicHtml = buildStandalonePublicHtml;
@@ -32321,13 +33016,13 @@ define("js/public/publicHtmlExport", ["require", "exports", "js/shared/utils", "
         const publicHtml = (0, publicView_js_1.renderPublicSnapshot)(snapshot);
         const publicAppearance = (0, appearanceModel_js_1.resolvePublicAppearance)(appearance);
         return `<!doctype html>
-<html lang="ja" data-public-document="true" data-theme="${(0, utils_js_48.escapeHtml)(publicAppearance.theme)}" data-accent="${(0, utils_js_48.escapeHtml)(publicAppearance.accent)}" data-font-size="${(0, utils_js_48.escapeHtml)(publicAppearance.fontSize)}" data-density="normal" data-effects="${publicAppearance.effects ? 'on' : 'off'}" data-motion="${(0, utils_js_48.escapeHtml)(publicAppearance.motion)}">
+<html lang="ja" data-public-document="true" data-theme="${(0, utils_js_49.escapeHtml)(publicAppearance.theme)}" data-accent="${(0, utils_js_49.escapeHtml)(publicAppearance.accent)}" data-font-size="${(0, utils_js_49.escapeHtml)(publicAppearance.fontSize)}" data-density="normal" data-effects="${publicAppearance.effects ? 'on' : 'off'}" data-motion="${(0, utils_js_49.escapeHtml)(publicAppearance.motion)}">
 <head>
 <meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>${(0, utils_js_48.escapeHtml)(title)}</title>
+<title>${(0, utils_js_49.escapeHtml)(title)}</title>
 <style>${publicViewStyles_js_1.PUBLIC_VIEW_CSS}</style>
 </head>
 <body>
@@ -32380,9 +33075,9 @@ define("js/appearance/appearanceTheme", ["require", "exports", "js/appearance/ap
 });
 /**
  * 責務: 公開HTML出力と公開ウィンドウの生成・同期、および公開表示専用外観の反映を所有する。
- * 変更ルール: ゲーム規則を独自実装せず、store・機密表示取得・通知だけを明示依存として受け取る。公開表示の外観はsetAppearanceで受け取ったスナップショットだけを保持し、AppUI全体へ依存しない。公開ウィンドウ参照も本Controllerだけで保持する。公開HTMLは出力時点の機密表示状態に対応するスナップショットだけを生成して渡し、非表示出力では機密スナップショット自体を生成しない。公開専用ウィンドウはhtml要素へ専用クラスを付与し、通常画面の固定レイアウトと独立して全文を縦スクロールできる状態を維持する。
+ * 変更ルール: ゲーム規則を独自実装せず、store・機密表示取得・通知だけを明示依存として受け取る。公開表示の外観はsetAppearanceで受け取ったスナップショットだけを保持し、AppUI全体へ依存しない。公開ウィンドウ参照も本Controllerだけで保持する。公開HTMLは出力時点の機密表示状態に対応するスナップショットだけを生成して渡し、非表示出力では機密スナップショット自体を生成しない。公開専用ウィンドウはhtml要素へ専用クラスを付与し、通常画面の固定レイアウトと独立して全文を縦スクロールできる状態を維持する。Electron子ウィンドウのホイール入力は本Controllerで公開documentのscrollingElementへ明示的に接続し、CSSのルートスクロール解釈だけへ依存しない。
  */
-define("js/ui/controllers/publicWindowController", ["require", "exports", "js/public/publicSnapshot", "js/shared/utils", "js/public/publicHtmlExport", "js/ui/views/public/publicView", "js/appearance/appearanceTheme"], function (require, exports, publicSnapshot_js_1, utils_js_49, publicHtmlExport_js_1, publicView_js_2, appearanceTheme_js_1) {
+define("js/ui/controllers/publicWindowController", ["require", "exports", "js/public/publicSnapshot", "js/shared/utils", "js/public/publicHtmlExport", "js/ui/views/public/publicView", "js/appearance/appearanceTheme"], function (require, exports, publicSnapshot_js_1, utils_js_50, publicHtmlExport_js_1, publicView_js_2, appearanceTheme_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createPublicWindowController = createPublicWindowController;
@@ -32395,9 +33090,33 @@ define("js/ui/controllers/publicWindowController", ["require", "exports", "js/pu
             throw new TypeError('通知関数がありません。');
         let publicWindow = null;
         let appearance = null;
+        function bindPublicWindowWheelScroll(targetWindow) {
+            const document = targetWindow?.document;
+            if (!document || document.documentElement?.dataset.publicWheelBound === 'true')
+                return;
+            document.documentElement.dataset.publicWheelBound = 'true';
+            targetWindow.addEventListener('wheel', (event) => {
+                if (event.ctrlKey || !Number.isFinite(event.deltaY) || event.deltaY === 0)
+                    return;
+                const scroller = document.scrollingElement ?? document.documentElement;
+                const maximumScrollTop = Math.max(0, Number(scroller.scrollHeight ?? 0) - Number(scroller.clientHeight ?? 0));
+                if (maximumScrollTop <= 0)
+                    return;
+                const deltaUnit = event.deltaMode === 1
+                    ? 40
+                    : event.deltaMode === 2
+                        ? Math.max(1, Number(scroller.clientHeight ?? 0))
+                        : 1;
+                const nextScrollTop = Math.max(0, Math.min(maximumScrollTop, Number(scroller.scrollTop ?? 0) + (event.deltaY * deltaUnit)));
+                if (nextScrollTop === Number(scroller.scrollTop ?? 0))
+                    return;
+                event.preventDefault();
+                scroller.scrollTop = nextScrollTop;
+            }, { passive: false });
+        }
         function _exportPublicHtml() {
             const state = store.getState();
-            const safeTitle = (0, utils_js_49.sanitizeFilenamePart)(state.game.title, { fallback: 'AI人狼公開表示' });
+            const safeTitle = (0, utils_js_50.sanitizeFilenamePart)(state.game.title, { fallback: 'AI人狼公開表示' });
             const includeConfidential = Boolean(getConfidential());
             (0, publicHtmlExport_js_1.downloadStandalonePublicHtml)({
                 title: `${safeTitle} - 公開表示`,
@@ -32425,7 +33144,7 @@ define("js/ui/controllers/publicWindowController", ["require", "exports", "js/pu
                     toast('ポップアップがブロックされました。', 'error');
                     return;
                 }
-                const cssUrl = (0, utils_js_49.escapeHtml)(new URL('./css/styles.css', window.location.href).href);
+                const cssUrl = (0, utils_js_50.escapeHtml)(new URL('./css/styles.css', window.location.href).href);
                 publicWindow.document.write(`<!doctype html>
 <html lang="ja" class="standalone-public-document">
 <head>
@@ -32441,6 +33160,7 @@ define("js/ui/controllers/publicWindowController", ["require", "exports", "js/pu
 </html>`);
                 publicWindow.document.close();
                 (0, appearanceTheme_js_1.applyPublicAppearance)(appearance, publicWindow.document);
+                bindPublicWindowWheelScroll(publicWindow);
                 try {
                     publicWindow.opener = null;
                 }
@@ -32702,10 +33422,10 @@ define("js/ui/controllers/postgameAnalysisController", ["require", "exports"], f
     }
 });
 /**
- * 責務: 進行卓・自動実行画面から開くプレイヤー相関図ダイアログと、相関図内の選択・表示レイヤー操作を所有する。
- * 変更ルール: 相関モデルや公開／機密判定を独自実装せずplayerRelationshipViewへ委譲する。記録・管理画面の相関図と同じ選択状態を共有し、ダイアログ表示中だけ専用dialogを再描画する。
+ * 責務: 進行卓ダイアログ・独立ウィンドウ・記録画面で共有するプレイヤー相関図の閲覧状態と外部表示面を所有する。
+ * 変更ルール: 相関モデルや公開／機密判定を独自実装せずplayerRelationshipViewへ委譲する。選択・スナップショット・表示レイヤーは全表示面で同じUI状態を共有する。独立ウィンドウは相関図専用の閲覧面でありゲーム状態を保持せず、親画面のStore更新・機密表示切替・外観変更に追従して再描画する。
  */
-define("js/ui/controllers/relationshipDialogController", ["require", "exports", "js/config/constants", "js/state/selectors", "js/ui/views/records/playerRelationshipView"], function (require, exports, constants_js_52, selectors_js_6, playerRelationshipView_js_2) {
+define("js/ui/controllers/relationshipDialogController", ["require", "exports", "js/config/constants", "js/appearance/appearanceTheme", "js/shared/utils", "js/state/selectors", "js/ui/views/records/playerRelationshipView"], function (require, exports, constants_js_52, appearanceTheme_js_2, utils_js_51, selectors_js_6, playerRelationshipView_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createRelationshipDialogController = createRelationshipDialogController;
@@ -32720,26 +33440,43 @@ define("js/ui/controllers/relationshipDialogController", ["require", "exports", 
     function createRelationshipDialogController({ ui }) {
         if (!ui)
             throw new TypeError('AppUIがありません。');
-        function renderDialog() {
-            const dialog = ui.relationshipDialog;
-            if (!dialog)
-                return;
-            const state = ui.store.getState();
-            dialog.innerHTML = `<div class="modal-header"><div><span class="eyebrow">進行確認</span><h3>プレイヤー相関図</h3></div><button class="button icon ghost" data-modal-close type="button" aria-label="閉じる">×</button></div><div class="modal-body relationship-dialog-body">${(0, playerRelationshipView_js_2.renderPlayerRelationshipView)({
-                state,
+        let relationshipWindow = null;
+        function relationshipViewHtml() {
+            return (0, playerRelationshipView_js_2.renderPlayerRelationshipView)({
+                state: ui.store.getState(),
                 showConfidential: ui.showConfidential,
                 selectedPlayerId: ui.relationshipSelectedPlayerId,
                 selectedSnapshotId: ui.relationshipSnapshotId,
                 visibleRelationTypes: [...ui.relationshipVisibleRelationTypes],
                 getRoleName: selectors_js_6.getRoleName,
-            })}</div>`;
+            });
+        }
+        function renderDialog() {
+            const dialog = ui.relationshipDialog;
+            if (!dialog)
+                return;
+            dialog.innerHTML = `<div class="modal-header"><div><span class="eyebrow">進行確認</span><h3>プレイヤー相関図</h3></div><div class="relationship-modal-actions"><button class="button ghost small" data-action="open-player-relationship-window" type="button">別ウィンドウで開く</button><button class="button icon ghost" data-modal-close type="button" aria-label="閉じる">×</button></div></div><div class="modal-body relationship-dialog-body">${relationshipViewHtml()}</div>`;
+        }
+        function renderWindow() {
+            if (!relationshipWindow || relationshipWindow.closed)
+                return;
+            const root = relationshipWindow.document.querySelector('#relationship-window-root');
+            if (!root)
+                return;
+            (0, appearanceTheme_js_2.applyManagementAppearance)(ui.getAppearance(), relationshipWindow.document);
+            root.innerHTML = relationshipViewHtml();
+        }
+        function refreshExternalSurfaces() {
+            if (ui.relationshipDialog?.open)
+                renderDialog();
+            renderWindow();
         }
         function refreshSurface() {
-            if (ui.relationshipDialog?.open) {
-                renderDialog();
+            if (ui.activeTab === 'records' && ui.recordsViewMode === 'relationship') {
+                ui.render();
                 return;
             }
-            ui.render();
+            refreshExternalSurfaces();
         }
         function open() {
             if (!ui.relationshipDialog)
@@ -32750,9 +33487,64 @@ define("js/ui/controllers/relationshipDialogController", ["require", "exports", 
             if (!ui.relationshipDialog.open)
                 ui.relationshipDialog.showModal();
         }
-        function refresh() {
+        function handleWindowClick(event) {
+            // 独立ウィンドウでも本体と同じdata-action契約を使う。
+            // SVGのプレイヤーカードはbuttonではなく<g data-action>なので、button限定に戻すとカード選択強調が失われる。
+            const actionTarget = event.target?.closest?.('[data-action]');
+            if (!actionTarget || actionTarget.matches?.('button:disabled'))
+                return;
+            const action = actionTarget.dataset.action;
+            if (action === 'relationship-select-player')
+                selectPlayer(actionTarget.dataset.playerId);
+            else if (action === 'relationship-clear-selection')
+                clearSelection();
+            else if (action === 'relationship-select-snapshot')
+                selectSnapshot(actionTarget.dataset.snapshotId);
+            else if (action === 'relationship-toggle-layer')
+                toggleLayer(actionTarget.dataset.relationType);
+        }
+        function openWindow() {
+            if (!relationshipWindow || relationshipWindow.closed) {
+                relationshipWindow = window.open('', 'ai-werewolf-relationship', 'width=1440,height=900');
+                if (!relationshipWindow) {
+                    ui.toast('ポップアップがブロックされました。', 'error');
+                    return;
+                }
+                const cssUrl = (0, utils_js_51.escapeHtml)(new URL('./css/styles.css', window.location.href).href);
+                relationshipWindow.document.write(`<!doctype html>
+<html lang="ja" class="standalone-relationship-document">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self' data:; font-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <title>AI人狼 プレイヤー相関図</title>
+  <link rel="stylesheet" href="${cssUrl}">
+</head>
+<body class="standalone-relationship">
+  <main id="relationship-window-root"></main>
+</body>
+</html>`);
+                relationshipWindow.document.close();
+                relationshipWindow.document.addEventListener('click', handleWindowClick);
+                try {
+                    relationshipWindow.opener = null;
+                }
+                catch { }
+            }
+            renderWindow();
+            relationshipWindow.focus();
+            // ダイアログから独立ウィンドウへ移した場合は、同じ相関図を二重表示しない。
+            // ポップアップ生成失敗時はここへ到達しないため、元ダイアログをそのまま残す。
             if (ui.relationshipDialog?.open)
-                renderDialog();
+                ui.relationshipDialog.close();
+        }
+        function refresh() {
+            refreshExternalSurfaces();
+        }
+        function refreshAppearance() {
+            if (!relationshipWindow || relationshipWindow.closed)
+                return;
+            (0, appearanceTheme_js_2.applyManagementAppearance)(ui.getAppearance(), relationshipWindow.document);
         }
         function selectPlayer(playerId) {
             const normalizedPlayerId = String(playerId ?? '');
@@ -32785,7 +33577,9 @@ define("js/ui/controllers/relationshipDialogController", ["require", "exports", 
         }
         return Object.freeze({
             open,
+            openWindow,
             refresh,
+            refreshAppearance,
             selectPlayer,
             clearSelection,
             selectSnapshot,
@@ -32803,7 +33597,7 @@ define("js/ui/controllers/actionDispatchController", ["require", "exports", "js/
     exports.createActionDispatchController = createActionDispatchController;
     const AUTOMATION_VIEW_ACTIONS = new Set([
         'go-setup', 'go-workbench', 'go-records', 'go-public', 'go-records-from-correction',
-        'open-player-relationship-dialog', 'open-role-help', 'inspect-player', 'open-public-window', 'export-public-html',
+        'open-player-relationship-dialog', 'open-player-relationship-window', 'open-role-help', 'inspect-player', 'open-public-window', 'export-public-html',
         'records-view-mode', 'records-correction-mode', 'records-correction-select',
         'relationship-select-player', 'relationship-clear-selection', 'relationship-select-snapshot', 'relationship-toggle-layer',
         'show-records-shared', 'show-records-audit', 'postgame-analysis-ask', 'postgame-analysis-clear', 'game-data-export',
@@ -32845,6 +33639,7 @@ define("js/ui/controllers/actionDispatchController", ["require", "exports", "js/
             ['go-workbench', () => ui.setTab('workbench')],
             ['go-records', () => ui.setTab('records')],
             ['open-player-relationship-dialog', () => ui.relationshipDialogController.open()],
+            ['open-player-relationship-window', () => ui.relationshipDialogController.openWindow()],
             ['go-records-from-correction', () => { ui.recordsViewMode = 'correction'; ui.modal.close(); return ui.setTab('records'); }],
             ['go-public', () => ui.setTab('public')],
             ['new-game', () => ui._openNewGameDialog()],
@@ -34037,13 +34832,60 @@ define("js/characters/generation/aiCharacterGenerator", ["require", "exports", "
     }
 });
 /**
- * 責務: Renderer上のキャラクターライブラリ編集要求、キャラ単位の使用状態、グループ順・キャラクター順をMainへ渡し、成功時だけカタログスナップショットを更新する。
- * 変更ルール: 組み込みJSONを編集対象へ変換しない。具体的なグループ名・キャラクター名を持たず、ユーザーグループだけをJSON入出力対象とする。ユーザーキャラクター作成時は名前以外を任意とし、内部で必要な標準設定は共通既定値から生成する。文字数検証はキャラクター保存・JSON取込で指定した対象だけMainに要求し、削除・並び替え・使用切替・複製・グループ編集では既存キャラクターを再検証しない。組み込み側の変更は使用状態と並び順のメタデータに限定する。
+ * 責務: Electron Main・Rendererで共有するユーザーキャラクターライブラリJSONの総サイズ上限を一元提供する。
+ * 変更ルール: キャラクター内容のschema検証・文字数検証・保存・DOM操作を行わない。ライブラリ全体の転送・保存サイズ上限は本モジュールだけを正本とする。
  */
-define("js/characters/catalog/characterLibraryManager", ["require", "exports", "js/config/constants", "js/characters/catalog/characterCatalog"], function (require, exports, constants_js_54, characterCatalog_js_9) {
+(function initializeUserCharacterLibraryPolicy(root, factory) {
+    'use strict';
+    const api = factory();
+    const commonJs = typeof module === 'object' && module.exports;
+    if (commonJs)
+        module.exports = api;
+    else if (root) {
+        root.AiWerewolfUserCharacterLibraryPolicy = api;
+        if (root.window && root.window !== root)
+            root.window.AiWerewolfUserCharacterLibraryPolicy = api;
+    }
+})(typeof globalThis !== 'undefined' ? globalThis : this, () => {
+    'use strict';
+    const USER_CHARACTER_LIBRARY_MAX_BYTES = 8 * 1024 * 1024;
+    function serializedByteLength(serialized) {
+        return new TextEncoder().encode(String(serialized ?? '')).byteLength;
+    }
+    function assertUserCharacterLibrarySerializedSize(serialized, label = 'ユーザーキャラクターJSON') {
+        const bytes = serializedByteLength(serialized);
+        if (bytes > USER_CHARACTER_LIBRARY_MAX_BYTES) {
+            throw new RangeError(`${label}は${USER_CHARACTER_LIBRARY_MAX_BYTES / (1024 * 1024)}MB以下にしてください。`);
+        }
+        return bytes;
+    }
+    return Object.freeze({
+        USER_CHARACTER_LIBRARY_MAX_BYTES,
+        serializedByteLength,
+        assertUserCharacterLibrarySerializedSize,
+    });
+});
+/**
+ * 責務: app/shared/userCharacterLibraryPolicy.jsのユーザーキャラクターライブラリ総サイズ契約をRenderer ES Moduleへ接続する。
+ * 変更ルール: サイズ上限・検証文言を複製せず、JSON読込とMain保存境界が共有契約の同じ値を参照する。
+ */
+define("js/characters/config/userCharacterLibraryPolicyAdapter", ["require", "exports", "shared/userCharacterLibraryPolicy"], function (require, exports, sharedPolicyModule) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
-    exports.USER_CHARACTER_LIBRARY_SCHEMA_VERSION = exports.USER_CHARACTER_LIBRARY_FORMAT = void 0;
+    exports.USER_CHARACTER_LIBRARY_MAX_BYTES = void 0;
+    const policy = sharedPolicyModule.default ?? globalThis.AiWerewolfUserCharacterLibraryPolicy;
+    if (!policy)
+        throw new Error('共有ユーザーキャラクターライブラリポリシーを読み込めませんでした。');
+    exports.USER_CHARACTER_LIBRARY_MAX_BYTES = policy.USER_CHARACTER_LIBRARY_MAX_BYTES;
+});
+/**
+ * 責務: Renderer上のキャラクターライブラリ編集要求、キャラ単位の使用状態、グループ順・キャラクター順をMainへ渡し、成功時だけカタログスナップショットを更新する。
+ * 変更ルール: 組み込みJSONを編集対象へ変換しない。ユーザーライブラリ総サイズは共有userCharacterLibraryPolicyを正本とし、Main保存境界でも再検証する。具体的なグループ名・キャラクター名を持たず、ユーザーグループだけをJSON入出力対象とする。ユーザーキャラクター作成時は名前以外を任意とし、内部で必要な標準設定は共通既定値から生成する。文字数検証はキャラクター保存・JSON取込で指定した対象だけMainに要求し、削除・並び替え・使用切替・複製・グループ編集では既存キャラクターを再検証しない。組み込み側の変更は使用状態と並び順のメタデータに限定する。
+ */
+define("js/characters/catalog/characterLibraryManager", ["require", "exports", "js/config/constants", "js/characters/config/userCharacterLibraryPolicyAdapter", "js/characters/catalog/characterCatalog"], function (require, exports, constants_js_54, userCharacterLibraryPolicyAdapter_js_1, characterCatalog_js_9) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.USER_CHARACTER_LIBRARY_MAX_BYTES = exports.USER_CHARACTER_LIBRARY_SCHEMA_VERSION = exports.USER_CHARACTER_LIBRARY_FORMAT = void 0;
     exports.currentUserCharacterLibrary = currentUserCharacterLibrary;
     exports.saveUserCharacterGroups = saveUserCharacterGroups;
     exports.setCharacterGroupEnabled = setCharacterGroupEnabled;
@@ -34057,6 +34899,7 @@ define("js/characters/catalog/characterLibraryManager", ["require", "exports", "
     exports.setCharacterOrder = setCharacterOrder;
     exports.createUserCharacterFromCard = createUserCharacterFromCard;
     exports.cloneUserGroupsForEdit = cloneUserGroupsForEdit;
+    Object.defineProperty(exports, "USER_CHARACTER_LIBRARY_MAX_BYTES", { enumerable: true, get: function () { return userCharacterLibraryPolicyAdapter_js_1.USER_CHARACTER_LIBRARY_MAX_BYTES; } });
     exports.USER_CHARACTER_LIBRARY_FORMAT = 'ai-werewolf-character-library';
     exports.USER_CHARACTER_LIBRARY_SCHEMA_VERSION = 1;
     function clone(value) {
@@ -34249,7 +35092,7 @@ define("js/characters/catalog/characterLibraryManager", ["require", "exports", "
  * - キャラクター編集は通常フォーム値から保存データを組み立て、通常編集でJSON構文の直接入力を要求しない。表示名だけを必須とし、その他は空欄を許可して内部標準値を維持する。文字数検証はキャラクターの保存時だけ対象IDへ適用し、削除・並び替え・使用切替・複製・グループ操作では既存データを再検証しない。表示名・設定ランダム生成・AI一括生成はcharacters/generationへ委譲する。AI一括生成はAPI生成と手動コピペ生成を同じ生成契約で扱い、手動回答JSONの入力は専用生成ダイアログ内だけに限定する。
  * - カタログ内容または使用可否の変更成功後はonCatalogChangedへ通知し、チャットルーム等の外部利用側にある孤立参照の整理は依存注入先へ委譲する。
  */
-define("js/ui/controllers/characterLibraryController", ["require", "exports", "js/config/constants", "js/characters/generation/randomCharacterGenerator", "js/characters/generation/randomCharacterNameGenerator", "js/characters/generation/aiCharacterGenerator", "js/characters/catalog/characterCatalog", "js/characters/config/characterTextPolicyAdapter", "js/characters/catalog/characterLibraryManager", "js/shared/utils", "js/ui/views/characters/characterLibraryView"], function (require, exports, constants_js_55, randomCharacterGenerator_js_1, randomCharacterNameGenerator_js_1, aiCharacterGenerator_js_1, characterCatalog_js_10, characterTextPolicyAdapter_js_8, characterLibraryManager_js_1, utils_js_50, characterLibraryView_js_1) {
+define("js/ui/controllers/characterLibraryController", ["require", "exports", "js/config/constants", "js/characters/generation/randomCharacterGenerator", "js/characters/generation/randomCharacterNameGenerator", "js/characters/generation/aiCharacterGenerator", "js/characters/catalog/characterCatalog", "js/characters/config/characterTextPolicyAdapter", "js/characters/catalog/characterLibraryManager", "js/shared/utils", "js/ui/views/characters/characterLibraryView"], function (require, exports, constants_js_55, randomCharacterGenerator_js_1, randomCharacterNameGenerator_js_1, aiCharacterGenerator_js_1, characterCatalog_js_10, characterTextPolicyAdapter_js_8, characterLibraryManager_js_1, utils_js_52, characterLibraryView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createCharacterLibraryController = createCharacterLibraryController;
@@ -34515,7 +35358,7 @@ define("js/ui/controllers/characterLibraryController", ["require", "exports", "j
                 const prompt = updateManualCharacterPrompt();
                 if (!prompt)
                     throw new Error('手動生成プロンプトを作成できませんでした。');
-                await (0, utils_js_50.copyText)(prompt);
+                await (0, utils_js_52.copyText)(prompt);
                 toast('キャラクター生成プロンプトをコピーしました。', 'success');
             }
             catch (error) {
@@ -34879,7 +35722,10 @@ define("js/ui/controllers/characterLibraryController", ["require", "exports", "j
             if (!file)
                 return;
             try {
-                const raw = JSON.parse(await (0, utils_js_50.readFileText)(file));
+                if (file.size > characterLibraryManager_js_1.USER_CHARACTER_LIBRARY_MAX_BYTES) {
+                    throw new RangeError(`ユーザーキャラクターJSONは${characterLibraryManager_js_1.USER_CHARACTER_LIBRARY_MAX_BYTES / (1024 * 1024)}MB以下にしてください。`);
+                }
+                const raw = JSON.parse(await (0, utils_js_52.readFileText)(file));
                 const count = await (0, characterLibraryManager_js_1.importUserCharacterLibrary)(raw);
                 await notifyCatalogChanged();
                 render();
@@ -34950,7 +35796,7 @@ define("js/ui/controllers/characterLibraryController", ["require", "exports", "j
                 return confirmDeleteCharacter(groupId, characterId);
             if (action === 'export') {
                 const library = (0, characterLibraryManager_js_1.currentUserCharacterLibrary)();
-                (0, utils_js_50.downloadJson)('ai-werewolf-user-characters.json', library);
+                (0, utils_js_52.downloadJson)('ai-werewolf-user-characters.json', library);
                 return toast('ユーザーキャラクターデータを出力しました。', 'success');
             }
             if (action === 'import')
@@ -35060,7 +35906,7 @@ define("js/domain/chat/chatRoomMemory", ["require", "exports"], function (requir
  * 責務: 人狼進行から独立したチャットルームの状態生成、revision、プレイヤー名、キャラクター個別内部メモ、参加者差し替え・カタログ整合、通常巡回、質問回答/手動の優先ターン、会話きっかけ履歴、発言登録を決定的に扱う。
  * 変更ルール: DOM・AI通信・キャラクタープロンプト生成を行わない。通常巡回は原則1巡1人1回を維持し、明示質問への回答は通常巡回枠を消費しない専用ターンとして質問1件ごとに保持する。AI質問の専用回答化はquestionPriorityがONのときだけ、プレイヤーの特定キャラ指定は設定に関係なく専用回答化する。手動の「次に話す」は通常巡回枠の移動として扱う。内部メモは共有せずキャラクターIDごとに完成版を置換保存する。会話中の参加者変更では履歴・お題・プレイヤー名と継続参加者の内部メモを保持し、通常巡回だけを新構成で再開する。外部カタログから参加キャラクターが消えた場合は履歴を保持したまま孤立参照だけを除去し、2人未満なら会話を停止せず参加者補充待ちとして扱う。未解決質問は質問者名を保持して上限件数へ丸める。会話きっかけ履歴は選択済みcueのIDだけを短期保持し、Prompt文面や候補選択はprompts/chat配下へ委譲する。
  */
-define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCompatibilityAdapter", "js/shared/utils", "js/domain/chat/chatRoomMemory"], function (require, exports, dataCompatibilityAdapter_js_3, utils_js_51, chatRoomMemory_js_1) {
+define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCompatibilityAdapter", "js/shared/utils", "js/domain/chat/chatRoomMemory"], function (require, exports, dataCompatibilityAdapter_js_3, utils_js_53, chatRoomMemory_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.CHAT_ROOM_SCHEMA_VERSION = void 0;
@@ -35106,11 +35952,11 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
         });
     }
     function createChatRoomState({ participants = [] } = {}) {
-        const timestamp = (0, utils_js_51.nowIso)();
+        const timestamp = (0, utils_js_53.nowIso)();
         return {
             schemaVersion: exports.CHAT_ROOM_SCHEMA_VERSION,
             revision: 0,
-            id: (0, utils_js_51.createId)('chat'),
+            id: (0, utils_js_53.createId)('chat'),
             status: 'setup',
             topic: '',
             playerName: 'プレイヤー',
@@ -35145,7 +35991,7 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
             (0, chatRoomMemory_js_1.normalizeChatCharacterMemory)(raw.characterMemories?.[characterId]),
         ]).filter(([, memory]) => memory.length));
         const messages = (Array.isArray(raw.messages) ? raw.messages : []).slice(-MAX_MESSAGES).map((message, index) => ({
-            id: String(message?.id ?? (0, utils_js_51.createId)('chat-msg')),
+            id: String(message?.id ?? (0, utils_js_53.createId)('chat-msg')),
             sequence: Number(message?.sequence ?? index + 1) || index + 1,
             kind: ['ai', 'human', 'system'].includes(message?.kind) ? message.kind : 'system',
             speakerId: message?.speakerId ? String(message.speakerId) : null,
@@ -35155,7 +36001,7 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
             text: String(message?.text ?? ''),
             questionTargetIds: cleanIds(message?.questionTargetIds),
             answersMessageIds: (Array.isArray(message?.answersMessageIds) ? message.answersMessageIds : []).map(String),
-            createdAt: String(message?.createdAt ?? (0, utils_js_51.nowIso)()),
+            createdAt: String(message?.createdAt ?? (0, utils_js_53.nowIso)()),
         }));
         const messageById = new Map(messages.map((message) => [message.id, message]));
         const seenQuestions = new Set();
@@ -35169,7 +36015,7 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
                 fromName: String(item?.fromName ?? source?.speakerName ?? (fromId === 'human' ? playerName : fromId ?? '')),
                 targetId: String(item?.targetId ?? ''),
                 text: String(item?.text ?? source?.text ?? ''),
-                createdAt: String(item?.createdAt ?? source?.createdAt ?? (0, utils_js_51.nowIso)()),
+                createdAt: String(item?.createdAt ?? source?.createdAt ?? (0, utils_js_53.nowIso)()),
             };
         }).filter((item) => {
             if (!item.messageId || !participantIds.has(item.targetId))
@@ -35242,7 +36088,7 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
     function participantIds(state) {
         return state.participants.map((item) => item.characterId);
     }
-    function touchState(state, timestamp = (0, utils_js_51.nowIso)()) {
+    function touchState(state, timestamp = (0, utils_js_53.nowIso)()) {
         state.revision = Math.max(0, Number(state.revision ?? 0) || 0) + 1;
         state.updatedAt = timestamp;
         return state.revision;
@@ -35256,7 +36102,7 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
         const ids = participantIds(state);
         state.spokenThisRound = [];
         state.round += 1;
-        const orderedIds = state.speakerMode === 'random' ? (0, utils_js_51.shuffle)(ids) : ids;
+        const orderedIds = state.speakerMode === 'random' ? (0, utils_js_53.shuffle)(ids) : ids;
         state.queue = [...orderedIds];
         if (state.queue.length > 1 && state.queue[0] === state.lastSpeakerId) {
             const swapIndex = state.queue.findIndex((id) => id !== state.lastSpeakerId);
@@ -35385,9 +36231,9 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
     }
     function appendMessage(state, message) {
         const next = {
-            id: (0, utils_js_51.createId)('chat-msg'),
+            id: (0, utils_js_53.createId)('chat-msg'),
             sequence: (state.messages.at(-1)?.sequence ?? 0) + 1,
-            createdAt: (0, utils_js_51.nowIso)(),
+            createdAt: (0, utils_js_53.nowIso)(),
             questionTargetIds: [],
             answersMessageIds: [],
             targetId: null,
@@ -35584,7 +36430,7 @@ define("js/domain/chat/chatRoomState", ["require", "exports", "js/config/dataCom
  * 責務: チャットルーム専用のキャラクター会話プロンプトEnvelope、質問専用回答ターン、任意の会話きっかけ、キャラクター個別内部メモ、構造化出力契約、応答解析を生成する。
  * 変更ルール: 人狼の役職・陣営・推理・discussionBehavior・reasoningProfileを参照しない。キャラクターの口調・プロフィール・相手別呼称・公開チャット履歴を扱い、内部メモは発言者本人のものだけを渡して完成版を返させる。未解決質問は元発言が直近履歴外でも質問者名を失わない形で提示する。質問専用回答ターンでは対象質問への回答を必須とし、会話きっかけを混ぜない。会話きっかけは現在の流れへ自然につながる場合だけ使わせ、質問や話題転換を強制しない。お題、履歴、質問、内部メモ、キャラクター設定、相手別呼称、会話きっかけ、表示名など外部由来文字列は必ずJSON化した[game-data:...]だけへ格納し、命令文へ直接連結しない。人間向けの履歴・質問表示ラベルが必要な場合も同じJSON値として生成し、区画外へ展開しない。
  */
-define("js/prompts/chat/chatRoomPrompt", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/chat/chatRoomMemory", "js/prompts/serialization/promptDataSerializer", "js/prompts/response/repair/jsonObjectRecovery"], function (require, exports, constants_js_56, utils_js_52, chatRoomMemory_js_2, promptDataSerializer_js_13, jsonObjectRecovery_js_10) {
+define("js/prompts/chat/chatRoomPrompt", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/chat/chatRoomMemory", "js/prompts/serialization/promptDataSerializer", "js/prompts/response/repair/jsonObjectRecovery"], function (require, exports, constants_js_56, utils_js_54, chatRoomMemory_js_2, promptDataSerializer_js_13, jsonObjectRecovery_js_11) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildChatRoomPromptEnvelope = buildChatRoomPromptEnvelope;
@@ -35760,12 +36606,12 @@ define("js/prompts/chat/chatRoomPrompt", ["require", "exports", "js/config/const
                 promptSpecVersion: constants_js_56.PROMPT_SPEC_VERSION,
                 promptFamily: 'chat-room',
                 gameId: String(state.id ?? ''),
-                commonGameFingerprint: (0, utils_js_52.hashText)(fingerprintSource),
+                commonGameFingerprint: (0, utils_js_54.hashText)(fingerprintSource),
             },
         };
     }
     function parseChatRoomResponse(rawText, { participantIds = [], speakerId = '', pendingMessageIds = [], fallbackMemory = [], requiredAnswerMessageId = '' } = {}) {
-        const raw = (0, jsonObjectRecovery_js_10.parseJsonObjectWithEnvelopeRecovery)(rawText);
+        const raw = (0, jsonObjectRecovery_js_11.parseJsonObjectWithEnvelopeRecovery)(rawText);
         if (!raw || typeof raw !== 'object' || Array.isArray(raw))
             throw new Error('AI応答をチャットルームJSONとして解析できませんでした。');
         const chatMessage = cleanText(raw.chatMessage);
@@ -35793,7 +36639,7 @@ define("js/prompts/chat/chatRoomPrompt", ["require", "exports", "js/config/const
  * 責務: チャットルームの会話きっかけ候補を、キャラクター固有seedとシステム汎用cueから決定的・低頻度に選ぶ。
  * 変更ルール: 会話Stateの更新、AI通信、Prompt本文生成は行わない。通常会話では「きっかけなし」を主候補とし、直近利用済みcueを避けて会話の単調化だけを弱く抑制する。質問への専用回答ターンにはcueを返さない。
  */
-define("js/prompts/chat/chatRoomConversationCuePolicy", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_53) {
+define("js/prompts/chat/chatRoomConversationCuePolicy", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_55) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SYSTEM_CONVERSATION_CUES = void 0;
@@ -35822,7 +36668,7 @@ define("js/prompts/chat/chatRoomConversationCuePolicy", ["require", "exports", "
             const tone = String(seed?.tone ?? '').trim();
             if (!subject || !tone)
                 return null;
-            const sourceId = String(seed?.id ?? '').trim() || (0, utils_js_53.hashText)(`${subject}\u0000${tone}\u0000${index}`);
+            const sourceId = String(seed?.id ?? '').trim() || (0, utils_js_55.hashText)(`${subject}\u0000${tone}\u0000${index}`);
             return Object.freeze({ id: `character:${card?.id ?? 'unknown'}:${sourceId}`, source: 'character', subject, tone });
         }).filter(Boolean);
     }
@@ -35830,7 +36676,7 @@ define("js/prompts/chat/chatRoomConversationCuePolicy", ["require", "exports", "
         return exports.SYSTEM_CONVERSATION_CUES.map((cue) => ({ ...cue, source: 'system' }));
     }
     function hashNumber(value) {
-        return Number.parseInt((0, utils_js_53.hashText)(value), 16) >>> 0;
+        return Number.parseInt((0, utils_js_55.hashText)(value), 16) >>> 0;
     }
     function chooseCandidate(candidates, state, speakerCard, purpose) {
         if (!candidates.length)
@@ -35872,7 +36718,7 @@ define("js/prompts/chat/chatRoomConversationCuePolicy", ["require", "exports", "
  * 責務: チャットルームの準備画面・参加者編集画面・会話画面をHTMLへ描画する。準備画面と参加者編集画面のキャラクター選択は、左の有効グループ一覧と右の選択グループ内キャラクター一覧へ分離し、参加者は1人1行で表示する。参加者行は名前と幅を制限したAIプロファイル選択だけを表示し、プロフィール本文は表示しない。会話画面では次ターンが通常巡回か質問回答かを表示する。
  * 変更ルール: 会話順、優先ターン生成、AI通信、保存、選択グループ状態の保持を実行しない。data-chat-*属性だけをControllerとの操作契約とし、人狼進行用data-actionへチャット操作を混在させない。AIプロファイルは現在利用可能なIDとの一致で有効性を表示判定し、削除・無効化済みIDを選択済みとして扱わない。キャラクター選択では有効グループ・有効キャラクターだけを表示し、グループ選択状態はControllerから受け取る。会話中の参加者編集は履歴を消す操作と混同せず、AIプロファイル一括適用を含む表示契約だけを持ち、適用処理はControllerへ委譲する。
  */
-define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_54) {
+define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_56) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderChatRoomSetup = renderChatRoomSetup;
@@ -35882,7 +36728,7 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
         const enabled = profiles.filter((profile) => profile.enabled !== false);
         if (!enabled.length)
             return '<option value="">利用可能なAIプロファイルなし</option>';
-        return enabled.map((profile) => `<option value="${(0, utils_js_54.escapeHtml)(profile.id)}"${profile.id === selectedId ? ' selected' : ''}>${(0, utils_js_54.escapeHtml)(profile.label)} / ${(0, utils_js_54.escapeHtml)(profile.model || profile.provider)}</option>`).join('');
+        return enabled.map((profile) => `<option value="${(0, utils_js_56.escapeHtml)(profile.id)}"${profile.id === selectedId ? ' selected' : ''}>${(0, utils_js_56.escapeHtml)(profile.label)} / ${(0, utils_js_56.escapeHtml)(profile.model || profile.provider)}</option>`).join('');
     }
     function invalidProfileCount(participants, profiles) {
         const validIds = new Set(profiles.filter((profile) => profile.enabled !== false).map((profile) => profile.id));
@@ -35901,8 +36747,8 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
             const cards = group.characters.filter((card) => card.enabled !== false);
             const selectedCount = cards.filter((card) => selectedIds.has(card.id)).length;
             const active = group.id === selectedGroupId;
-            return `<button class="chat-character-group-list-item${active ? ' is-selected' : ''}" data-chat-action="select-character-group" data-group-id="${(0, utils_js_54.escapeHtml)(group.id)}" type="button" aria-pressed="${active ? 'true' : 'false'}">
-      <span class="chat-character-group-list-copy"><strong>${(0, utils_js_54.escapeHtml)(group.name)}</strong><small>${selectedCount}/${cards.length}人参加</small></span>
+            return `<button class="chat-character-group-list-item${active ? ' is-selected' : ''}" data-chat-action="select-character-group" data-group-id="${(0, utils_js_56.escapeHtml)(group.id)}" type="button" aria-pressed="${active ? 'true' : 'false'}">
+      <span class="chat-character-group-list-copy"><strong>${(0, utils_js_56.escapeHtml)(group.name)}</strong><small>${selectedCount}/${cards.length}人参加</small></span>
     </button>`;
         }).join('');
     }
@@ -35919,11 +36765,11 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
             const profileId = selected.get(card.id) ?? '';
             return `<div class="chat-character-row${isChecked ? ' selected' : ''}">
         <label class="chat-character-enabled" title="このキャラクターをチャットへ参加させます">
-          <input type="checkbox" data-chat-field="participant" data-character-id="${(0, utils_js_54.escapeHtml)(card.id)}"${isChecked ? ' checked' : ''}>
+          <input type="checkbox" data-chat-field="participant" data-character-id="${(0, utils_js_56.escapeHtml)(card.id)}"${isChecked ? ' checked' : ''}>
           <span>参加</span>
         </label>
-        <div class="chat-character-main"><strong title="${(0, utils_js_54.escapeHtml)(card.name)}">${(0, utils_js_54.escapeHtml)(card.name)}</strong></div>
-        <label class="chat-character-profile"><select data-chat-field="participant-profile" data-character-id="${(0, utils_js_54.escapeHtml)(card.id)}" aria-label="${(0, utils_js_54.escapeHtml)(card.name)}のAIプロファイル"${isChecked ? '' : ' disabled'}>
+        <div class="chat-character-main"><strong title="${(0, utils_js_56.escapeHtml)(card.name)}">${(0, utils_js_56.escapeHtml)(card.name)}</strong></div>
+        <label class="chat-character-profile"><select data-chat-field="participant-profile" data-character-id="${(0, utils_js_56.escapeHtml)(card.id)}" aria-label="${(0, utils_js_56.escapeHtml)(card.name)}のAIプロファイル"${isChecked ? '' : ' disabled'}>
           <option value="">AIプロファイルを選択</option>
           ${profileOptions(profiles, profileId)}
         </select></label>
@@ -35945,7 +36791,7 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
     </aside>
     <section class="chat-character-group-panel">
       <header class="chat-character-group-panel-head">
-        <div><span class="eyebrow">GROUP</span><h4>${(0, utils_js_54.escapeHtml)(group.name)}</h4></div>
+        <div><span class="eyebrow">GROUP</span><h4>${(0, utils_js_56.escapeHtml)(group.name)}</h4></div>
         <small>${selectedCount}/${availableCards.length}人参加</small>
       </header>
       <div class="chat-character-group-panel-body">${participantCharacterRows({ group, participants, profiles })}</div>
@@ -35964,9 +36810,9 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
       <section class="panel chat-room-settings-panel">
         <div class="panel-head"><div><span class="eyebrow">ROOM SETUP</span><h3>会話設定</h3></div></div>
         <div class="form-grid two-columns">
-          <label class="field"><span>プレイヤー名</span><input data-chat-field="player-name" type="text" maxlength="80" value="${(0, utils_js_54.escapeHtml)(state.playerName)}" placeholder="プレイヤー"></label>
+          <label class="field"><span>プレイヤー名</span><input data-chat-field="player-name" type="text" maxlength="80" value="${(0, utils_js_56.escapeHtml)(state.playerName)}" placeholder="プレイヤー"></label>
           <label class="field"><span>発言順</span><select data-chat-field="speaker-mode"><option value="random"${state.speakerMode === 'random' ? ' selected' : ''}>巡回ごとにランダム</option><option value="fixed"${state.speakerMode === 'fixed' ? ' selected' : ''}>選択順で固定</option></select></label>
-          <label class="field full"><span>お題 <small>任意</small></span><input data-chat-field="topic" type="text" maxlength="240" value="${(0, utils_js_54.escapeHtml)(state.topic)}" placeholder="例：夏休みにやりたいこと"></label>
+          <label class="field full"><span>お題 <small>任意</small></span><input data-chat-field="topic" type="text" maxlength="240" value="${(0, utils_js_56.escapeHtml)(state.topic)}" placeholder="例：夏休みにやりたいこと"></label>
           <label class="field"><span>自動会話の一区切り</span><input data-chat-field="auto-batch-size" type="number" min="1" max="100" value="${state.autoBatchSize}"></label>
           <label class="switch-field full"><input data-chat-field="question-priority" type="checkbox"${state.questionPriority ? ' checked' : ''}><span><strong>AI質問への専用回答を優先</strong><small>AI同士の明示的な質問は質問1件ごとに回答ターンを追加し、通常巡回の発言枠は残します。プレイヤーの特定キャラ指定はこの設定に関係なく回答ターンを追加します。</small></span></label>
         </div>
@@ -36010,13 +36856,13 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
     }
     function messageHtml(message, cardById) {
         if (message.kind === 'system')
-            return `<div class="chat-system-message"><span>#${message.sequence}</span>${(0, utils_js_54.escapeHtml)(message.text)}</div>`;
+            return `<div class="chat-system-message"><span>#${message.sequence}</span>${(0, utils_js_56.escapeHtml)(message.text)}</div>`;
         const card = cardById.get(message.speakerId);
-        const target = message.targetName ? `<span class="chat-message-target">→ ${(0, utils_js_54.escapeHtml)(message.targetName)}</span>` : '';
+        const target = message.targetName ? `<span class="chat-message-target">→ ${(0, utils_js_56.escapeHtml)(message.targetName)}</span>` : '';
         const meta = message.kind === 'human' ? 'PLAYER' : 'AI';
         return `<article class="chat-message ${message.kind}">
-    <header><div><strong>${(0, utils_js_54.escapeHtml)(message.speakerName || card?.name || '不明')}</strong>${target}</div><span>#${message.sequence} · ${meta} · ${(0, utils_js_54.escapeHtml)((0, utils_js_54.formatDateTime)(message.createdAt))}</span></header>
-    <p>${(0, utils_js_54.escapeHtml)(message.text).replaceAll('\n', '<br>')}</p>
+    <header><div><strong>${(0, utils_js_56.escapeHtml)(message.speakerName || card?.name || '不明')}</strong>${target}</div><span>#${message.sequence} · ${meta} · ${(0, utils_js_56.escapeHtml)((0, utils_js_56.formatDateTime)(message.createdAt))}</span></header>
+    <p>${(0, utils_js_56.escapeHtml)(message.text).replaceAll('\n', '<br>')}</p>
   </article>`;
     }
     function participantRows({ state, cardById, profiles, nextSpeakerId }) {
@@ -36029,8 +36875,8 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
             const pending = state.unresolvedQuestions.filter((item) => item.targetId === participant.characterId).length;
             const queueIndex = state.queue.indexOf(participant.characterId);
             return `<div class="chat-participant-row${participant.characterId === nextSpeakerId ? ' next' : ''}">
-      <div><strong>${(0, utils_js_54.escapeHtml)(card.name)}</strong><small>${(0, utils_js_54.escapeHtml)(profile?.label ?? 'AI未設定')}${pending ? ` · 未回答${pending}` : ''}${queueIndex >= 0 ? ` · 待機${queueIndex + 1}` : ''}</small></div>
-      <button class="button ghost small" data-chat-action="force-speaker" data-character-id="${(0, utils_js_54.escapeHtml)(card.id)}" type="button">次に話す</button>
+      <div><strong>${(0, utils_js_56.escapeHtml)(card.name)}</strong><small>${(0, utils_js_56.escapeHtml)(profile?.label ?? 'AI未設定')}${pending ? ` · 未回答${pending}` : ''}${queueIndex >= 0 ? ` · 待機${queueIndex + 1}` : ''}</small></div>
+      <button class="button ghost small" data-chat-action="force-speaker" data-character-id="${(0, utils_js_56.escapeHtml)(card.id)}" type="button">次に話す</button>
     </div>`;
         }).join('');
     }
@@ -36046,28 +36892,28 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
             : invalidProfiles ? `AIプロファイル未設定または利用不可の参加者が${invalidProfiles}人います。参加者を変更してください。` : '';
         return `<section class="page chat-room-page chat-room-live">
     <div class="page-head">
-      <div><span class="eyebrow">CHAT SESSION</span><h2>チャットルーム</h2><p>${state.topic ? `お題：${(0, utils_js_54.escapeHtml)(state.topic)}` : 'お題なし・自由会話'}</p></div>
+      <div><span class="eyebrow">CHAT SESSION</span><h2>チャットルーム</h2><p>${state.topic ? `お題：${(0, utils_js_56.escapeHtml)(state.topic)}` : 'お題なし・自由会話'}</p></div>
       <div class="page-head-actions"><button class="button ghost" data-chat-action="export" type="button">履歴JSON出力</button><button class="button danger-ghost" data-chat-action="new-room" type="button">新しいチャット</button></div>
     </div>
     <div class="chat-live-layout">
       <section class="panel chat-log-panel">
-        <div class="chat-log-head"><div><span class="status-pill">第${state.round}巡</span><span class="status-pill">次：${(0, utils_js_54.escapeHtml)(nextCard?.name ?? '未定')} · ${(0, utils_js_54.escapeHtml)(nextTurnLabel)}</span></div><div>${generating ? '<span class="chat-generating">AI生成中…</span>' : autoRunning ? '<span class="chat-generating">自動会話中</span>' : ''}</div></div>
+        <div class="chat-log-head"><div><span class="status-pill">第${state.round}巡</span><span class="status-pill">次：${(0, utils_js_56.escapeHtml)(nextCard?.name ?? '未定')} · ${(0, utils_js_56.escapeHtml)(nextTurnLabel)}</span></div><div>${generating ? '<span class="chat-generating">AI生成中…</span>' : autoRunning ? '<span class="chat-generating">自動会話中</span>' : ''}</div></div>
         <div class="chat-log" data-chat-log>${state.messages.length ? state.messages.map((message) => messageHtml(message, cardById)).join('') : '<div class="empty-state">まだ発言はありません。</div>'}</div>
         <div class="chat-controls">
           <button class="button primary" data-chat-action="next-ai" type="button"${generating || autoRunning || generationIssue ? ' disabled' : ''}>次のAI発言</button>
           ${autoRunning ? '<button class="button danger" data-chat-action="stop-auto" type="button">自動会話を停止</button>' : `<button class="button ghost" data-chat-action="start-auto" type="button"${generating || generationIssue ? ' disabled' : ''}>▶ 自動会話 ${state.autoBatchSize}発言</button>`}
         </div>
-        ${generationIssue ? `<div class="validation warning">${(0, utils_js_54.escapeHtml)(generationIssue)}</div>` : ''}
+        ${generationIssue ? `<div class="validation warning">${(0, utils_js_56.escapeHtml)(generationIssue)}</div>` : ''}
         <div class="chat-player-box">
-          <div class="chat-player-identity">${(0, utils_js_54.escapeHtml)(state.playerName || 'プレイヤー')}として発言</div>
-          <div class="chat-player-row"><label><span>発言先</span><select data-chat-field="human-target"><option value="">全員</option>${state.participants.map((participant) => { const card = cardById.get(participant.characterId); return card ? `<option value="${(0, utils_js_54.escapeHtml)(card.id)}">${(0, utils_js_54.escapeHtml)(card.name)}</option>` : ''; }).join('')}</select></label></div>
+          <div class="chat-player-identity">${(0, utils_js_56.escapeHtml)(state.playerName || 'プレイヤー')}として発言</div>
+          <div class="chat-player-row"><label><span>発言先</span><select data-chat-field="human-target"><option value="">全員</option>${state.participants.map((participant) => { const card = cardById.get(participant.characterId); return card ? `<option value="${(0, utils_js_56.escapeHtml)(card.id)}">${(0, utils_js_56.escapeHtml)(card.name)}</option>` : ''; }).join('')}</select></label></div>
           <textarea data-chat-field="human-message" rows="3" maxlength="2000" placeholder="プレイヤーとして自由に発言できます。特定キャラを選ぶと、その発言への専用回答ターンを追加します。"></textarea>
           <div class="panel-actions"><button class="button primary" data-chat-action="send-human" type="button">送信</button></div>
         </div>
       </section>
       <aside class="chat-side-column">
         <section class="panel"><div class="panel-head"><div><span class="eyebrow">PARTICIPANTS</span><h3>参加者・発言順</h3></div><button class="button ghost small" data-chat-action="edit-participants" type="button"${generating || autoRunning ? ' disabled' : ''}>参加者を変更</button></div><div class="chat-participant-list">${participantRows({ state, cardById, profiles, nextSpeakerId })}</div></section>
-        <section class="panel"><div class="panel-head"><div><span class="eyebrow">TOPIC</span><h3>お題を変更</h3></div></div><label class="field"><input data-chat-field="live-topic" type="text" maxlength="240" value="${(0, utils_js_54.escapeHtml)(state.topic)}" placeholder="空欄でお題なし"></label><div class="panel-actions"><button class="button ghost" data-chat-action="change-topic" type="button">お題を反映</button></div></section>
+        <section class="panel"><div class="panel-head"><div><span class="eyebrow">TOPIC</span><h3>お題を変更</h3></div></div><label class="field"><input data-chat-field="live-topic" type="text" maxlength="240" value="${(0, utils_js_56.escapeHtml)(state.topic)}" placeholder="空欄でお題なし"></label><div class="panel-actions"><button class="button ghost" data-chat-action="change-topic" type="button">お題を反映</button></div></section>
       </aside>
     </div>
   </section>`;
@@ -36077,7 +36923,7 @@ define("js/ui/views/chat/chatRoomView", ["require", "exports", "js/shared/utils"
  * 責務: チャットルーム画面の状態、準備/参加者編集で表示するキャラクターグループ選択UI状態、プレイヤー名、キャラクター個別内部メモ、専用永続化、キャラクターカタログ整合、会話中の参加者差し替え、参加者ごとのAIプロファイル割当と一括適用、通常巡回/質問回答ターンのAI生成、会話きっかけ選択、自動会話を調停する。
  * 変更ルール: 人狼ゲームStateとdiscussionRuntimeを変更しない。キャラクターグループ選択はRenderer内だけのUI状態として扱い、チャットStateやMain保存へ混在させない。AI通信はdesktopWerewolf.generateを使用し、外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけ要求する。会話順・優先ターン・revision・内部メモ・参加者差し替え/孤立参照除去はdomain/chat配下、プロンプト本文はprompts/chat/chatRoomPrompt.js、会話きっかけの候補/重み選択はprompts/chat/chatRoomConversationCuePolicy.jsを正本とする。会話中の参加者変更ではメッセージ履歴・お題・プレイヤー名を消さず、通常巡回だけ新構成へ切り替える。外部で削除・無効化された参加キャラクターは履歴を残して除外し、2人未満ならAI生成だけを停止して参加者変更を可能にする。AI生成開始時にはターンを消費せずrevisionを固定し、生成中にプレイヤー発言・お題・発言順が変わった場合は古い応答を破棄する。質問専用回答ターンでは対象質問だけを必須回答として渡し、通常巡回枠を消費しない。内部メモは発言者本人の完成版だけを置換し共有しない。会話のきっかけは回答ターンへ渡さず、初回はお題なしの場合だけ、通常会話中は低確率だけ選ぶ。無効になったAIプロファイルは暗黙に別プロファイルへ差し替えず明示再設定を要求する。AIプロファイル一括適用はチャット参加者だけを対象とし、人狼側のassignmentsを変更しない。自動会話停止時は新規要求を開始せず、明示停止では実行中要求もキャンセル可能にする。保存失敗は呼び出し元へ伝播し、成功通知を出さない。
  */
-define("js/ui/controllers/chatRoomController", ["require", "exports", "js/characters/catalog/characterCatalog", "js/shared/utils", "js/privacy/dataTransmissionNotice", "js/domain/chat/chatRoomState", "js/prompts/chat/chatRoomPrompt", "js/prompts/chat/chatRoomConversationCuePolicy", "js/ui/views/chat/chatRoomView"], function (require, exports, characterCatalog_js_11, utils_js_55, dataTransmissionNotice_js_2, chatRoomState_js_1, chatRoomPrompt_js_1, chatRoomConversationCuePolicy_js_1, chatRoomView_js_1) {
+define("js/ui/controllers/chatRoomController", ["require", "exports", "js/characters/catalog/characterCatalog", "js/shared/utils", "js/privacy/dataTransmissionNotice", "js/domain/chat/chatRoomState", "js/prompts/chat/chatRoomPrompt", "js/prompts/chat/chatRoomConversationCuePolicy", "js/ui/views/chat/chatRoomView"], function (require, exports, characterCatalog_js_11, utils_js_57, dataTransmissionNotice_js_2, chatRoomState_js_1, chatRoomPrompt_js_1, chatRoomConversationCuePolicy_js_1, chatRoomView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createChatRoomController = createChatRoomController;
@@ -36497,7 +37343,7 @@ define("js/ui/controllers/chatRoomController", ["require", "exports", "js/charac
             ui.render();
         }
         function exportHistory() {
-            (0, utils_js_55.downloadJson)(`chat-room-${state.id}.json`, state);
+            (0, utils_js_57.downloadJson)(`chat-room-${state.id}.json`, state);
         }
         async function handleChange(event) {
             if (ui.getActiveTab?.() !== 'chat-room' || (state.status !== 'setup' && !participantEditing))
@@ -36770,7 +37616,10 @@ define("js/public/publicReplaySnapshot", ["require", "exports", "js/config/const
                 actionType: claim.actionType,
                 targetId: claim.targetId,
                 result: claim.result,
-                observedDay: claim.observedDay,
+                actionDay: claim.actionDay,
+                actionPhase: claim.actionPhase,
+                availableDay: claim.availableDay,
+                availablePhase: claim.availablePhase,
                 announcedDay: claim.announcedDay,
                 selectionBasis: claim.selectionBasis,
                 evidenceEventIds: [...(claim.evidenceEventIds ?? [])],
@@ -36785,7 +37634,7 @@ define("js/public/publicReplaySnapshot", ["require", "exports", "js/config/const
  * 責務: 人狼Game Stateと自由チャットStateから独立した観戦セッションの状態、推理観戦/神視点観戦、追っかけ再生位置、観戦者個別内部メモ、公開情報既読カーソル、公開更新リアクションキュー、プレイヤー観戦発言、質問回答/手動優先ターンを管理する。
  * 変更ルール: Game State・DOM・AI通信・Prompt生成を扱わない。追っかけ/リアルタイムはfollowingLiveとplaybackEventSequenceを正本とし、Game State自体を巻き戻さない。神視点でも秘密情報そのものは保存しない。観戦者内部メモと既読カーソルは本人ごとに分離し、質問回答は通常リアクション枠を消費しない。新しいゲームへ切り替わる場合は旧ゲームの観戦文脈を引き継がない。
  */
-define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/config/dataCompatibilityAdapter", "js/shared/utils"], function (require, exports, dataCompatibilityAdapter_js_4, utils_js_56) {
+define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/config/dataCompatibilityAdapter", "js/shared/utils"], function (require, exports, dataCompatibilityAdapter_js_4, utils_js_58) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.SPECTATOR_ROOM_SCHEMA_VERSION = void 0;
@@ -36854,7 +37703,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
     }
     function touch(state) {
         state.revision = Math.max(0, Number(state.revision ?? 0) || 0) + 1;
-        state.updatedAt = (0, utils_js_56.nowIso)();
+        state.updatedAt = (0, utils_js_58.nowIso)();
     }
     function participantIds(state) {
         return state.participants.map((item) => item.characterId);
@@ -36863,11 +37712,11 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
         return new Set(participantIds(state));
     }
     function createSpectatorRoomState({ participants = [] } = {}) {
-        const timestamp = (0, utils_js_56.nowIso)();
+        const timestamp = (0, utils_js_58.nowIso)();
         return {
             schemaVersion: exports.SPECTATOR_ROOM_SCHEMA_VERSION,
             revision: 0,
-            id: (0, utils_js_56.createId)('spectator'),
+            id: (0, utils_js_58.createId)('spectator'),
             status: 'setup',
             sourceGameId: '',
             sourceGameTitle: '',
@@ -36899,7 +37748,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
         const base = createSpectatorRoomState({ participants: raw.participants });
         const ids = new Set(base.participants.map((item) => item.characterId));
         const messages = (Array.isArray(raw.messages) ? raw.messages : []).slice(-MAX_MESSAGES).map((message, index) => ({
-            id: cleanId(message?.id, (0, utils_js_56.createId)('spectator-msg')),
+            id: cleanId(message?.id, (0, utils_js_58.createId)('spectator-msg')),
             sequence: Math.max(1, Number(message?.sequence ?? index + 1) || index + 1),
             kind: ['ai', 'human', 'system', 'public'].includes(message?.kind) ? message.kind : 'system',
             speakerId: ids.has(String(message?.speakerId ?? '')) ? String(message.speakerId) : null,
@@ -36910,7 +37759,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
             answersMessageIds: (Array.isArray(message?.answersMessageIds) ? message.answersMessageIds : []).map(String),
             sourcePublicRevision: Math.max(0, Number(message?.sourcePublicRevision ?? 0) || 0),
             sourceRef: Math.max(0, Number(message?.sourceRef ?? 0) || 0),
-            createdAt: String(message?.createdAt ?? (0, utils_js_56.nowIso)()),
+            createdAt: String(message?.createdAt ?? (0, utils_js_58.nowIso)()),
         }));
         const messageById = new Map(messages.map((message) => [message.id, message]));
         const unresolvedQuestions = (Array.isArray(raw.unresolvedQuestions) ? raw.unresolvedQuestions : []).map((item) => ({
@@ -36919,7 +37768,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
             fromName: String(item?.fromName ?? messageById.get(String(item?.messageId ?? ''))?.speakerName ?? ''),
             targetId: String(item?.targetId ?? ''),
             text: String(item?.text ?? messageById.get(String(item?.messageId ?? ''))?.text ?? ''),
-            createdAt: String(item?.createdAt ?? (0, utils_js_56.nowIso)()),
+            createdAt: String(item?.createdAt ?? (0, utils_js_58.nowIso)()),
         })).filter((item, index, source) => (!item.fromId || ids.has(item.fromId)) && ids.has(item.targetId) && item.messageId
             && source.findIndex((other) => other.messageId === item.messageId && other.targetId === item.targetId) === index).slice(-MAX_UNRESOLVED_QUESTIONS);
         const unresolvedKeys = new Set(unresolvedQuestions.map((item) => `${item.messageId}\u0000${item.targetId}`));
@@ -37039,7 +37888,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
     }
     function addMessage(state, message) {
         const entry = {
-            id: (0, utils_js_56.createId)('spectator-msg'),
+            id: (0, utils_js_58.createId)('spectator-msg'),
             sequence: (state.messages.at(-1)?.sequence ?? 0) + 1,
             kind: message.kind,
             speakerId: message.speakerId ?? null,
@@ -37050,7 +37899,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
             answersMessageIds: [...new Set((message.answersMessageIds ?? []).map(String))],
             sourcePublicRevision: Math.max(0, Number(message.sourcePublicRevision ?? 0) || 0),
             sourceRef: Math.max(0, Number(message.sourceRef ?? 0) || 0),
-            createdAt: (0, utils_js_56.nowIso)(),
+            createdAt: (0, utils_js_58.nowIso)(),
         };
         state.messages.push(entry);
         if (state.messages.length > MAX_MESSAGES)
@@ -37232,7 +38081,7 @@ define("js/domain/spectator/spectatorRoomState", ["require", "exports", "js/conf
  * 責務: buildPublicSnapshot(includeConfidential:false)だけを入力として、公開画面が実際に表示する情報へ観戦AI用の公開Feedを再射影する。
  * 変更ルール: 完全なGame Stateを受け取らない。publicSnapshotに存在してもpublicViewが表示していない補助項目を追加しない。真役職・心の声・私有会話は、公開結果としてsnapshot.resultへ明示掲載された場合だけFeedへ含める。内部UUIDをPrompt用Feedへ残さず表示名へ変換する。Prompt向け文字列化は行わず、外部由来文字列を構造化Feedのまま上位の安全なserializerへ渡す。
  */
-define("js/domain/spectator/spectatorPublicFeed", ["require", "exports", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy"], function (require, exports, constants_js_58, publicAbilityClaimPolicy_js_24) {
+define("js/domain/spectator/spectatorPublicFeed", ["require", "exports", "js/config/constants", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy"], function (require, exports, constants_js_58, publicAbilityClaimPolicy_js_24, abilityClaimTimingPolicy_js_13) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildSpectatorPublicFeed = buildSpectatorPublicFeed;
@@ -37334,7 +38183,7 @@ define("js/domain/spectator/spectatorPublicFeed", ["require", "exports", "js/con
             })),
             publicAbilityClaims: (snapshot.publicAbilityClaims ?? []).map((claim) => ({
                 actorName: nameOf(snapshot, claim.actorId),
-                observedDay: Number(claim.observedDay ?? 0) || 0,
+                timing: (0, abilityClaimTimingPolicy_js_13.formatAbilityClaimTiming)(claim),
                 roleLabel: abilityRoleLabel(claim.claimedRoleId),
                 targetName: nameOf(snapshot, claim.targetId),
                 resultLabel: (0, publicAbilityClaimPolicy_js_24.publicAbilityResultLabel)(claim.result, claim.claimedRoleId),
@@ -37500,7 +38349,7 @@ define("js/domain/spectator/spectatorReactionPolicy", ["require", "exports"], fu
  * 責務: 人狼観戦者専用のPrompt Envelopeを生成し、推理観戦では公開情報だけを使った予想を交えながら、神視点観戦では真役職を知ることで生まれる展開の面白さを味わいながら、キャラクター同士で気軽に観戦を楽しむ目的へ切り替える。プレイヤーを含む観戦会話、観戦者個別内部メモ、質問回答契約、構造化応答解析も管理する。
  * 変更ルール: 推理観戦のゲーム入力はspectatorPublicFeedだけ、神視点観戦はそれにspectatorOmniscientFeedの真役職・現在陣営・役職基本能力だけを追加する。Game State・心の声・私有会話・AI判断状態・未確定の未来行動は参照しない。両モードとも観戦を楽しむ自然な会話を主目的とし、1回の発言で複数論点の整理・分析・結論を網羅させない。神視点で判断を話題にする場合も結果論を避け、各プレイヤーがその時点で知り得た情報を基準に扱う。内部メモは本人の完成版だけを再投入し他観戦者へ共有しない。公開Feed、観戦会話、質問、内部メモ、キャラクター設定、相手別呼称、表示名など外部由来文字列は必ずJSON化した[game-data:...]だけへ格納し、命令文へ直接連結しない。
  */
-define("js/prompts/spectator/spectatorPrompt", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/spectator/spectatorRoomState", "js/prompts/serialization/promptDataSerializer", "js/prompts/response/repair/jsonObjectRecovery"], function (require, exports, constants_js_60, utils_js_57, spectatorRoomState_js_1, promptDataSerializer_js_14, jsonObjectRecovery_js_11) {
+define("js/prompts/spectator/spectatorPrompt", ["require", "exports", "js/config/constants", "js/shared/utils", "js/domain/spectator/spectatorRoomState", "js/prompts/serialization/promptDataSerializer", "js/prompts/response/repair/jsonObjectRecovery"], function (require, exports, constants_js_60, utils_js_59, spectatorRoomState_js_1, promptDataSerializer_js_14, jsonObjectRecovery_js_12) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildSpectatorPromptEnvelope = buildSpectatorPromptEnvelope;
@@ -37694,12 +38543,12 @@ define("js/prompts/spectator/spectatorPrompt", ["require", "exports", "js/config
                 promptSpecVersion: constants_js_60.PROMPT_SPEC_VERSION,
                 promptFamily: mode === 'omniscient' ? 'spectator-room-omniscient' : 'spectator-room-deduction',
                 gameId: String(state.sourceGameId || state.id),
-                commonGameFingerprint: (0, utils_js_57.hashText)(`${commonGameContext}\n${taskInvariantContext}`),
+                commonGameFingerprint: (0, utils_js_59.hashText)(`${commonGameContext}\n${taskInvariantContext}`),
             },
         };
     }
     function parseSpectatorResponse(rawText, { participantIds = [], speakerId = '', pendingMessageIds = [], fallbackMemory = [], requiredAnswerMessageId = '' } = {}) {
-        const raw = (0, jsonObjectRecovery_js_11.parseJsonObjectWithEnvelopeRecovery)(rawText);
+        const raw = (0, jsonObjectRecovery_js_12.parseJsonObjectWithEnvelopeRecovery)(rawText);
         if (!raw || typeof raw !== 'object' || Array.isArray(raw))
             throw new Error('AI応答を観戦チャットJSONとして解析できませんでした。');
         const chatMessage = cleanText(raw.chatMessage);
@@ -37726,13 +38575,13 @@ define("js/prompts/spectator/spectatorPrompt", ["require", "exports", "js/config
  * 責務: 人狼観戦ルームの準備・観戦中画面を、観戦専用StateとControllerが権限制御済みの表示モデルだけから描画し、任意ログからの追っかけ開始、追っかけ/リアルタイム状態、共通の人狼卓1手ボタン、推理観戦/神視点観戦、真役職一覧、プレイヤー観戦発言UIを提供する。
  * 変更ルール: Game State・AI通信・秘密情報の抽出・ログ再生判定を行わない。追っかけ/リアルタイムはControllerから渡された表示モデルだけを描画し、モード切替selectorは作らない。観戦者内部メモは表示しない。観戦を楽しむ用途に統一し、プレイヤー入力はdata-spectator-*契約だけを持つ。
  */
-define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_58) {
+define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/utils"], function (require, exports, utils_js_60) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.renderSpectatorRoomSetup = renderSpectatorRoomSetup;
     exports.renderSpectatorRoomLive = renderSpectatorRoomLive;
     function profileOptions(profiles, selectedId = '') {
-        return profiles.map((profile) => `<option value="${(0, utils_js_58.escapeHtml)(profile.id)}"${profile.id === selectedId ? ' selected' : ''}>${(0, utils_js_58.escapeHtml)(profile.label || profile.model || profile.id)}</option>`).join('');
+        return profiles.map((profile) => `<option value="${(0, utils_js_60.escapeHtml)(profile.id)}"${profile.id === selectedId ? ' selected' : ''}>${(0, utils_js_60.escapeHtml)(profile.label || profile.model || profile.id)}</option>`).join('');
     }
     function invalidProfileCount(participants, profiles) {
         const valid = new Set(profiles.map((profile) => profile.id));
@@ -37745,14 +38594,14 @@ define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/u
             const rows = group.characters.filter((card) => card.enabled !== false && !excluded.has(card.id)).map((card) => {
                 const participant = selected.get(card.id);
                 return `<label class="chat-character-row spectator-character-row${participant ? ' selected' : ''}">
-        <span class="chat-character-enabled"><input data-spectator-field="participant" data-character-id="${(0, utils_js_58.escapeHtml)(card.id)}" type="checkbox"${participant ? ' checked' : ''}><span>観戦</span></span>
-        <span class="chat-character-main"><strong>${(0, utils_js_58.escapeHtml)(card.name)}</strong></span>
-        <span class="chat-character-profile"><select data-spectator-field="participant-profile" data-character-id="${(0, utils_js_58.escapeHtml)(card.id)}" aria-label="${(0, utils_js_58.escapeHtml)(card.name)}のAIプロファイル"${participant ? '' : ' disabled'}><option value="">AIプロファイルを選択</option>${profileOptions(profiles, participant?.profileId ?? '')}</select></span>
+        <span class="chat-character-enabled"><input data-spectator-field="participant" data-character-id="${(0, utils_js_60.escapeHtml)(card.id)}" type="checkbox"${participant ? ' checked' : ''}><span>観戦</span></span>
+        <span class="chat-character-main"><strong>${(0, utils_js_60.escapeHtml)(card.name)}</strong></span>
+        <span class="chat-character-profile"><select data-spectator-field="participant-profile" data-character-id="${(0, utils_js_60.escapeHtml)(card.id)}" aria-label="${(0, utils_js_60.escapeHtml)(card.name)}のAIプロファイル"${participant ? '' : ' disabled'}><option value="">AIプロファイルを選択</option>${profileOptions(profiles, participant?.profileId ?? '')}</select></span>
       </label>`;
             }).join('');
             if (!rows)
                 return '';
-            return `<section class="chat-character-group"><h4>${(0, utils_js_58.escapeHtml)(group.name)}</h4><div class="chat-character-list">${rows}</div></section>`;
+            return `<section class="chat-character-group"><h4>${(0, utils_js_60.escapeHtml)(group.name)}</h4><div class="chat-character-list">${rows}</div></section>`;
         }).join('');
     }
     function renderSpectatorRoomSetup({ state, groups, profiles, profileLoading = false, excludedCharacterIds = [], bulkProfileId = '', gameView = {} }) {
@@ -37766,15 +38615,15 @@ define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/u
         return `<section class="page chat-room-page spectator-room-page">
     <div class="page-head">
       <div><span class="eyebrow">WEREWOLF SPECTATOR</span><h2>人狼観戦</h2><p>${omniscient ? '真役職を知る神視点で、展開や認識のずれも含めてキャラクター同士で観戦を楽しみます。' : '進行中の公開表示だけを読み、予想も交えながらキャラクター同士で観戦を楽しみます。'}</p></div>
-      <div class="chat-room-status-pills"><span class="status-pill">${(0, utils_js_58.escapeHtml)(gameView.title || 'ゲーム未開始')}</span><span class="status-pill">${gameReady ? `Day ${(0, utils_js_58.escapeHtml)(String(gameView.day ?? 0))} · ${(0, utils_js_58.escapeHtml)(gameView.phaseLabel ?? '')}` : '開始待ち'}</span></div>
+      <div class="chat-room-status-pills"><span class="status-pill">${(0, utils_js_60.escapeHtml)(gameView.title || 'ゲーム未開始')}</span><span class="status-pill">${gameReady ? `Day ${(0, utils_js_60.escapeHtml)(String(gameView.day ?? 0))} · ${(0, utils_js_60.escapeHtml)(gameView.phaseLabel ?? '')}` : '開始待ち'}</span></div>
     </div>
     <div class="chat-setup-layout">
       <section class="panel chat-room-settings-panel spectator-settings-panel">
         <div class="panel-head"><div><span class="eyebrow">SPECTATOR SETTINGS</span><h3>観戦設定</h3></div><small>${omniscient ? '真役職・現在陣営を開示' : '公開情報だけを使用'}</small></div>
         <div class="form-grid spectator-settings-form">
-          <label class="field"><span>プレイヤー名</span><input data-spectator-field="player-name" type="text" maxlength="80" value="${(0, utils_js_58.escapeHtml)(state.playerName || 'プレイヤー')}" placeholder="プレイヤー"></label>
+          <label class="field"><span>プレイヤー名</span><input data-spectator-field="player-name" type="text" maxlength="80" value="${(0, utils_js_60.escapeHtml)(state.playerName || 'プレイヤー')}" placeholder="プレイヤー"></label>
           <label class="field"><span>観戦スタイル</span><select data-spectator-field="observation-mode"><option value="deduction"${!omniscient ? ' selected' : ''}>推理観戦</option><option value="omniscient"${omniscient ? ' selected' : ''}>神視点観戦</option></select><small>${omniscient ? '真役職・現在陣営を知った状態で展開を楽しみます。' : '公開情報だけを見ながら予想も交えて観戦します。'}</small></label>
-          <label class="field"><span>実況開始ログ番号</span><input data-spectator-field="start-log-number" type="number" min="1" step="1" value="${(0, utils_js_58.escapeHtml)(String(startLogNumber))}"><small>現在の最新ログ: #${(0, utils_js_58.escapeHtml)(String(latestLogNumber))}。最新より後を指定するとリアルタイム実況を開始します。</small></label>
+          <label class="field"><span>実況開始ログ番号</span><input data-spectator-field="start-log-number" type="number" min="1" step="1" value="${(0, utils_js_60.escapeHtml)(String(startLogNumber))}"><small>現在の最新ログ: #${(0, utils_js_60.escapeHtml)(String(latestLogNumber))}。最新より後を指定するとリアルタイム実況を開始します。</small></label>
           <label class="field"><span>反応頻度</span><select data-spectator-field="reaction-level"><option value="quiet"${state.reactionLevel === 'quiet' ? ' selected' : ''}>静か</option><option value="standard"${state.reactionLevel === 'standard' ? ' selected' : ''}>標準</option><option value="lively"${state.reactionLevel === 'lively' ? ' selected' : ''}>活発</option></select></label>
           <label class="switch-field"><input data-spectator-field="auto-comment" type="checkbox"${state.autoComment ? ' checked' : ''}><span><strong>観戦コメントを自動生成</strong><small>表示した公開ログへの観戦AI反応を自動生成します。追っかけ中のログ送り自体は手動です。</small></span></label>
         </div>
@@ -37794,13 +38643,13 @@ define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/u
     }
     function spectatorMessageHtml(message) {
         if (message.kind === 'system')
-            return `<div class="chat-system-message"><span>#${message.sequence}</span>${(0, utils_js_58.escapeHtml)(message.text)}</div>`;
+            return `<div class="chat-system-message"><span>#${message.sequence}</span>${(0, utils_js_60.escapeHtml)(message.text)}</div>`;
         if (message.kind === 'public')
-            return `<div class="spectator-public-update"><span>PUBLIC · #${message.sequence}</span><p>${(0, utils_js_58.escapeHtml)(message.text)}</p></div>`;
-        const target = message.kind === 'human' && message.targetName ? `<span class="chat-message-target">→ ${(0, utils_js_58.escapeHtml)(message.targetName)}</span>` : '';
+            return `<div class="spectator-public-update"><span>PUBLIC · #${message.sequence}</span><p>${(0, utils_js_60.escapeHtml)(message.text)}</p></div>`;
+        const target = message.kind === 'human' && message.targetName ? `<span class="chat-message-target">→ ${(0, utils_js_60.escapeHtml)(message.targetName)}</span>` : '';
         const meta = message.kind === 'human' ? 'PLAYER' : 'AI';
         const classes = message.kind === 'human' ? 'chat-message human spectator-human-message' : 'chat-message ai spectator-ai-message';
-        return `<article class="${classes}"><header><div><strong>${(0, utils_js_58.escapeHtml)(message.speakerName || (message.kind === 'human' ? 'プレイヤー' : '観戦者'))}</strong>${target}</div><span>#${message.sequence} · ${meta}</span></header><p>${(0, utils_js_58.escapeHtml)(message.text).replaceAll('\n', '<br>')}</p></article>`;
+        return `<article class="${classes}"><header><div><strong>${(0, utils_js_60.escapeHtml)(message.speakerName || (message.kind === 'human' ? 'プレイヤー' : '観戦者'))}</strong>${target}</div><span>#${message.sequence} · ${meta}</span></header><p>${(0, utils_js_60.escapeHtml)(message.text).replaceAll('\n', '<br>')}</p></article>`;
     }
     function observerParticipantRows({ state, cards, profiles, nextSpeakerId }) {
         const cardById = new Map(cards.map((card) => [card.id, card]));
@@ -37811,14 +38660,14 @@ define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/u
                 return '';
             const pending = state.unresolvedQuestions.filter((item) => item.targetId === participant.characterId).length;
             const profile = profileById.get(participant.profileId);
-            return `<div class="chat-participant-row${participant.characterId === nextSpeakerId ? ' next' : ''}"><div><strong>${(0, utils_js_58.escapeHtml)(card.name)}</strong><small>${(0, utils_js_58.escapeHtml)(profile?.label ?? 'AI未設定')}${pending ? ` · 未回答${pending}` : ''}</small></div><button class="button ghost small" data-spectator-action="force-speaker" data-character-id="${(0, utils_js_58.escapeHtml)(card.id)}" type="button">次に話す</button></div>`;
+            return `<div class="chat-participant-row${participant.characterId === nextSpeakerId ? ' next' : ''}"><div><strong>${(0, utils_js_60.escapeHtml)(card.name)}</strong><small>${(0, utils_js_60.escapeHtml)(profile?.label ?? 'AI未設定')}${pending ? ` · 未回答${pending}` : ''}</small></div><button class="button ghost small" data-spectator-action="force-speaker" data-character-id="${(0, utils_js_60.escapeHtml)(card.id)}" type="button">次に話す</button></div>`;
         }).join('');
     }
     function revealedRoleRows(publicView = {}) {
         const rows = Array.isArray(publicView.revealedRoles) ? publicView.revealedRoles : [];
         if (!rows.length)
             return '<p class="empty-state">真役職情報はありません。</p>';
-        return `<div class="spectator-role-reveal-list">${rows.map((player) => `<div class="spectator-role-reveal-row"><span>${(0, utils_js_58.escapeHtml)(player.name)}</span><strong>${(0, utils_js_58.escapeHtml)(player.roleName)} · ${(0, utils_js_58.escapeHtml)(player.teamName)}</strong></div>`).join('')}</div>`;
+        return `<div class="spectator-role-reveal-list">${rows.map((player) => `<div class="spectator-role-reveal-row"><span>${(0, utils_js_60.escapeHtml)(player.name)}</span><strong>${(0, utils_js_60.escapeHtml)(player.roleName)} · ${(0, utils_js_60.escapeHtml)(player.teamName)}</strong></div>`).join('')}</div>`;
     }
     function renderSpectatorRoomLive({ state, groups, profiles, generating = false, autoDraining = false, nextTurn = null, publicView = {} }) {
         const omniscient = state.observationMode === 'omniscient';
@@ -37837,24 +38686,24 @@ define("js/ui/views/chat/spectatorRoomView", ["require", "exports", "js/shared/u
         const boardTitle = followingLive ? '現在の公開盤面' : '再生中の公開盤面';
         return `<section class="page chat-room-page chat-room-live spectator-room-page spectator-room-live">
     <div class="page-head">
-      <div><span class="eyebrow">WEREWOLF SPECTATOR</span><h2>人狼観戦</h2><p>${(0, utils_js_58.escapeHtml)(state.sourceGameTitle || publicView.title || 'AI人狼')} · ${omniscient ? '神視点観戦 · 真役職開示' : '推理観戦 · 公開情報のみ'}</p></div>
+      <div><span class="eyebrow">WEREWOLF SPECTATOR</span><h2>人狼観戦</h2><p>${(0, utils_js_60.escapeHtml)(state.sourceGameTitle || publicView.title || 'AI人狼')} · ${omniscient ? '神視点観戦 · 真役職開示' : '推理観戦 · 公開情報のみ'}</p></div>
       <div class="page-head-actions"><button class="button primary" data-spectator-action="advance-game-one" type="button"${generating || autoDraining ? ' disabled' : ''}>人狼卓を1手進める</button><button class="button ghost" data-spectator-action="sync-public" type="button">${syncLabel}</button><button class="button danger-ghost" data-spectator-action="new-room" type="button">観戦を終了</button></div>
     </div>
     <div class="chat-live-layout">
       <section class="panel chat-log-panel">
-        <div class="chat-log-head"><div><span class="status-pill">${omniscient ? '神視点' : '推理'}</span><span class="status-pill">${(0, utils_js_58.escapeHtml)(playbackStatus)}</span><span class="status-pill">Day ${(0, utils_js_58.escapeHtml)(String(publicView.day ?? 0))} · ${(0, utils_js_58.escapeHtml)(publicView.phaseLabel ?? '')}</span><span class="status-pill">待機 ${pendingTurns}</span><span class="status-pill">次：${(0, utils_js_58.escapeHtml)(nextCard?.name ?? '未定')} · ${(0, utils_js_58.escapeHtml)(nextLabel)}</span></div><div>${generating ? '<span class="chat-generating">観戦AI生成中…</span>' : autoDraining ? '<span class="chat-generating">コメント自動生成中</span>' : ''}</div></div>
+        <div class="chat-log-head"><div><span class="status-pill">${omniscient ? '神視点' : '推理'}</span><span class="status-pill">${(0, utils_js_60.escapeHtml)(playbackStatus)}</span><span class="status-pill">Day ${(0, utils_js_60.escapeHtml)(String(publicView.day ?? 0))} · ${(0, utils_js_60.escapeHtml)(publicView.phaseLabel ?? '')}</span><span class="status-pill">待機 ${pendingTurns}</span><span class="status-pill">次：${(0, utils_js_60.escapeHtml)(nextCard?.name ?? '未定')} · ${(0, utils_js_60.escapeHtml)(nextLabel)}</span></div><div>${generating ? '<span class="chat-generating">観戦AI生成中…</span>' : autoDraining ? '<span class="chat-generating">コメント自動生成中</span>' : ''}</div></div>
         <div class="chat-log" data-spectator-log>${state.messages.length ? state.messages.map(spectatorMessageHtml).join('') : '<div class="empty-state">まだ観戦コメントはありません。</div>'}</div>
         <div class="chat-controls"><button class="button primary" data-spectator-action="next-ai" type="button"${generating || autoDraining || generationIssue ? ' disabled' : ''}>次の観戦コメント</button>${state.autoComment ? '<span class="spectator-follow-note">観戦コメント自動生成ON</span>' : '<span class="spectator-follow-note muted">観戦コメント自動生成OFF</span>'}</div>
-        ${generationIssue ? `<div class="validation warning">${(0, utils_js_58.escapeHtml)(generationIssue)}</div>` : ''}
+        ${generationIssue ? `<div class="validation warning">${(0, utils_js_60.escapeHtml)(generationIssue)}</div>` : ''}
         <div class="chat-player-box spectator-player-box">
-          <div class="chat-player-identity">${(0, utils_js_58.escapeHtml)(state.playerName || 'プレイヤー')}として観戦チャットへ発言</div>
-          <div class="chat-player-row"><label><span>発言先</span><select data-spectator-field="human-target"><option value="">全員</option>${state.participants.map((participant) => { const card = cardById.get(participant.characterId); return card ? `<option value="${(0, utils_js_58.escapeHtml)(card.id)}">${(0, utils_js_58.escapeHtml)(card.name)}</option>` : ''; }).join('')}</select></label></div>
+          <div class="chat-player-identity">${(0, utils_js_60.escapeHtml)(state.playerName || 'プレイヤー')}として観戦チャットへ発言</div>
+          <div class="chat-player-row"><label><span>発言先</span><select data-spectator-field="human-target"><option value="">全員</option>${state.participants.map((participant) => { const card = cardById.get(participant.characterId); return card ? `<option value="${(0, utils_js_60.escapeHtml)(card.id)}">${(0, utils_js_60.escapeHtml)(card.name)}</option>` : ''; }).join('')}</select></label></div>
           <div class="spectator-player-compose"><textarea data-spectator-field="human-message" rows="2" maxlength="2000" placeholder="観戦者として感想・予想・質問などを書けます。特定の観戦者を選ぶと、そのキャラクターの専用回答ターンを追加します。"></textarea><button class="button primary spectator-send-button" data-spectator-action="send-human" type="button"${generating ? ' disabled' : ''}>送信</button></div>
         </div>
       </section>
       <aside class="chat-side-column spectator-side-column">
         <section class="panel spectator-observers-panel"><div class="panel-head"><div><span class="eyebrow">OBSERVERS</span><h3>観戦者</h3></div></div><div class="chat-participant-list">${observerParticipantRows({ state, cards, profiles, nextSpeakerId: nextTurn?.speakerId ?? null })}</div></section>
-        <section class="panel spectator-public-board"><div class="panel-head"><div><span class="eyebrow">PUBLIC BOARD</span><h3>${(0, utils_js_58.escapeHtml)(boardTitle)}</h3></div></div><div class="spectator-public-board-scroll"><dl><div><dt>局面</dt><dd>Day ${(0, utils_js_58.escapeHtml)(String(publicView.day ?? 0))} · ${(0, utils_js_58.escapeHtml)(publicView.phaseLabel ?? '')}</dd></div><div><dt>生存</dt><dd>${(0, utils_js_58.escapeHtml)(String(publicView.aliveCount ?? 0))}人</dd></div><div><dt>死亡</dt><dd>${(0, utils_js_58.escapeHtml)(String(publicView.deadCount ?? 0))}人</dd></div><div><dt>CO</dt><dd>${(0, utils_js_58.escapeHtml)(String(publicView.claimCount ?? 0))}件</dd></div><div><dt>能力結果</dt><dd>${(0, utils_js_58.escapeHtml)(String(publicView.abilityClaimCount ?? 0))}件</dd></div></dl>${omniscient ? `<div class="spectator-role-reveal"><div class="spectator-role-reveal-head"><span>GOD VIEW</span><strong>真役職・現在陣営</strong></div>${revealedRoleRows(publicView)}</div>` : ''}</div><div class="spectator-live-settings"><label class="switch-field spectator-live-switch"><input data-spectator-field="auto-comment" type="checkbox"${state.autoComment ? ' checked' : ''}><span><strong>観戦コメントを自動生成</strong><small>表示した公開ログへの反応だけを自動生成</small></span></label><label class="field"><span>反応頻度</span><select data-spectator-field="reaction-level"><option value="quiet"${state.reactionLevel === 'quiet' ? ' selected' : ''}>静か</option><option value="standard"${state.reactionLevel === 'standard' ? ' selected' : ''}>標準</option><option value="lively"${state.reactionLevel === 'lively' ? ' selected' : ''}>活発</option></select></label></div></section>
+        <section class="panel spectator-public-board"><div class="panel-head"><div><span class="eyebrow">PUBLIC BOARD</span><h3>${(0, utils_js_60.escapeHtml)(boardTitle)}</h3></div></div><div class="spectator-public-board-scroll"><dl><div><dt>局面</dt><dd>Day ${(0, utils_js_60.escapeHtml)(String(publicView.day ?? 0))} · ${(0, utils_js_60.escapeHtml)(publicView.phaseLabel ?? '')}</dd></div><div><dt>生存</dt><dd>${(0, utils_js_60.escapeHtml)(String(publicView.aliveCount ?? 0))}人</dd></div><div><dt>死亡</dt><dd>${(0, utils_js_60.escapeHtml)(String(publicView.deadCount ?? 0))}人</dd></div><div><dt>CO</dt><dd>${(0, utils_js_60.escapeHtml)(String(publicView.claimCount ?? 0))}件</dd></div><div><dt>能力結果</dt><dd>${(0, utils_js_60.escapeHtml)(String(publicView.abilityClaimCount ?? 0))}件</dd></div></dl>${omniscient ? `<div class="spectator-role-reveal"><div class="spectator-role-reveal-head"><span>GOD VIEW</span><strong>真役職・現在陣営</strong></div>${revealedRoleRows(publicView)}</div>` : ''}</div><div class="spectator-live-settings"><label class="switch-field spectator-live-switch"><input data-spectator-field="auto-comment" type="checkbox"${state.autoComment ? ' checked' : ''}><span><strong>観戦コメントを自動生成</strong><small>表示した公開ログへの反応だけを自動生成</small></span></label><label class="field"><span>反応頻度</span><select data-spectator-field="reaction-level"><option value="quiet"${state.reactionLevel === 'quiet' ? ' selected' : ''}>静か</option><option value="standard"${state.reactionLevel === 'standard' ? ' selected' : ''}>標準</option><option value="lively"${state.reactionLevel === 'lively' ? ' selected' : ''}>活発</option></select></label></div></section>
       </aside>
     </div>
   </section>`;
@@ -38649,7 +39498,7 @@ define("js/ui/controllers/chatRoomHubController", ["require", "exports", "js/ui/
  * 責務: Renderer全体の描画ライフサイクル、正式依存の接続、外観設定参照を伴う公開表示プレビュー更新、人狼進行と独立した自由チャット/人狼観戦Hub Controllerへの描画・DOMイベント委譲だけを所有する。
  * 変更ルール: 各画面操作・AI登録・訂正・人間プレイヤー操作・公開表示の処理本体はui/controllers配下を正本とし、このFacadeへ戻さない。人間操作は公開・非公開を問わず進行卓内の操作カードを使用し、役職通知だけ共通ダイアログで表示する。ゲーム準備の入力変更は状態保存と全画面再描画を分離し、setupViewの局所同期へ委譲する。自動実行状態は表示タブから独立した一時UI状態として受け取り、競合する変更操作の無効化とロック解除時の復元だけを担当する。機密表示の切替は描画後に専用イベントで通知し、automation側へ表示状態そのものを直接参照させない。AI設定同期の変更検知には、Rendererが表示・利用可否判定で参照するプロファイル属性を含める。手動多段生成のセッション遷移・プロンプトコピー・工程回答検証・フォールバック・最終登録ワークフローはManualGenerationControllerへ委譲し、このFacadeへ再実装しない。AI管理画面表示中の設定同期は画面を直接再描画せず、保存操作ごとの再描画可否はAI管理Controllerを正本とする。自由チャットと人狼観戦の状態・会話順・AI通信はchatRoomHub配下の各Controllerを正本とし、このFacadeへ実装しない。観戦側へはStore変更通知だけを渡し、公開情報の抽出・秘密境界はspectatorRoomControllerへ委譲する。キャラクターカタログ変更時の整合もHubへコールバック接続するだけとし、このFacadeで状態解釈しない。
  */
-define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "generated/buildInfo", "js/domain/policies/playerIdentityPolicy", "js/characters/config/characterTextPolicyAdapter", "js/domain/game/aiTurnRegistrationPolicy", "js/domain/night/wolfConversationPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/masonConversationPolicy", "js/services/aiTaskService", "js/prompts/response/responseParser", "js/domain/game/standardRules", "js/state/selectors", "js/public/publicSnapshot", "js/appearance/appearanceModel", "js/domain/game/workflow", "js/shared/utils", "js/ui/components/components", "js/ui/views/setup/setupView", "js/ui/views/setup/playerDetailView", "js/ui/views/records/recordsView", "js/ui/views/public/publicView", "js/ui/views/help/roleHelpView", "js/ui/views/license/licenseView", "js/ui/views/characters/characterLibraryView", "js/ui/renderFocusState", "js/ui/renderCompositionState", "js/ui/controllers/uiStateFormatters", "js/ui/views/workbench/workbenchTaskRenderer", "js/ui/views/workbench/aiResponseBoxView", "js/ui/ai/manualGenerationController", "js/ui/controllers/tabController", "js/ui/controllers/notificationController", "js/ui/controllers/setupActionController", "js/ui/controllers/aiTaskCommitController", "js/ui/controllers/workbenchActionController", "js/ui/controllers/correctionController", "js/ui/controllers/handoffController", "js/ui/controllers/publicWindowController", "js/ui/controllers/automaticActionController", "js/ui/controllers/postgameAnalysisController", "js/ui/controllers/relationshipDialogController", "js/ui/controllers/actionDispatchController", "js/ui/controllers/characterLibraryController", "js/ui/controllers/chatRoomHubController", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_25, constants_js_61, buildInfo_js_5, playerIdentityPolicy_js_6, characterTextPolicyAdapter_js_9, aiTurnRegistrationPolicy_js_3, wolfConversationPolicy_js_3, graveyardConversationPolicy_js_4, masonConversationPolicy_js_4, aiTaskService_js_3, responseParser_js_3, standardRules_js_33, selectors_js_7, publicSnapshot_js_4, appearanceModel_js_3, workflow_js_2, utils_js_59, components_js_7, setupView_js_1, playerDetailView_js_1, recordsView_js_1, publicView_js_3, roleHelpView_js_1, licenseView_js_1, characterLibraryView_js_2, renderFocusState_js_1, renderCompositionState_js_1, uiStateFormatters_js_7, workbenchTaskRenderer_js_1, aiResponseBoxView_js_1, manualGenerationController_js_2, tabController_js_1, notificationController_js_1, setupActionController_js_1, aiTaskCommitController_js_1, workbenchActionController_js_1, correctionController_js_1, handoffController_js_1, publicWindowController_js_1, automaticActionController_js_1, postgameAnalysisController_js_1, relationshipDialogController_js_1, actionDispatchController_js_1, characterLibraryController_js_1, chatRoomHubController_js_1, uiStateFormatters_js_8) {
+define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "generated/buildInfo", "js/domain/policies/playerIdentityPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/characters/config/characterTextPolicyAdapter", "js/domain/game/aiTurnRegistrationPolicy", "js/domain/night/wolfConversationPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/masonConversationPolicy", "js/services/aiTaskService", "js/prompts/response/responseParser", "js/domain/game/standardRules", "js/state/selectors", "js/public/publicSnapshot", "js/appearance/appearanceModel", "js/domain/game/workflow", "js/shared/utils", "js/ui/components/components", "js/ui/views/setup/setupView", "js/ui/views/setup/playerDetailView", "js/ui/views/records/recordsView", "js/ui/views/public/publicView", "js/ui/views/help/roleHelpView", "js/ui/views/license/licenseView", "js/ui/views/characters/characterLibraryView", "js/ui/renderFocusState", "js/ui/renderCompositionState", "js/ui/controllers/uiStateFormatters", "js/ui/views/workbench/workbenchTaskRenderer", "js/ui/views/workbench/aiResponseBoxView", "js/ui/ai/manualGenerationController", "js/ui/controllers/tabController", "js/ui/controllers/notificationController", "js/ui/controllers/setupActionController", "js/ui/controllers/aiTaskCommitController", "js/ui/controllers/workbenchActionController", "js/ui/controllers/correctionController", "js/ui/controllers/handoffController", "js/ui/controllers/publicWindowController", "js/ui/controllers/automaticActionController", "js/ui/controllers/postgameAnalysisController", "js/ui/controllers/relationshipDialogController", "js/ui/controllers/actionDispatchController", "js/ui/controllers/characterLibraryController", "js/ui/controllers/chatRoomHubController", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_26, constants_js_61, buildInfo_js_5, playerIdentityPolicy_js_6, abilityClaimTimingPolicy_js_14, characterTextPolicyAdapter_js_9, aiTurnRegistrationPolicy_js_3, wolfConversationPolicy_js_3, graveyardConversationPolicy_js_4, masonConversationPolicy_js_4, aiTaskService_js_3, responseParser_js_3, standardRules_js_33, selectors_js_7, publicSnapshot_js_4, appearanceModel_js_3, workflow_js_2, utils_js_61, components_js_7, setupView_js_1, playerDetailView_js_1, recordsView_js_1, publicView_js_3, roleHelpView_js_1, licenseView_js_1, characterLibraryView_js_2, renderFocusState_js_1, renderCompositionState_js_1, uiStateFormatters_js_7, workbenchTaskRenderer_js_1, aiResponseBoxView_js_1, manualGenerationController_js_2, tabController_js_1, notificationController_js_1, setupActionController_js_1, aiTaskCommitController_js_1, workbenchActionController_js_1, correctionController_js_1, handoffController_js_1, publicWindowController_js_1, automaticActionController_js_1, postgameAnalysisController_js_1, relationshipDialogController_js_1, actionDispatchController_js_1, characterLibraryController_js_1, chatRoomHubController_js_1, uiStateFormatters_js_8) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.AppUI = exports.formatDecisionUpdatePreview = exports.shouldHighlightFrozenPlayerPanel = void 0;
@@ -38673,7 +39522,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             this.aiExecutionSettings = { executionMode: 'automatic', profiles: [], assignments: {} };
             this.aiExecutionSettingsSignature = '';
             this.manualGenerationSessions = new Map();
-            this.publicHistoryTransmissionMode = 'compact';
+            this.publicHistoryTransmissionMode = 'delta';
             this.forceFullPublicHistoryPlayerIds = new Set();
             this.selectedWolfSpeakerId = null;
             this.selectedMasonSpeakerId = null;
@@ -38828,7 +39677,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             return this.postgameAnalysisController.setAdapter(adapter);
         }
         setPublicHistoryTransmissionMode(mode) {
-            const next = ['full', 'compact', 'delta'].includes(mode) ? mode : 'compact';
+            const next = ['full', 'compact', 'delta'].includes(mode) ? mode : 'delta';
             if (this.publicHistoryTransmissionMode === next)
                 return;
             this.publicHistoryTransmissionMode = next;
@@ -39001,6 +39850,8 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             // 実際に表示内容が変わる画面だけを更新し、自動進行用ライブビューは専用イベント側で更新する。
             if (['workbench', 'records', 'public'].includes(this.activeTab))
                 this.render();
+            else
+                this.relationshipDialogController.refresh();
             window.dispatchEvent(new CustomEvent('ai-werewolf-confidential-visibility-changed', {
                 detail: { visible: this.showConfidential },
             }));
@@ -39193,7 +40044,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             const graveyardConversation = (0, selectors_js_7.getActiveGraveyardConversation)(state);
             if (taskType === 'briefing')
                 return `briefing:${state.game.id}:${playerId}`;
-            if ((0, discussionAiTaskTypes_js_25.isNormalSpeechTask)(taskType))
+            if ((0, discussionAiTaskTypes_js_26.isNormalSpeechTask)(taskType))
                 return `${taskType}:${state.game.day}:${discussion?.round ?? 0}:${discussion?.mode ?? ''}:${discussion?.currentIndex ?? -1}:${playerId}`;
             if (taskType === 'priority-answer')
                 return `priority-answer:${state.game.day}:${slotId}:${playerId}`;
@@ -39276,14 +40127,14 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
         _renderAiPromptOnly(state, player, taskType, validTargetIds, slotId = '') {
             const { cache, error } = this._freshPromptState(state, player.id, taskType, slotId);
             if (error) {
-                return `<div class="ai-box prompt-error"><strong>プロンプト生成を停止しました</strong><p>${(0, utils_js_59.escapeHtml)(error.message)}</p><button class="button primary" type="button" disabled>プロンプトをコピー</button></div>`;
+                return `<div class="ai-box prompt-error"><strong>プロンプト生成を停止しました</strong><p>${(0, utils_js_61.escapeHtml)(error.message)}</p><button class="button primary" type="button" disabled>プロンプトをコピー</button></div>`;
             }
-            return `<div class="ai-box"><div class="ai-actions"><button class="button primary" data-action="copy-prompt" data-player-id="${(0, utils_js_59.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_59.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_59.escapeHtml)(slotId)}" type="button">${cache ? '最新プロンプトを再コピー' : 'プロンプトをコピー'}</button>${cache ? '<span class="success-text">生成済み</span>' : ''}</div>${cache ? `${this._renderPromptDiagnostics(cache)}<details class="prompt-preview"><summary>生成したプロンプトを確認</summary><textarea readonly>${(0, utils_js_59.escapeHtml)(cache.text)}</textarea></details>` : ''}</div>`;
+            return `<div class="ai-box"><div class="ai-actions"><button class="button primary" data-action="copy-prompt" data-player-id="${(0, utils_js_61.escapeHtml)(player.id)}" data-task-type="${(0, utils_js_61.escapeHtml)(taskType)}" data-slot-id="${(0, utils_js_61.escapeHtml)(slotId)}" type="button">${cache ? '最新プロンプトを再コピー' : 'プロンプトをコピー'}</button>${cache ? '<span class="success-text">生成済み</span>' : ''}</div>${cache ? `${this._renderPromptDiagnostics(cache)}<details class="prompt-preview"><summary>生成したプロンプトを確認</summary><textarea readonly>${(0, utils_js_61.escapeHtml)(cache.text)}</textarea></details>` : ''}</div>`;
         }
         _renderAiBox(state, player, taskType, validTargetIds, slotId = '') {
             const { key, cache, current, error } = this._freshPromptState(state, player.id, taskType, slotId);
             if (error) {
-                return `<div class="ai-box prompt-error"><strong>プロンプト生成を停止しました</strong><p>${(0, utils_js_59.escapeHtml)(error.message)}</p><button class="button primary" type="button" disabled>プロンプトをコピー</button><button class="button primary" type="button" disabled>解析して登録</button></div>`;
+                return `<div class="ai-box prompt-error"><strong>プロンプト生成を停止しました</strong><p>${(0, utils_js_61.escapeHtml)(error.message)}</p><button class="button primary" type="button" disabled>プロンプトをコピー</button><button class="button primary" type="button" disabled>解析して登録</button></div>`;
             }
             const manualPlan = this.aiExecutionSettings.executionMode === 'manual' ? this.manualGenerationController.manualPlan(player.id, taskType) : null;
             if (manualPlan?.depth > 1)
@@ -39353,10 +40204,11 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                 includeConfidential: this.showConfidential,
             });
             const appearance = (0, appearanceModel_js_3.resolvePublicAppearance)(this.getAppearance());
-            return `<section class="page public-page"><div class="page-head"><div><span class="eyebrow">公開専用表示</span><h2>${(0, utils_js_59.escapeHtml)(snapshot.game.title)}</h2></div><div class="page-head-actions"><button class="button ghost" data-action="export-public-html" type="button">HTML出力</button><button class="button primary" data-action="open-public-window" type="button">別ウィンドウで開く</button></div></div><div class="public-appearance-preview" data-theme="${(0, utils_js_59.escapeHtml)(appearance.theme)}" data-accent="${(0, utils_js_59.escapeHtml)(appearance.accent)}" data-font-size="${(0, utils_js_59.escapeHtml)(appearance.fontSize)}" data-effects="${appearance.effects ? 'on' : 'off'}" data-motion="${(0, utils_js_59.escapeHtml)(appearance.motion)}">${(0, publicView_js_3.renderPublicSnapshot)(snapshot)}</div></section>`;
+            return `<section class="page public-page"><div class="page-head"><div><span class="eyebrow">公開専用表示</span><h2>${(0, utils_js_61.escapeHtml)(snapshot.game.title)}</h2></div><div class="page-head-actions"><button class="button ghost" data-action="export-public-html" type="button">HTML出力</button><button class="button primary" data-action="open-public-window" type="button">別ウィンドウで開く</button></div></div><div class="public-appearance-preview" data-theme="${(0, utils_js_61.escapeHtml)(appearance.theme)}" data-accent="${(0, utils_js_61.escapeHtml)(appearance.accent)}" data-font-size="${(0, utils_js_61.escapeHtml)(appearance.fontSize)}" data-effects="${appearance.effects ? 'on' : 'off'}" data-motion="${(0, utils_js_61.escapeHtml)(appearance.motion)}">${(0, publicView_js_3.renderPublicSnapshot)(snapshot)}</div></section>`;
         }
         refreshAppearance() {
             this.publicWindowController.setAppearance(this.getAppearance());
+            this.relationshipDialogController.refreshAppearance();
             if (this.activeTab === 'public')
                 this.render();
         }
@@ -39482,7 +40334,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             try {
                 const built = this.prepareAiTask({ playerId, taskType, slotId, forceRefresh: true });
                 this.drafts.delete(`ai-response:${key}`);
-                (0, utils_js_59.copyText)((0, aiTaskService_js_3.composeManualAiPrompt)(built)).then(() => {
+                (0, utils_js_61.copyText)((0, aiTaskService_js_3.composeManualAiPrompt)(built)).then(() => {
                     if (taskType === 'briefing')
                         this.setupActionController._markBriefingShown(playerId);
                     this.toast('プロンプトをコピーしました。', 'success', { key: 'prompt-copy' });
@@ -39529,7 +40381,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                     claimedRoleId: this._controlValue(`${prefix}:role`, ''),
                     targetId,
                     result: this._controlValue(`${prefix}:result`, ''),
-                    observedDay: Number(this._controlValue(`${prefix}:day`, String(index))),
+                    ...((0, abilityClaimTimingPolicy_js_14.buildAbilityClaimTiming)(this._controlValue(`${prefix}:role`, ''), Number(this._controlValue(`${prefix}:day`, String(offset)))) ?? {}),
                     selectionBasis: this._controlValue(`${prefix}:basis`, 'no-public-information'),
                     evidenceEventIds,
                     selectionReasonAtTime: String(this._controlValue(`${prefix}:reason`, '')).trim(),
@@ -39560,7 +40412,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                     claimedRoleId: this._controlValue(`${prefix}:role`, ''),
                     targetId,
                     result: this._controlValue(`${prefix}:result`, ''),
-                    observedDay: Number(this._controlValue(`${prefix}:day`, String(index))),
+                    ...((0, abilityClaimTimingPolicy_js_14.buildAbilityClaimTiming)(this._controlValue(`${prefix}:role`, ''), Number(this._controlValue(`${prefix}:day`, String(offset)))) ?? {}),
                     selectionBasis: this._controlValue(`${prefix}:basis`, 'no-public-information'),
                     evidenceEventIds,
                     selectionReasonAtTime: String(this._controlValue(`${prefix}:reason`, '')).trim(),
@@ -39574,7 +40426,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             return this.aiTaskCommitController.commitAiTaskCandidate(...args);
         }
         _showValidation(errors, warnings = []) {
-            this.modal.innerHTML = `<div class="modal-header"><h3>AI応答を登録できません</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body"><ul class="error-list">${errors.map((item) => `<li>${(0, utils_js_59.escapeHtml)(item)}</li>`).join('')}</ul>${warnings.length ? `<h4>警告</h4><ul>${warnings.map((item) => `<li>${(0, utils_js_59.escapeHtml)(item)}</li>`).join('')}</ul>` : ''}<p>応答を修正するか、GM代理入力・ランダム決定・一時停止を使用してください。</p></div>`;
+            this.modal.innerHTML = `<div class="modal-header"><h3>AI応答を登録できません</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body"><ul class="error-list">${errors.map((item) => `<li>${(0, utils_js_61.escapeHtml)(item)}</li>`).join('')}</ul>${warnings.length ? `<h4>警告</h4><ul>${warnings.map((item) => `<li>${(0, utils_js_61.escapeHtml)(item)}</li>`).join('')}</ul>` : ''}<p>応答を修正するか、GM代理入力・ランダム決定・一時停止を使用してください。</p></div>`;
             this.modal.showModal();
         }
         _openRoleHelp() {
@@ -39628,7 +40480,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                 if (!target)
                     return;
                 const items = (Array.isArray(messages) ? messages : [messages]).map(cleanDetailError).filter(Boolean);
-                target.innerHTML = items.map((message) => `<div>× ${(0, utils_js_59.escapeHtml)(message)}</div>`).join('');
+                target.innerHTML = items.map((message) => `<div>× ${(0, utils_js_61.escapeHtml)(message)}</div>`).join('');
                 target.hidden = items.length === 0;
                 if (items.length && !focusDetailError(items[0]))
                     target.scrollIntoView({ block: 'nearest' });
@@ -39646,7 +40498,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                         return;
                     }
                     list.insertAdjacentHTML('beforeend', (0, playerDetailView_js_1.renderPlayerConversationSeedRow)({
-                        id: (0, utils_js_59.createId)('conversation-seed'),
+                        id: (0, utils_js_61.createId)('conversation-seed'),
                         subject: '',
                         tone: '',
                     }));
@@ -39707,7 +40559,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                 : state.game.correctionMode.enabled
                     ? `<hr><h4>状態訂正</h4><p class="help">公開後の役職・生死は直接書き換えられません。処刑・夜明け・ゲーム結果の公開直前に作成された復元ポイントへ戻し、正しい進行をやり直してください。</p>`
                     : '';
-            this.modal.innerHTML = `<div class="modal-header"><h3>${(0, utils_js_59.escapeHtml)(player.name)}</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body"><dl class="detail-list"><dt>種別</dt><dd>${player.controller === 'ai' ? 'AI' : '人間'}</dd><dt>状態</dt><dd>${player.alive ? '生存' : '死亡'}</dd><dt>公開CO</dt><dd>${(0, utils_js_59.escapeHtml)((0, selectors_js_7.getRoleName)(state.claims.find((claim) => claim.actorId === playerId && claim.status === 'active')?.roleId) || 'なし')}</dd>${this.showConfidential ? `<dt>真の役職</dt><dd>${(0, utils_js_59.escapeHtml)((0, selectors_js_7.getRoleName)(player.roleId))}</dd><dt>既知の人狼</dt><dd>${(0, utils_js_59.escapeHtml)((knowledge.knownWolfIds ?? []).map((id) => (0, selectors_js_7.getPlayerName)(state, id)).join('、') || 'なし')}</dd><dt>既知の共有者</dt><dd>${(0, utils_js_59.escapeHtml)((knowledge.knownMasonIds ?? []).map((id) => (0, selectors_js_7.getPlayerName)(state, id)).join('、') || 'なし')}</dd><dt>心の声</dt><dd><p class="heart-voice-text">${(0, utils_js_59.escapeHtml)(player.heartVoice || 'なし')}</p></dd><dt>自由内部メモ</dt><dd><pre>${(0, utils_js_59.escapeHtml)([player.internalMemory?.summary, ...(player.internalMemory?.notes ?? []).map((note) => `- ${note.text}`)].filter(Boolean).join('\n\n') || 'なし')}</pre></dd>` : ''}</dl>${correctionHtml}</div>`;
+            this.modal.innerHTML = `<div class="modal-header"><h3>${(0, utils_js_61.escapeHtml)(player.name)}</h3><button class="button icon ghost" data-modal-close type="button">×</button></div><div class="modal-body"><dl class="detail-list"><dt>種別</dt><dd>${player.controller === 'ai' ? 'AI' : '人間'}</dd><dt>状態</dt><dd>${player.alive ? '生存' : '死亡'}</dd><dt>公開CO</dt><dd>${(0, utils_js_61.escapeHtml)((0, selectors_js_7.getRoleName)(state.claims.find((claim) => claim.actorId === playerId && claim.status === 'active')?.roleId) || 'なし')}</dd>${this.showConfidential ? `<dt>真の役職</dt><dd>${(0, utils_js_61.escapeHtml)((0, selectors_js_7.getRoleName)(player.roleId))}</dd><dt>既知の人狼</dt><dd>${(0, utils_js_61.escapeHtml)((knowledge.knownWolfIds ?? []).map((id) => (0, selectors_js_7.getPlayerName)(state, id)).join('、') || 'なし')}</dd><dt>既知の共有者</dt><dd>${(0, utils_js_61.escapeHtml)((knowledge.knownMasonIds ?? []).map((id) => (0, selectors_js_7.getPlayerName)(state, id)).join('、') || 'なし')}</dd><dt>心の声</dt><dd><p class="heart-voice-text">${(0, utils_js_61.escapeHtml)(player.heartVoice || 'なし')}</p></dd><dt>自由内部メモ</dt><dd><pre>${(0, utils_js_61.escapeHtml)([player.internalMemory?.summary, ...(player.internalMemory?.notes ?? []).map((note) => `- ${note.text}`)].filter(Boolean).join('\n\n') || 'なし')}</pre></dd>` : ''}</dl>${correctionHtml}</div>`;
             const correctionButton = this.modal.querySelector('#correct-player-button');
             if (correctionButton)
                 correctionButton.addEventListener('click', () => {
@@ -39825,7 +40677,7 @@ define("js/ui/appearance/appearanceView", ["require", "exports", "js/appearance/
  * 責務: 管理画面・公開表示の外観設定dialogの開閉、公開表示の配色同期を含むフォーム変更の即時プレビュー、Mainへの永続化、初期設定へのリセットを所有する。
  * 変更ルール: CSSトークン定義・ゲーム状態・AI設定を変更しない。公開表示ではテーマとアクセントだけを一括同期し、文字サイズ・背景効果・アニメーションは常に独立値として保存する。外観設定は専用IPCだけで直列保存し、保存成功した設定をconfirmed状態の正本とする。最新保存に失敗した場合は未保存プレビューをconfirmed状態へ戻し、ブラウザストレージへ保存しない。
  */
-define("js/ui/appearance/appearanceController", ["require", "exports", "js/appearance/appearanceTheme", "js/appearance/appearanceModel", "js/ui/appearance/appearanceView"], function (require, exports, appearanceTheme_js_2, appearanceModel_js_5, appearanceView_js_1) {
+define("js/ui/appearance/appearanceController", ["require", "exports", "js/appearance/appearanceTheme", "js/appearance/appearanceModel", "js/ui/appearance/appearanceView"], function (require, exports, appearanceTheme_js_3, appearanceModel_js_5, appearanceView_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createAppearanceController = createAppearanceController;
@@ -39880,7 +40732,7 @@ define("js/ui/appearance/appearanceController", ["require", "exports", "js/appea
         let saveSequence = 0;
         let saveQueue = Promise.resolve();
         function publish(next) {
-            settings = (0, appearanceTheme_js_2.applyManagementAppearance)(next);
+            settings = (0, appearanceTheme_js_3.applyManagementAppearance)(next);
             onChange?.(structuredClone(settings));
         }
         function rerenderOpenDialog() {
@@ -40436,7 +41288,7 @@ define("js/app/globalErrorReporter", ["require", "exports"], function (require, 
  * 責務: 現在のゲーム状態だけから、全自動進行が次に実行する一つの操作を純粋導出する。
  * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、機密会話の通常次話者も各会話ポリシーのround-robin導出を使用する。AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。
  */
-define("js/domain/game/automaticActionPolicy", ["require", "exports", "js/config/generationTaskCategories", "js/domain/game/workflow", "js/domain/game/standardRules", "js/domain/game/playerStatus", "js/state/selectors", "js/domain/night/graveyardConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/night/wolfConversationPolicy"], function (require, exports, generationTaskCategories_js_4, workflow_js_3, standardRules_js_34, playerStatus_js_13, selectors_js_8, graveyardConversationPolicy_js_5, masonConversationPolicy_js_5, wolfConversationPolicy_js_4) {
+define("js/domain/game/automaticActionPolicy", ["require", "exports", "js/config/generationTaskCategories", "js/domain/game/workflow", "js/domain/game/standardRules", "js/domain/game/playerStatus", "js/state/selectors", "js/domain/night/graveyardConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/night/wolfConversationPolicy"], function (require, exports, generationTaskCategories_js_4, workflow_js_3, standardRules_js_34, playerStatus_js_15, selectors_js_8, graveyardConversationPolicy_js_5, masonConversationPolicy_js_5, wolfConversationPolicy_js_4) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.AUTOMATIC_ACTION_POLICY = void 0;
@@ -40449,7 +41301,7 @@ define("js/domain/game/automaticActionPolicy", ["require", "exports", "js/config
         return Object.freeze({ kind, ...extra });
     }
     function firstDiscussionCandidate(state) {
-        return (0, standardRules_js_34.getAlivePlayers)(state).find((player) => ((0, playerStatus_js_13.canSpeakDuringDay)(state, player.id)
+        return (0, standardRules_js_34.getAlivePlayers)(state).find((player) => ((0, playerStatus_js_15.canSpeakDuringDay)(state, player.id)
             && Number(state.discussion?.remainingByPlayer?.[player.id] ?? 0) > 0))?.id ?? null;
     }
     function taskPlayerId(state, task) {
@@ -41528,7 +42380,7 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
                 schemaVersion: SETTINGS_SCHEMA_VERSION,
                 executionMode: 'automatic',
                 autoRun: { intervalMs: 450, maxConsecutiveSteps: 500, autoConfirmWarnings: true, autoPublish: true },
-                aiOptions: { publicHistoryMode: 'compact', apiErrorAction: 'retry', responseRecoveryMode: 'repair-regenerate', apiLogScope: 'errors' },
+                aiOptions: { publicHistoryMode: 'delta', apiErrorAction: 'retry', responseRecoveryMode: 'repair-regenerate', apiLogScope: 'errors' },
                 profiles: [{
                         id: 'profile-demo',
                         label: 'デモAI',
@@ -42126,7 +42978,7 @@ define("js/automation/desktopAutomationManagementView", ["require", "exports"], 
             <div class="ai-settings-body ai-option-groups">
               <section class="ai-option-group" aria-labelledby="ai-auto-run-options-heading"><div class="ai-option-group-head"><h4 id="ai-auto-run-options-heading">自動実行</h4><p>操作間隔は各処理の待ち時間、連続ステップ上限は1回の自動実行で進める最大回数です。</p></div><div class="form-grid ai-options-grid"><label class="field"><span>操作間隔（ミリ秒）</span><input name="intervalMs" type="number" min="100" max="10000" value="${controller.settings.autoRun.intervalMs}"></label><label class="field"><span>連続ステップ上限</span><input name="maxConsecutiveSteps" type="number" min="1" max="5000" value="${controller.settings.autoRun.maxConsecutiveSteps}"></label></div></section>
               <section class="ai-option-group" aria-labelledby="ai-history-options-heading"><div class="ai-option-group-head"><h4 id="ai-history-options-heading">履歴・エラー処理</h4><p>AIへ送る履歴、失敗時の再試行、ログ保存を設定します。</p></div><div class="form-grid ai-options-grid">
-                <label class="field full"><span>公開履歴の送信方式</span><select name="publicHistoryMode"><option value="full" ${controller.settings.aiOptions.publicHistoryMode === 'full' ? 'selected' : ''}>全公開履歴を無圧縮で送信</option><option value="compact" ${controller.settings.aiOptions.publicHistoryMode === 'compact' ? 'selected' : ''}>過去履歴を圧縮し、前回正常回答後は全文で送信</option><option value="delta" ${controller.settings.aiOptions.publicHistoryMode === 'delta' ? 'selected' : ''}>前回の正常回答後に増えた公開履歴だけを送信</option></select><small>通常は「過去履歴を圧縮」を推奨します。文脈不足を感じる場合は「全公開履歴」を選んでください。「差分」は送信量を抑えられますが、モデルによっては文脈が不足しやすくなります。</small></label>
+                <label class="field full"><span>公開履歴の送信方式</span><select name="publicHistoryMode"><option value="full" ${controller.settings.aiOptions.publicHistoryMode === 'full' ? 'selected' : ''}>全公開履歴を無圧縮で送信</option><option value="compact" ${controller.settings.aiOptions.publicHistoryMode === 'compact' ? 'selected' : ''}>過去履歴を圧縮し、前回正常回答後は全文で送信</option><option value="delta" ${controller.settings.aiOptions.publicHistoryMode === 'delta' ? 'selected' : ''}>前回の正常回答後に増えた公開履歴だけを送信</option></select><small>通常は「前回の正常回答後に増えた公開履歴だけを送信」を使用します。文脈不足を感じる場合は「過去履歴を圧縮」、さらに必要な場合は「全公開履歴」を選んでください。</small></label>
                 <label class="field"><span>APIエラー時</span><select name="apiErrorAction"><option value="retry" ${controller.settings.aiOptions.apiErrorAction === 'retry' ? 'selected' : ''}>同じ内容で1回再試行</option><option value="full-history-retry" ${controller.settings.aiOptions.apiErrorAction === 'full-history-retry' ? 'selected' : ''}>最新状態を再取得し、公開履歴全文で1回再試行</option><option value="stop" ${controller.settings.aiOptions.apiErrorAction === 'stop' ? 'selected' : ''}>停止して手動対応</option></select></label>
                 <label class="field"><span>AI回答エラー時</span><select name="responseRecoveryMode">${responseRecoveryModeOptions(controller.settings.aiOptions.responseRecoveryMode)}</select><small>部分修復や再生成を選んだ場合でも、API通信エラーの再試行を含めて1タスク最大4回までです。</small></label>
                 <label class="field full"><span>APIログ保存</span><select name="apiLogScope"><option value="none" ${controller.settings.aiOptions.apiLogScope === 'none' ? 'selected' : ''}>保存しない</option><option value="errors" ${controller.settings.aiOptions.apiLogScope === 'errors' ? 'selected' : ''}>エラー時だけ保存</option><option value="all" ${controller.settings.aiOptions.apiLogScope === 'all' ? 'selected' : ''}>すべて保存</option></select><small>トークン数と呼び出し回数の集計は、ログ本文を保存しない場合も残ります。</small></label>
@@ -42210,7 +43062,7 @@ define("js/automation/desktopAutomationManagementView", ["require", "exports"], 
                     autoPublish: form.elements.autoPublish.checked,
                 },
                 aiOptions: {
-                    publicHistoryMode: ['compact', 'delta'].includes(form.elements.publicHistoryMode.value) ? form.elements.publicHistoryMode.value : 'full',
+                    publicHistoryMode: ['full', 'compact', 'delta'].includes(form.elements.publicHistoryMode.value) ? form.elements.publicHistoryMode.value : 'delta',
                     apiErrorAction: form.elements.apiErrorAction.value,
                     responseRecoveryMode: responseRetryPolicy.normalizeRecoveryMode(form.elements.responseRecoveryMode.value),
                     apiLogScope: form.elements.apiLogScope.value,
@@ -42906,7 +43758,7 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
         let autosaveDirty = false;
         let autosaveWriteChain = Promise.resolve();
         function applyPromptHistorySetting() {
-            runtime().setPublicHistoryTransmissionMode(controller.settings.aiOptions?.publicHistoryMode ?? 'compact');
+            runtime().setPublicHistoryTransmissionMode(controller.settings.aiOptions?.publicHistoryMode ?? 'delta');
         }
         function applyAiExecutionSettings() {
             runtime().setAiExecutionSettings(controller.settings);
@@ -42916,13 +43768,28 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
             runtime().refreshTab('ai-management');
         }
         async function persistSettings(settings, { refresh = true, statusMessage = '' } = {}) {
-            controller.settings = await bridge.saveSettings(settings);
+            const previousSettings = controller.settings;
+            const savedSettings = await bridge.saveSettings(settings);
+            const previousById = new Map((previousSettings?.profiles ?? []).map((profile) => [profile.id, profile]));
+            const invalidatedKeyProfiles = (savedSettings.profiles ?? []).filter((profile) => {
+                const previous = previousById.get(profile.id);
+                return previous
+                    && previous.provider === profile.provider
+                    && previous.endpoint !== profile.endpoint
+                    && previous.hasApiKey === true
+                    && profile.hasApiKey === false;
+            });
+            controller.settings = savedSettings;
             applyPromptHistorySetting();
             applyAiExecutionSettings();
             if (refresh)
                 refreshVisibleUi();
             if (statusMessage)
                 setStatus(statusMessage, 'success');
+            if (invalidatedKeyProfiles.length) {
+                const labels = invalidatedKeyProfiles.map((profile) => profile.label).filter(Boolean).join('、');
+                runtime().toast(`${labels || 'AIプロファイル'}の接続先を変更したため、APIキーを再入力してください。`, 'warning');
+            }
             return controller.settings;
         }
         async function reconcileAssignments() {
@@ -43373,7 +44240,7 @@ define("js/automation/profileEditorController", ["require", "exports"], function
  * 責務: AIプロファイルJSONパッケージの出力・読込、製品schema migration後の厳格な現行形式検証、依存プロファイル収集、読込時ID再採番と生成工程参照の付け替えを所有する。
  * 変更ルール: APIキー・暗号化キー・使用量・参加者割り当ては転送対象に含めない。schemaVersionは共有dataCompatibilityを正本とし、旧schema分岐を本モジュールへ追加しない。設定の最終sanitize・永続化はMainのsettingsStoreへ委譲する。
  */
-define("js/automation/aiProfileTransferController", ["require", "exports", "js/config/dataCompatibilityAdapter", "js/shared/utils"], function (require, exports, dataCompatibilityAdapter_js_5, utils_js_60) {
+define("js/automation/aiProfileTransferController", ["require", "exports", "js/config/dataCompatibilityAdapter", "js/shared/utils"], function (require, exports, dataCompatibilityAdapter_js_5, utils_js_62) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createAiProfileTransferController = createAiProfileTransferController;
@@ -43531,7 +44398,7 @@ define("js/automation/aiProfileTransferController", ["require", "exports", "js/c
                 rootProfileId: root.id,
                 profiles: dependencies.map((profile) => exportableProfile(profile, normalizeGenerationSettings)),
             };
-            (0, utils_js_60.downloadJson)(`ai-profile-${(0, utils_js_60.sanitizeFilenamePart)(root.label, { fallback: 'profile', whitespaceReplacement: '-', maxLength: 60 })}.json`, documentValue);
+            (0, utils_js_62.downloadJson)(`ai-profile-${(0, utils_js_62.sanitizeFilenamePart)(root.label, { fallback: 'profile', whitespaceReplacement: '-', maxLength: 60 })}.json`, documentValue);
             runtime().toast(`「${root.label}」のプロファイルデータを出力しました。APIキーは含めていません${dependencies.length > 1 ? `（生成工程の依存プロファイル${dependencies.length - 1}件を同梱）` : ''}。`, 'success');
         }
         async function importProfileJsonFile(file) {
@@ -43541,7 +44408,7 @@ define("js/automation/aiProfileTransferController", ["require", "exports", "js/c
                 throw new RangeError('AIプロファイルJSONは2MB以下にしてください。');
             let raw;
             try {
-                raw = JSON.parse(await (0, utils_js_60.readFileText)(file));
+                raw = JSON.parse(await (0, utils_js_62.readFileText)(file));
             }
             catch (error) {
                 if (error instanceof SyntaxError)
@@ -43880,9 +44747,9 @@ define("js/automation/aiManagementController", ["require", "exports"], function 
     exports.createAiManagementController = createAiManagementController;
     function createAiManagementController(context) {
         const { AI_COMMIT_RESULT_EVENT, DEFAULT_OLLAMA_THINKING_LEVEL, LOCAL_SERVER_PRESETS, assignmentValidation, automationRunControl, bridge, bulkAssignmentProfileId, captureManagementSectionState, collectManagementForm, controller, createProfileId, currentGameState, defaultGenerationSettings, emptyUsage, enableLiveView, firstEnabledProfileId, handleManualAiCommitResult, hideLiveView, isAutomationAiRequestLocked, isAutomationMutationLocked, normalizeGenerationSettings, openHumanTask, openManualAiTask, performOneStep, persistSettings, playerName, prepareLiveWorkbench, refreshLiveView, refreshVisibleUi, reorderedProfiles, resumeAutomaticAfterHuman, runLoop, runtime, setAutomationMode, setManagementDirty, setStatus, stopLoop, showPendingManualAiTask, syncExecutionModeWorkbenchView, updateButtons, updateGenerationCardUi, profileEditorController, aiProfileTransferController, assignmentController, generationTestController, } = context;
-        const { switchProfileEditor, switchProfileEditorTab, syncProfileProviderFields, updateProfileEditorPreview, updateManagementReadouts, applyManagementExecutionModeUi, } = profileEditorController;
+        const { switchProfileEditor, switchProfileEditorTab, syncProfileProviderFields, updateProfileEditorPreview, } = profileEditorController;
         const { exportSelectedProfileJson, importProfileJsonFile } = aiProfileTransferController;
-        const { saveAssignment, showBulkAssignmentFeedback } = assignmentController;
+        const { updateManagementReadouts, applyManagementExecutionModeUi, saveAssignment, showBulkAssignmentFeedback, } = assignmentController;
         const { testProfile, generationCandidateAnswer, buildGenerationTestStageSnapshots, testGenerationPipeline, listProfileModels, } = generationTestController;
         const LOCKED_AI_ACTIONS = new Set([
             'open-manual', 'step', 'add-profile', 'duplicate-profile', 'move-profile-up',
@@ -44950,7 +45817,7 @@ ${renderPromptDataBlock('postgame-response-contract', { completeExample: EXAMPLE
  * 責務: デスクトップ自動化の起動、ES Moduleとして静的に解決した正式依存の生成、各Coordinator／Controllerの接続だけを所有する。
  * 変更ルール: 自動進行、手動生成、人間入力、設定保存、AI管理、進行表示の処理本体はautomation配下の専用モジュールを正本とし、このFacadeへ戻さない。観戦画面から人狼卓を1手進める場合もAI管理ControllerのrunSingleAutomaticStepへ委譲する公開橋だけを提供し、進行規則をFacadeへ複製しない。初期設定読込後の進行卓表示方式もliveProgressControllerへ委譲し、executionModeと表示方式を同期する。循環する生成時依存だけを単一の遅延解決レジストリで接続し、automation内部をwindowグローバル経由で参照しない。個別APIごとの代理関数を追加しない。機密表示はAppUIの専用イベントから表示フラグだけを受け取り、完全状態の秘密情報をFacadeで加工しない。ゲーム準備の局所入力通知は自動保存と明示要求された装飾だけを処理し、割り当て整合・実況・全体ステータス再計算を起動しない。
  */
-define("js/automation/desktopAutomation", ["require", "exports", "js/shared/utils", "js/automation/runtimeAccess", "js/automation/automationRunControl", "js/automation/automaticAiExecutor", "js/automation/desktopAutomationConfig", "js/automation/desktopAutomationManagementView", "js/automation/automationStatusController", "js/automation/liveProgressController", "js/automation/automaticRunCoordinator", "js/automation/settingsPersistenceCoordinator", "js/automation/humanTaskCoordinator", "js/automation/manualTaskCoordinator", "js/automation/profileEditorController", "js/automation/aiProfileTransferController", "js/automation/assignmentController", "js/automation/generationTestController", "js/automation/aiManagementController", "js/automation/setupDecorationController", "js/automation/postgameAnalysisAdapter"], function (require, exports, utils_js_61, runtimeAccess, automationRunControl, automaticAiExecutorApi, desktopAutomationConfig_js_1, desktopAutomationManagementView_js_1, automationStatusController_js_1, liveProgressController_js_1, automaticRunCoordinator_js_1, settingsPersistenceCoordinator_js_1, humanTaskCoordinator_js_1, manualTaskCoordinator_js_1, profileEditorController_js_1, aiProfileTransferController_js_1, assignmentController_js_1, generationTestController_js_1, aiManagementController_js_1, setupDecorationController_js_1, postgameAnalysisAdapter_js_1) {
+define("js/automation/desktopAutomation", ["require", "exports", "js/shared/utils", "js/automation/runtimeAccess", "js/automation/automationRunControl", "js/automation/automaticAiExecutor", "js/automation/desktopAutomationConfig", "js/automation/desktopAutomationManagementView", "js/automation/automationStatusController", "js/automation/liveProgressController", "js/automation/automaticRunCoordinator", "js/automation/settingsPersistenceCoordinator", "js/automation/humanTaskCoordinator", "js/automation/manualTaskCoordinator", "js/automation/profileEditorController", "js/automation/aiProfileTransferController", "js/automation/assignmentController", "js/automation/generationTestController", "js/automation/aiManagementController", "js/automation/setupDecorationController", "js/automation/postgameAnalysisAdapter"], function (require, exports, utils_js_63, runtimeAccess, automationRunControl, automaticAiExecutorApi, desktopAutomationConfig_js_1, desktopAutomationManagementView_js_1, automationStatusController_js_1, liveProgressController_js_1, automaticRunCoordinator_js_1, settingsPersistenceCoordinator_js_1, humanTaskCoordinator_js_1, manualTaskCoordinator_js_1, profileEditorController_js_1, aiProfileTransferController_js_1, assignmentController_js_1, generationTestController_js_1, aiManagementController_js_1, setupDecorationController_js_1, postgameAnalysisAdapter_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     (function startDesktopAutomation() {
@@ -44984,7 +45851,7 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             settingsSchema,
             getController: () => controller,
             getProfileById: (profileId) => profileById(profileId),
-            escapeHtml: (value) => (0, utils_js_61.escapeHtml)(value),
+            escapeHtml: (value) => (0, utils_js_63.escapeHtml)(value),
             endpointPolicy,
         });
         const { PROVIDER_LABELS, OLLAMA_THINKING_LEVEL_LABELS, PROVIDER_DEFAULTS, GENERATION_TASK_OVERRIDE_DEFS, GENERATION_DEPTH_DEFS, GENERATION_STAGE_LABELS, COPY_BOUNDARY_STOP_CODES, generationFailureIssueCodes, generationFailureRequiresStop, defaultGenerationSettings, normalizeGenerationSettings, generationDepthDef, generationStagesForTask, effectiveGenerationDepthForTask, generationTaskPlans, generationSummary, generationFlowHtml, generationProfileOptions, generationDepthOptionsHtml, generationTaskOverrideHtml, generationRequiredStages, generationExecutorProfile, generationMaximumNormalCalls, generationCallBreakdown, generationExecutionPhrase, naturalGenerationSummary, generationSectionHtml, updateGenerationCardUi, defaultSettings, emptyUsage, addUsage, } = desktopConfig;
@@ -45105,7 +45972,7 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             responseRetryPolicy,
             responseRecoveryModeOptions: (value) => responseRecoveryModeOptions(value),
             getPhaseLabels: () => PHASE_LABELS,
-            escapeHtml: (value) => (0, utils_js_61.escapeHtml)(value),
+            escapeHtml: (value) => (0, utils_js_63.escapeHtml)(value),
             endpointPolicy,
             dataTransmissionPolicy,
         });
@@ -45246,7 +46113,7 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             discoveredModels,
             dispatchInput,
             emptyUsage,
-            escapeHtml: utils_js_61.escapeHtml,
+            escapeHtml: utils_js_63.escapeHtml,
             enableLiveView,
             syncExecutionModeWorkbenchView,
             executeAiStep,
@@ -45472,7 +46339,7 @@ define("js/automation/automationEntry", ["require", "exports", "js/ai/apiRetryPo
  * 責務: アプリ起動、モジュール接続、Renderer未捕捉エラー監視、外観設定の初期読込とdialog接続、正式タブ登録、グローバルUI操作、ゲームデータJSON入出力、新規ゲームと設定引継ぎ再開始の確認、デスクトップ自動保存、自動進行通知制御、AI項目単位回収後の自動代替登録APIの公開窓口を担当する。
  * 変更ルール: ゲーム規則・AI代替規則・画面描画・通知表示ポリシー・インポート参照検査・設定引継ぎ対象の選別は各専用モジュールへ委譲する。ゲームデータ転送の実処理は本モジュールを正本とし、ゲーム準備／記録・管理の表示層から送られる要求だけを受ける。破棄確認は同期ブラウザモーダルを使わず専用dialogを閉じた次フレームで初期化する。自動夜進行の通知秘匿スコープもAppUIへ委譲し、進行層へ人物名置換規則を複製しない。ゲーム準備の局所入力変更はイベント詳細を付け、不要な自動化側の全体更新を起動しない。ブラウザストレージへは読み書きしない。デスクトップ自動保存もゲームデータ読込と同じ製品schema互換ポリシーを通し、旧schemaは一方向migration、未来schemaは拒否する。現在扱えないゲーム事実は補修せず拒否し、利用不能な履歴エントリだけは個別除外して警告する。
  */
-define("js/app/bootstrap", ["require", "exports", "js/config/constants", "generated/buildInfo", "js/state/stateStore", "js/state/autosaveState", "js/state/stateImport", "js/ui/AppUI", "js/appearance/appearanceModel", "js/appearance/appearanceTheme", "js/ui/appearance/appearanceController", "js/shared/utils", "js/services/generationDepthPolicy", "js/services/generationPipeline", "js/services/generationPipelineTestFixture", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/stages/generationStageResponse", "js/app/runtimeFacade", "js/app/globalErrorReporter", "js/domain/game/automaticActionPolicy", "js/privacy/dataTransmissionNotice", "js/automation/automationEntry"], function (require, exports, constants_js_62, buildInfo_js_6, stateStore_js_4, autosaveState_js_1, stateImport_js_1, AppUI_js_1, appearanceModel_js_6, appearanceTheme_js_3, appearanceController_js_1, utils_js_62, generationDepthPolicy_js_2, generationPipeline_js_1, generationPipelineTestFixture_js_1, generationStagePromptPolicy_js_2, generationStagePromptBuilder_js_2, generationStageResponse_js_2, runtimeFacade_js_1, globalErrorReporter_js_1, automaticActionPolicy_js_1) {
+define("js/app/bootstrap", ["require", "exports", "js/config/constants", "generated/buildInfo", "js/state/stateStore", "js/state/autosaveState", "js/state/stateImport", "js/ui/AppUI", "js/appearance/appearanceModel", "js/appearance/appearanceTheme", "js/ui/appearance/appearanceController", "js/shared/utils", "js/services/generationDepthPolicy", "js/services/generationPipeline", "js/services/generationPipelineTestFixture", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/stages/generationStageResponse", "js/app/runtimeFacade", "js/app/globalErrorReporter", "js/domain/game/automaticActionPolicy", "js/privacy/dataTransmissionNotice", "js/automation/automationEntry"], function (require, exports, constants_js_62, buildInfo_js_6, stateStore_js_4, autosaveState_js_1, stateImport_js_1, AppUI_js_1, appearanceModel_js_6, appearanceTheme_js_4, appearanceController_js_1, utils_js_64, generationDepthPolicy_js_2, generationPipeline_js_1, generationPipelineTestFixture_js_1, generationStagePromptPolicy_js_2, generationStagePromptBuilder_js_2, generationStageResponse_js_2, runtimeFacade_js_1, globalErrorReporter_js_1, automaticActionPolicy_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function resolveInitialState() {
@@ -45589,8 +46456,8 @@ define("js/app/bootstrap", ["require", "exports", "js/config/constants", "genera
         });
         function exportGameData() {
             const state = store.getState();
-            const safeTitle = (0, utils_js_62.sanitizeFilenamePart)(state.game.title, { fallback: 'ai-werewolf' });
-            (0, utils_js_62.downloadJson)(`${safeTitle}-revision-${state.revision}.json`, state);
+            const safeTitle = (0, utils_js_64.sanitizeFilenamePart)(state.game.title, { fallback: 'ai-werewolf' });
+            (0, utils_js_64.downloadJson)(`${safeTitle}-revision-${state.revision}.json`, state);
             ui.toast('履歴・復元ポイントを含むゲームデータを出力しました。', 'success');
         }
         const importInput = document.querySelector('#game-data-import-file');
@@ -45610,7 +46477,7 @@ define("js/app/bootstrap", ["require", "exports", "js/config/constants", "genera
             if (!file)
                 return;
             try {
-                const parsed = JSON.parse(await (0, utils_js_62.readFileText)(file));
+                const parsed = JSON.parse(await (0, utils_js_64.readFileText)(file));
                 const importWarnings = [];
                 const prepared = (0, stateImport_js_1.prepareImportedState)(parsed, {
                     onWarning: (warnings) => importWarnings.push(...warnings),
@@ -45673,7 +46540,7 @@ define("js/app/bootstrap", ["require", "exports", "js/config/constants", "genera
         });
     }
     const initialAppearance = (0, appearanceModel_js_6.normalizeAppearanceSettings)(window.desktopWerewolf?.loadAppearanceSync?.() ?? (0, appearanceModel_js_6.defaultAppearanceSettings)());
-    (0, appearanceTheme_js_3.applyManagementAppearance)(initialAppearance);
+    (0, appearanceTheme_js_4.applyManagementAppearance)(initialAppearance);
     const initial = resolveInitialState();
     startApplication(initial.state, { restored: initial.restored, appearanceSettings: initialAppearance });
     console.info(`AI人狼マネージャー v${constants_js_62.APP_VERSION} / ${buildInfo_js_6.BUILD_ID} / Prompt ${constants_js_62.PROMPT_SPEC_VERSION}`);
@@ -45712,6 +46579,11 @@ define("shared/appearanceSchema", [], function () {
 define("js/ai/responseRetryPolicy", [], function () {
   const api = globalThis["AiWerewolfResponseRetryPolicy"];
   if (!api) throw new Error("クラシックスクリプトを初期化できません: js/ai/responseRetryPolicy");
+  return api;
+});
+define("shared/userCharacterLibraryPolicy", [], function () {
+  const api = globalThis["AiWerewolfUserCharacterLibraryPolicy"];
+  if (!api) throw new Error("クラシックスクリプトを初期化できません: shared/userCharacterLibraryPolicy");
   return api;
 });
 define("js/ai/apiRetryPolicy", [], function () {

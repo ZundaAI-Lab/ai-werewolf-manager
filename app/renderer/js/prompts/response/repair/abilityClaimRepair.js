@@ -64,15 +64,19 @@ function repairAbilityClaims(state, payload, operations) {
       return claim;
     }
 
-    repairExactKeys(claim, path, ['intent', 'roleId', 'resultDay', 'target', 'result', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
-    removeNullOptionalFields(claim, ['roleId', 'resultDay', 'target', 'result'], path, operations);
+    repairExactKeys(claim, path, ['intent', 'roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result', 'selectionBasis', 'evidenceRefs', 'selectionReasonAtTime'], operations);
+    removeNullOptionalFields(claim, ['roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'], path, operations);
     normalizeEnumField(claim, 'roleId', path, operations);
     normalizeEnumField(claim, 'result', path, operations);
     normalizeEnumField(claim, 'selectionBasis', path, operations);
-    if (typeof claim.resultDay === 'string' && /^\d+$/u.test(claim.resultDay.trim())) {
-      claim.resultDay = Number(claim.resultDay);
-      operation(operations, 'NUMBER_STRING_NORMALIZED', `${path}.resultDay`, `${path}.resultDayを整数へ変換しました。`);
+    for (const key of ['actionDay', 'availableDay']) {
+      if (typeof claim[key] === 'string' && /^\d+$/u.test(claim[key].trim())) {
+        claim[key] = Number(claim[key]);
+        operation(operations, 'NUMBER_STRING_NORMALIZED', `${path}.${key}`, `${path}.${key}を整数へ変換しました。`);
+      }
     }
+    normalizeEnumField(claim, 'actionPhase', path, operations);
+    normalizeEnumField(claim, 'availablePhase', path, operations);
     if (typeof claim.target === 'string') {
       const player = resolvePlayer(state, claim.target);
       if (player && player.name !== claim.target) {
@@ -81,15 +85,15 @@ function repairAbilityClaims(state, payload, operations) {
       }
     }
     normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations);
-    const requiredKeys = ['roleId', 'resultDay', 'target', 'result'];
+    const requiredKeys = ['roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'];
     if (requiredKeys.some((key) => !Object.hasOwn(claim, key) || claim[key] === null || claim[key] === '')) {
       operation(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は騙り能力結果を確定できないため省略しました。`);
       return null;
     }
-    if (claim.roleId === 'medium' && Number.isInteger(claim.resultDay) && typeof claim.target === 'string') {
+    if (claim.roleId === 'medium' && Number.isInteger(claim.actionDay) && typeof claim.target === 'string') {
       const target = resolvePlayer(state, claim.target);
       const requirements = target ? resolvePublicAbilityClaimRequirements(state, {
-        roleId: 'medium', observedDay: claim.resultDay, targetId: target.id,
+        roleId: 'medium', actionDay: claim.actionDay, targetId: target.id,
       }) : null;
       if (requirements?.requiredEvidenceRefs?.length) {
         claim.selectionBasis = 'rule-forced';
@@ -98,7 +102,7 @@ function repairAbilityClaims(state, payload, operations) {
         operation(operations, 'MEDIUM_TIMELINE_NORMALIZED', path, '霊能結果の選定根拠を対応する処刑履歴へ固定しました。');
       }
     } else {
-      const allowedRefs = new Set(getAbilityEvidenceWindow(state, claim.resultDay).map((event) => Number(event.sequence)));
+      const allowedRefs = new Set(getAbilityEvidenceWindow(state, claim.actionDay).map((event) => Number(event.sequence)));
       if (Array.isArray(claim.evidenceRefs)) {
         const validRefs = claim.evidenceRefs.filter((ref) => allowedRefs.has(Number(ref)));
         if (!deepEqual(validRefs, claim.evidenceRefs)) {

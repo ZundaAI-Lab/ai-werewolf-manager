@@ -9,6 +9,7 @@ import {
 } from '../../config/constants.js';
 
 import { publicAbilityResultLabel } from '../../domain/policies/publicAbilityClaimPolicy.js';
+import { formatAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import { renderPromptDataBlock } from '../serialization/promptDataSerializer.js';
 
 const COMPACT_ROLE_DESCRIPTIONS = Object.freeze({
@@ -193,8 +194,9 @@ ${renderPromptDataBlock('call-names', rows)}
 export function formatAbilityClaim(context, claim) {
   const roleName = ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId ?? '能力';
   const actionLabel = { guard: '護衛', namahage: '訪問', snowWoman: '凍結' }[claim.claimedRoleId] ?? null;
-  if (actionLabel) return `${playerName(context, claim.actorId)}: Day ${claim.observedDay} ${roleName}履歴 → ${playerName(context, claim.targetId)}へ${actionLabel}`;
-  return `${playerName(context, claim.actorId)}: Day ${claim.observedDay} ${roleName}結果 → ${playerName(context, claim.targetId)}は${publicAbilityResultLabel(claim.result, claim.claimedRoleId)}`;
+  const timing = formatAbilityClaimTiming(claim) || `D${claim.actionDay ?? '?'}能力`;
+  if (actionLabel) return `${playerName(context, claim.actorId)}: ${timing} ${roleName}履歴 → ${playerName(context, claim.targetId)}へ${actionLabel}`;
+  return `${playerName(context, claim.actorId)}: ${timing} ${roleName}結果 → ${playerName(context, claim.targetId)}は${publicAbilityResultLabel(claim.result, claim.claimedRoleId)}`;
 }
 
 export function roleTeamLabel(role) {

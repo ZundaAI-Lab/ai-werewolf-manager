@@ -1,6 +1,6 @@
 /**
  * 責務: 任意判断差分の対象者名・列挙値・参照配列の構文を現在の候補集合へ正規化する。
- * 変更ルール: 判断内容を新規生成しない。decisionPatch.correctedSpeechRefs / evidenceRefs の公開可視性・イベント種別は意味を持つ根拠なので黙って削除せず、responseValidator.jsへ渡して再生成対象として検証する。
+ * 変更ルール: 判断内容を新規生成しない。decisionPatch.correctedSpeechRefs / evidenceRefs の公開可視性・イベント種別は意味を持つ根拠なので黙って削除せず、responseValidator.jsへ渡して再生成対象として検証する。推理モード固有の配列項目は任意回答として文字列配列だけへ正規化し、空なら省略する。
  */
 
 import { buildDecisionTargetPolicy } from '../../../domain/game/decisionTargetPolicy.js';
@@ -17,6 +17,10 @@ import {
   repairExactKeys,
   resolvePlayer,
 } from './repairUtilities.js';
+
+const TURN_LOCAL_DECISION_LIST_KEYS = Object.freeze([
+  'supportingSignals', 'counterSignals', 'remainingHypotheses',
+]);
 
 function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, operations) {
   if (!Object.hasOwn(payload, 'decisionPatch')) return;
@@ -57,6 +61,13 @@ function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, 
     }
   }
   normalizeEnumField(patch, 'assessmentLevel', 'decisionPatch', operations);
+  TURN_LOCAL_DECISION_LIST_KEYS.forEach((key) => {
+    if (!Object.hasOwn(patch, key)) return;
+    const values = normalizeStringArray(patch, key, 'decisionPatch', operations);
+    if (values.length) return;
+    delete patch[key];
+    operation(operations, 'EMPTY_OPTIONAL_VALUE_REMOVED', `decisionPatch.${key}`, `空のdecisionPatch.${key}を省略しました。`);
+  });
   for (const key of Object.keys(patch)) {
     if (['correctedSpeechRefs', 'evidenceRefs'].includes(key)) continue;
     if (typeof patch[key] === 'string') {

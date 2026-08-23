@@ -116,6 +116,24 @@ test('雪女の凍結は護衛対象には失敗し、夜行動自体は確定�
 });
 
 
+test('雪女自身が同じ夜に死亡した場合は、実行済み凍結でも翌日の凍結状態を付与しない', () => {
+  const state = createInitialState(5);
+  setRoles(state, ['snowWoman', 'wolf', 'villager', 'seer', 'guard']);
+  const [snowWoman, wolf] = state.players;
+  const resolution = resolveNightActions(state, {
+    attackedTargetId: snowWoman.id,
+    freezeSlots: [{ actorId: snowWoman.id, targetId: wolf.id }],
+  });
+  const freezeExecution = resolution.actionExecutions.find((entry) => entry.actionType === 'freeze');
+
+  assert.equal(freezeExecution.executionState, 'executed');
+  assert.equal(resolution.deaths.some((death) => death.playerId === snowWoman.id), true);
+  assert.equal(resolution.freezeOutcome, 'actor-dead');
+  assert.equal(resolution.freezeTargetId, wolf.id);
+  assert.equal(resolution.frozenPlayerId, null);
+});
+
+
 test('凍結者は翌日の昼発言と投票を失い、処刑候補には残る', () => {
   const state = createInitialState(6);
   setRoles(state, ['snowWoman', 'whiteWolf', 'villager', 'seer', 'guard', 'namahage']);

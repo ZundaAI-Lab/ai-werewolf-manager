@@ -299,6 +299,7 @@ export function validateNightState(context) {
       let expectedFrozenPlayerId = null;
       if (freezeSlot) {
         if (freezeBlockedByFear) expectedFreezeOutcome = 'not-executed';
+        else if (deathById.has(freezeSlot.actorId)) expectedFreezeOutcome = 'actor-dead';
         else if (expectedGuarded.includes(expectedFreezeTargetId)) expectedFreezeOutcome = 'guarded';
         else if (deathById.has(expectedFreezeTargetId)) expectedFreezeOutcome = 'target-dead';
         else {

@@ -1,6 +1,6 @@
 /**
  * 責務: 本番タスク準備と候補評価を共通化し、元JSONの実在キー集合・生成時指紋・保存済み機密状態を次回入力へ再投影しない境界を維持することを検証する。
- * 変更ルール: UIやAPI通信を介さず、既存パーサー・バリデータへ同じ引数を渡す境界だけを確認する。質問関係・判断根拠・陣営戦略の意味を持つ不正値は原則として自動削除・置換せず再生成対象として維持し、投票だけは有効なactionAnswerを守って意味を変えない任意項目を劣化できることを確認する。
+ * 変更ルール: UIやAPI通信を介さず、既存パーサー・バリデータへ同じ引数を渡す境界だけを確認する。speechInteractionは公開本文から独立した補助制御として利用不能部分だけ自動除去し、判断根拠・陣営戦略の意味を持つ不正値は原則として再生成対象に維持する。投票だけは有効なactionAnswerを守って意味を変えない任意項目を劣化できることを確認する。
  */
 
 import test from 'node:test';
@@ -12,6 +12,8 @@ import { beginVote } from '../../../app/renderer/js/domain/vote/voteCommands.js'
 
 import { createInitialState } from '../../../app/renderer/js/state/stateStore.js';
 import { composeManualAiPrompt, prepareAiTask, evaluateAiTaskCandidate } from '../../../app/renderer/js/services/aiTaskService.js';
+import { buildDraftStagePrompt } from '../../../app/renderer/js/prompts/stages/generationStagePromptBuilder.js';
+import { resolveGenerationStagePromptPolicy } from '../../../app/renderer/js/prompts/stages/generationStagePromptPolicy.js';
 
 
 
@@ -41,6 +43,32 @@ test('投票人数分岐はvoteの直接生成・深度3/4草案だけへ渡し�
     voteArtifact.decision.vote.populationBranches,
   );
 });
+
+test('Day2以降の通常昼議論第1巡では夜明け状況ガイドを直接生成と構造草案の両方へ同条件で渡す', () => {
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  state.game.day = 2;
+  initializeDiscussion(state);
+
+  const artifact = prepareAiTask(state, { playerId: actor.id, taskType: 'speech' });
+  const dynamicPrompt = artifact.promptEnvelope.dynamicTaskPrompt;
+  const guide = artifact.stageSource.publicState.roleCompositionSituationGuide;
+  const draftPrompt = buildDraftStagePrompt({
+    taskArtifact: artifact,
+    policy: resolveGenerationStagePromptPolicy({ stageId: 'draft', taskType: 'speech' }),
+  });
+
+  assert.ok(dynamicPrompt.indexOf('## ゲーム状態') < dynamicPrompt.indexOf('## 初期役職構成から起こりうる夜明けの状況'));
+  assert.deepEqual(guide, {
+    multipleDeaths: [],
+    noDeaths: ['護衛による襲撃阻止'],
+    noFreeze: [],
+    singleDeathMayCombine: false,
+  });
+  assert.match(draftPrompt, /roleCompositionSituationGuide/u);
+  assert.match(draftPrompt, /護衛による襲撃阻止/u);
+});
+
 
 test('手動送信用プロンプトはAPIと同じ常時システム契約を先頭へ結合する', () => {
   assert.equal(
@@ -115,7 +143,7 @@ test('decisionPatchの非公開・不正参照は黙って除去せず再生成�
 });
 
 
-test('speechInteractionの内部保存キーを黙って削除せず再生成対象にする', () => {
+test('speechInteractionの不正な補助制御だけを除去しpublicSpeechを保持する', () => {
   const state = createInitialState(6);
   const actor = state.players[0];
   const target = state.players[1];
@@ -125,10 +153,32 @@ test('speechInteractionの内部保存キーを黙って削除せず再生成対
     speechInteraction: { questionTargetNames: [target.name] },
   });
   const evaluation = evaluateAiTaskCandidate(state, artifact, raw);
-  assert.equal(evaluation.ok, false);
-  assert.equal(evaluation.effectiveRawResponse, raw);
-  assert.ok(evaluation.issues.some((issue) => String(issue.message).includes('questionTargetNames')));
-  assert.equal((evaluation.autoRepair?.operations ?? []).some((item) => item.path === 'speechInteraction.questionTargetNames'), false);
+  const repaired = JSON.parse(evaluation.effectiveRawResponse);
+  assert.equal(evaluation.ok, true, evaluation.errors?.join?.('\n') ?? '');
+  assert.equal(repaired.publicSpeech, `${target.name}さんへ質問します。`);
+  assert.equal(Object.hasOwn(repaired, 'speechInteraction'), false);
+  assert.ok((evaluation.autoRepair?.operations ?? []).some((item) => item.code === 'INVALID_SPEECH_CONTROL_DISCARDED' && item.path === 'speechInteraction.questionTargetNames'));
+});
+
+
+test('凍結中の質問先だけを除去しpublicSpeech全体をfallbackさせない', () => {
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  const target = state.players[1];
+  target.statusEffects = [{ type: 'frozen', day: state.game.day }];
+  const artifact = prepareAiTask(state, { playerId: actor.id, taskType: 'speech' });
+  const publicSpeech = `${target.name}さんは最後に誰を疑っているか教えてください。`;
+  const raw = JSON.stringify({
+    publicSpeech,
+    speechInteraction: { questionTargets: [target.name] },
+  });
+
+  const evaluation = evaluateAiTaskCandidate(state, artifact, raw);
+  const repaired = JSON.parse(evaluation.effectiveRawResponse);
+  assert.equal(evaluation.ok, true, evaluation.errors?.join?.('\n') ?? '');
+  assert.equal(repaired.publicSpeech, publicSpeech);
+  assert.deepEqual(repaired.speechInteraction?.questionTargets ?? [], []);
+  assert.ok((evaluation.autoRepair?.operations ?? []).some((item) => item.code === 'INVALID_SPEECH_CONTROL_DISCARDED' && item.path === 'speechInteraction.questionTargets[0]'));
 });
 
 

@@ -1,6 +1,6 @@
 /**
  * 責務: 公開会話と確定公開イベントを、LLM判断に必要な全情報を保った短い履歴データへ投影する。
- * 変更ルール: publicHistoryPolicyが選択したイベントと保存済みinteractionだけを使用し、本文の要約・切断・関係推定を行わない。連続する同一本文は参照番号・Day・発言者をまとめ、投票は集計・結論・各票を短縮表現へ変換するが、公開済み情報と時系列を欠落させない。
+ * 変更ルール: publicHistoryPolicyが選択したイベントと保存済みinteractionだけを使用し、本文の要約・切断・関係推定を行わない。公開履歴はイベント種別ごとに再配置せずsequence順の単一timelineとして表示する。連続する同一本文の公開発言だけは参照番号・Day・発言者をまとめ、投票は集計・結論・各票を短縮表現へ変換するが、公開済み情報と時系列を欠落させない。
  */
 
 import {
@@ -28,19 +28,11 @@ function speechRecord(context, event, publicSpeechById) {
   const redundantSelfIntroduction = new RegExp(`^${speaker.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?:です|だ)[。！!]\\s*`, 'u');
   const text = rawText.replace(redundantSelfIntroduction, '');
   return {
+    kind: 'speech',
+    sequence: Number(event.sequence),
     ref: `#${event.sequence}/D${event.day}/${speaker}`,
     content: `${text}${annotations ? ` [${annotations}]` : ''}`,
   };
-}
-
-function groupIdenticalSpeeches(records) {
-  const groups = [];
-  records.forEach((record) => {
-    const previous = groups.at(-1);
-    if (previous?.content === record.content) previous.refs.push(record.ref);
-    else groups.push({ refs: [record.ref], content: record.content });
-  });
-  return groups.map((group) => `${group.refs.join(',')}: ${group.content}`);
 }
 
 function compactVoteResultLine(context, event) {
@@ -69,8 +61,36 @@ function compactPublicEventLine(context, event) {
   return `#${event.sequence}/D${event.day} ${formatPromptEventText(context, event)}`;
 }
 
+function pushEvents(rows, events, formatter, kind) {
+  (events ?? []).forEach((event) => rows.push({
+    kind,
+    sequence: Number(event.sequence),
+    content: formatter(event),
+  }));
+}
+
+function mergeConsecutiveIdenticalSpeeches(records) {
+  const rows = [];
+  records.forEach((record) => {
+    const previous = rows.at(-1);
+    if (record.kind === 'speech' && previous?.kind === 'speech' && previous.content === record.content) {
+      previous.refs.push(record.ref);
+      return;
+    }
+    if (record.kind === 'speech') {
+      rows.push({ ...record, refs: [record.ref] });
+      return;
+    }
+    rows.push(record);
+  });
+  return rows.map((record) => (
+    record.kind === 'speech'
+      ? `${record.refs.join(',')}: ${record.content}`
+      : record.content
+  ));
+}
+
 export function publicHistoryData(context, timeline, { excludeSpeechEventId = null } = {}) {
-  const history = {};
   const publicSpeechById = new Map();
   (context.board.publicTimeline?.speeches ?? []).forEach((event) => {
     const logicalIds = event.correctionLineageIds?.length
@@ -78,23 +98,20 @@ export function publicHistoryData(context, timeline, { excludeSpeechEventId = nu
       : [event.id, event.payload?.correctsEventId].filter(Boolean);
     logicalIds.forEach((eventId) => publicSpeechById.set(eventId, event));
   });
-  const speeches = groupIdenticalSpeeches(timeline.speeches
+
+  const rows = (timeline.speeches ?? [])
     .filter((event) => event.id !== excludeSpeechEventId)
-    .map((event) => speechRecord(context, event, publicSpeechById)));
-  const voteResults = timeline.voteResults.map((event) => compactVoteResultLine(context, event));
-  const executions = timeline.executions.map((event) => compactPublicEventLine(context, event));
-  const dawns = timeline.dawns.map((event) => compactPublicEventLine(context, event));
-  const otherPublicFacts = [
-    ...timeline.corrections,
-    ...timeline.gameResults,
-    ...timeline.other,
-  ].map((event) => compactPublicEventLine(context, event));
-  if (speeches.length) history.speeches = speeches;
-  if (voteResults.length) history.voteResults = voteResults;
-  if (executions.length) history.executions = executions;
-  if (dawns.length) history.dawns = dawns;
-  if (otherPublicFacts.length) history.otherPublicFacts = otherPublicFacts;
-  return history;
+    .map((event) => speechRecord(context, event, publicSpeechById));
+  pushEvents(rows, timeline.voteResults, (event) => compactVoteResultLine(context, event), 'vote');
+  pushEvents(rows, timeline.executions, (event) => compactPublicEventLine(context, event), 'execution');
+  pushEvents(rows, timeline.dawns, (event) => compactPublicEventLine(context, event), 'dawn');
+  pushEvents(rows, timeline.corrections, (event) => compactPublicEventLine(context, event), 'correction');
+  pushEvents(rows, timeline.gameResults, (event) => compactPublicEventLine(context, event), 'game-result');
+  pushEvents(rows, timeline.other, (event) => compactPublicEventLine(context, event), 'other');
+
+  rows.sort((left, right) => Number(left.sequence ?? 0) - Number(right.sequence ?? 0));
+  const merged = mergeConsecutiveIdenticalSpeeches(rows);
+  return merged.length ? { timeline: merged } : {};
 }
 
 export function selfPublicContinuityData(context, event) {

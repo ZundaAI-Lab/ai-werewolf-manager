@@ -1,12 +1,13 @@
 /**
  * 責務: 読み取り専用の組み込みキャラクターと編集可能なユーザーキャラクターを統合し、使用状態・グループ順・キャラクター順・編集可否を付与したRenderer向けカタログを提供する。
- * 変更ルール: 具体的なグループ名・キャラクター名を持たない。組み込みJSONの変更/削除を提供せず、使用状態と並び順だけをユーザー領域のメタデータとして保持する。文字数検証は明示的なキャラクター保存・JSON取込の対象IDだけUserCharacterDataStoreへ委譲し、管理操作では既存データを再検証しない。
+ * 変更ルール: 具体的なグループ名・キャラクター名を持たない。Rendererから受け取るユーザーライブラリ全体は共有サイズ上限を超える前に拒否する。組み込みJSONの変更/削除を提供せず、使用状態と並び順だけをユーザー領域のメタデータとして保持する。文字数検証は明示的なキャラクター保存・JSON取込の対象IDだけUserCharacterDataStoreへ委譲し、管理操作では既存データを再検証しない。
  */
 
 'use strict';
 
 const { readCharacterDataCatalog } = require('./characterDataStore.js');
 const { USER_CHARACTER_LIBRARY_SCHEMA_VERSION } = require('./userCharacterDataStore.js');
+const { assertUserCharacterLibrarySerializedSize } = require('../shared/userCharacterLibraryPolicy.js');
 
 const USER_LIBRARY_FORMAT = 'ai-werewolf-character-library';
 
@@ -132,6 +133,7 @@ class CharacterLibraryService {
   }
 
   replaceUserLibrary(payload, { validateCharacterIds = [] } = {}) {
+    assertUserCharacterLibrarySerializedSize(JSON.stringify(payload, null, 2));
     const current = this.userStore.snapshot();
     const candidate = {
       schemaVersion: USER_CHARACTER_LIBRARY_SCHEMA_VERSION,

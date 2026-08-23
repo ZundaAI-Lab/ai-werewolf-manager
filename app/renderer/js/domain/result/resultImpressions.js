@@ -13,6 +13,7 @@ import {
   getCorrectionRootEvent,
 } from '../events/correctionLineage.js';
 import { publicAbilityResultLabel } from '../policies/publicAbilityClaimPolicy.js';
+import { buildAbilityClaimTiming, formatAbilityClaimTiming } from '../policies/abilityClaimTimingPolicy.js';
 import { getPlayerTeam } from '../roles/roleAttributes.js';
 
 const ACTION_LABELS = Object.freeze({
@@ -248,7 +249,7 @@ function abilityBaseKey(identity) {
     identity?.actorId ?? '',
     identity?.actionType ?? '',
     identity?.targetId ?? '',
-    Number(identity?.resultDay ?? 0),
+    Number(identity?.actionDay ?? 0),
   ].join('\u0000');
 }
 
@@ -268,14 +269,17 @@ function publicAbilityClaimFacts(state, publicEvents) {
         const actionType = String(ROLE_DEFINITIONS[claimedRoleId]?.publicAbilityClaim?.actionType ?? '');
         const targetId = String(claim.targetId ?? '');
         const result = String(claim.result ?? 'unknown');
-        const observedDay = Number(claim.observedDay ?? claim.resultDay ?? event.day ?? 0);
+        const actionDay = Number(claim.actionDay ?? 0);
         const identity = {
           actorId,
           actionType,
           claimedRoleId,
           targetId,
           result,
-          resultDay: observedDay,
+          actionDay,
+          actionPhase: String(claim.actionPhase ?? ''),
+          availableDay: Number(claim.availableDay ?? 0),
+          availablePhase: String(claim.availablePhase ?? ''),
         };
         return createFact({
           sequence: event.sequence,
@@ -283,7 +287,7 @@ function publicAbilityClaimFacts(state, publicEvents) {
           day: event.day,
           phase: event.phase,
           type: 'ability-result',
-          text: `${actor}が${roleName(claimedRoleId)}として、Day ${observedDay}の${playerName(state, targetId)}を「${publicAbilityResultLabel(result, claimedRoleId)}」と発表した。`,
+          text: `${actor}が${roleName(claimedRoleId)}として、${formatAbilityClaimTiming(claim)}の${playerName(state, targetId)}を「${publicAbilityResultLabel(result, claimedRoleId)}」と発表した。`,
           factKey: `ability-public:${abilitySemanticKey(identity)}`,
           sourceEventIds: eventSourceIds(event),
           abilityIdentity: identity,
@@ -320,19 +324,25 @@ function ownPrivateResultFacts(state, playerId) {
       const payload = event.payload ?? {};
       const actionType = String(payload.actionType ?? '');
       const targetId = String(payload.targetId ?? event.targetIds?.[0] ?? '');
-      const resultDay = Number(payload.nightDay ?? payload.availableFromDay ?? event.day ?? 0);
+      const actionDay = actionType === 'medium'
+        ? Math.max(0, Number(payload.availableFromDay ?? event.day ?? 1) - 1)
+        : Number(payload.nightDay ?? event.day ?? 0);
+      const timing = buildAbilityClaimTiming(publicAbilityRoleIdForActionType(actionType), actionDay);
       const identity = {
         actorId: String(event.actorId ?? ''),
         actionType,
         roleId: publicAbilityRoleIdForActionType(actionType),
         targetId,
         result: String(payload.result ?? ''),
-        resultDay,
+        actionDay,
+        actionPhase: timing?.actionPhase ?? (actionType === 'medium' ? 'execution' : 'night'),
+        availableDay: timing?.availableDay ?? actionDay + 1,
+        availablePhase: timing?.availablePhase ?? 'day',
       };
       return createFact({
         sequence: event.sequence,
         order: 40,
-        day: resultDay,
+        day: actionDay,
         phase: payload.nightDay !== undefined || actionType === 'choose-owner' ? 'night' : event.phase,
         type: 'ability-result',
         text: privateResultText(state, event),
@@ -351,11 +361,11 @@ function abilityComparisonText(state, publicFact, privateFact) {
   const actionLabel = ACTION_LABELS[privateIdentity.actionType || publicIdentity.actionType] ?? '能力';
   const publicLabel = publicAbilityResultLabel(publicIdentity.result, publicIdentity.claimedRoleId ?? publicAbilityRoleIdForActionType(publicIdentity.actionType));
   const privateLabel = publicAbilityResultLabel(privateIdentity.result, privateIdentity.roleId ?? publicAbilityRoleIdForActionType(privateIdentity.actionType));
-  const resultDay = Number(publicIdentity.resultDay ?? privateIdentity.resultDay ?? 0);
+  const timingText = formatAbilityClaimTiming(publicIdentity) || formatAbilityClaimTiming(privateIdentity);
   if (publicIdentity.result === privateIdentity.result) {
-    return `${actor}のDay ${resultDay}の${target}への${actionLabel}結果は「${privateLabel}」で、公開した内容と一致していた。`;
+    return `${actor}の${timingText}の${target}への${actionLabel}結果は「${privateLabel}」で、公開した内容と一致していた。`;
   }
-  return `${actor}はDay ${resultDay}の${target}を「${publicLabel}」と発表したが、実際の${actionLabel}結果は「${privateLabel}」だった。`;
+  return `${actor}は${timingText}の${target}を「${publicLabel}」と発表したが、実際の${actionLabel}結果は「${privateLabel}」だった。`;
 }
 
 function mergePublicAndPrivateAbilityFacts(state, publicFacts, privateFacts) {
@@ -492,7 +502,7 @@ function nightResultFacts(state, publicEvents, playerId, privateFacts) {
       const actionType = String(payload.actionType ?? '');
       const targetId = String(payload.targetId ?? event.targetIds?.[0] ?? '');
       const nightDay = Number(payload.nightDay ?? event.day ?? 0);
-      const base = abilityBaseKey({ actorId: event.actorId, actionType, targetId, resultDay: nightDay });
+      const base = abilityBaseKey({ actorId: event.actorId, actionType, targetId, actionDay: nightDay });
       if (actionType === 'choose-owner' || privateActionKeys.has(base)) return;
       const events = ownActionsByNight.get(nightDay) ?? [];
       events.push(event);

@@ -1,6 +1,6 @@
 /**
  * 責務: 公開イベントからCO・公開能力結果・3巡目CO後の追加発言対象を再構築し、AI私有ターン台帳から本人自身の判断状態だけを決定的に再構築する。
- * 変更ルール: 公開発言本文を解析しない。公開事実とAI私有情報を同じイベントへ混在させず、判断状態はaiTurns.resolvedDecisionUpdateだけを一次情報源とする。DOM・保存・ゲーム進行操作を行わない。
+ * 変更ルール: 公開発言本文を解析しない。公開事実とAI私有情報を同じイベントへ混在させず、判断状態はaiTurns.resolvedDecisionUpdateだけを一次情報源とする。再構築1回の中ではイベント・プレイヤー索引と公開発言列を共有し、同じ全走査を繰り返さない。DOM・保存・ゲーム進行操作を行わない。
  */
 
 import { validatePublicAbilityClaim } from '../policies/publicAbilityClaimPolicy.js';
@@ -16,6 +16,14 @@ function publicSpeechEvents(state) {
     .sort(bySequence);
 }
 
+function buildEventIndex(state) {
+  return new Map((state.events ?? []).map((event) => [event.id, event]));
+}
+
+function buildPlayerIndex(state) {
+  return new Map((state.players ?? []).map((player) => [player.id, player]));
+}
+
 function structuredOf(event) {
   return event.payload?.structured ?? {};
 }
@@ -26,11 +34,11 @@ function validCoOperation(value) {
   return { action, roleId };
 }
 
-export function rebuildRoleClaims(state) {
+export function rebuildRoleClaims(state, { speechEvents = publicSpeechEvents(state) } = {}) {
   const claims = [];
   const activeByActor = new Map();
 
-  publicSpeechEvents(state).forEach((event) => {
+  speechEvents.forEach((event) => {
     const operation = validCoOperation(structuredOf(event).coOperation);
     if (!['declare', 'change', 'withdraw'].includes(operation.action)) return;
 
@@ -83,9 +91,9 @@ export function rebuildRoleClaims(state) {
   return claims;
 }
 
-export function rebuildPublicAbilityClaims(state) {
+export function rebuildPublicAbilityClaims(state, { speechEvents = publicSpeechEvents(state) } = {}) {
   const claims = [];
-  publicSpeechEvents(state).forEach((event) => {
+  speechEvents.forEach((event) => {
     const eventClaims = structuredOf(event).abilityClaims ?? [];
     eventClaims.forEach((claim, index) => {
       if (!claim || claim.action !== 'publish') return;
@@ -96,7 +104,10 @@ export function rebuildPublicAbilityClaims(state) {
         actionType: claim.actionType,
         targetId: claim.targetId,
         result: claim.result,
-        observedDay: Number(claim.observedDay),
+        actionDay: Number(claim.actionDay),
+        actionPhase: String(claim.actionPhase ?? ''),
+        availableDay: Number(claim.availableDay),
+        availablePhase: String(claim.availablePhase ?? ''),
         announcedDay: Number(event.day),
         selectionBasis: claim.selectionBasis,
         evidenceEventIds: [...(claim.evidenceEventIds ?? [])],
@@ -131,22 +142,28 @@ function cloneDecisionUpdateForDerivation(update) {
   };
 }
 
-function committedPublicDecisionEvent(state, turn) {
-  const committedIds = new Set(turn.committedEntityIds ?? []);
-  return (state.events ?? [])
-    .filter((event) => committedIds.has(event.id))
-    .find((event) => ['public-speech', 'vote-cast'].includes(event.type)) ?? null;
+const DECISION_SOURCE_EVENT_TYPES = new Set(['public-speech', 'vote-cast']);
+
+function committedPublicDecisionEvent(eventById, turn) {
+  for (const eventId of turn.committedEntityIds ?? []) {
+    const event = eventById.get(eventId);
+    if (event && DECISION_SOURCE_EVENT_TYPES.has(event.type)) return event;
+  }
+  return null;
 }
 
-export function rebuildPlayerDecisionStates(state) {
-  (state.players ?? []).forEach((player) => {
+export function rebuildPlayerDecisionStates(state, {
+  eventById = buildEventIndex(state),
+  playerById = buildPlayerIndex(state),
+} = {}) {
+  playerById.forEach((player) => {
     player.decisionState = createEmptyDecisionState();
   });
   (state.aiTurns ?? [])
     .filter((turn) => turn?.resolvedDecisionUpdate && DECISION_STATE_SOURCE_TASK_TYPES.has(turn.taskType))
     .forEach((turn) => {
       const update = cloneDecisionUpdateForDerivation(turn.resolvedDecisionUpdate);
-      const player = state.players.find((item) => item.id === turn.playerId);
+      const player = playerById.get(turn.playerId);
       if (!player) return;
       const nextDecision = {
         suspicionCandidateIds: [...(update.suspicionCandidateIds ?? [])],
@@ -168,7 +185,7 @@ export function rebuildPlayerDecisionStates(state) {
           hasPreviousDecision: Boolean(player.decisionState?.updatedAt),
         }),
       };
-      const sourceEvent = committedPublicDecisionEvent(state, turn);
+      const sourceEvent = committedPublicDecisionEvent(eventById, turn);
       player.decisionState = {
         ...resolvedDecision,
         updatedAt: turn.timestamp ?? null,
@@ -179,8 +196,8 @@ export function rebuildPlayerDecisionStates(state) {
     });
 }
 
-function coReason(state, event, operation) {
-  const name = state.players.find((player) => player.id === event.actorId)?.name ?? 'プレイヤー';
+function coReason(playerById, event, operation) {
+  const name = playerById.get(event.actorId)?.name ?? 'プレイヤー';
   if (operation.action === 'declare') return `${name}が新しく役職COしました。`;
   if (operation.action === 'change') return `${name}がCO役職を変更しました。`;
   if (operation.action === 'withdraw') return `${name}が役職COを撤回しました。`;
@@ -198,7 +215,12 @@ function orderAlivePlayerIds(state, playerIds) {
     .map((player) => player.id);
 }
 
-export function rebuildDiscussionReconsideration(state, { deterministicTimestamps = false } = {}) {
+export function rebuildDiscussionReconsideration(state, {
+  deterministicTimestamps = false,
+  speechEvents = publicSpeechEvents(state),
+  eventById = buildEventIndex(state),
+  playerById = buildPlayerIndex(state),
+} = {}) {
   const discussion = state.discussion;
   if (!discussion || state.game.phase !== 'discussion') return null;
   const previous = discussion.reconsideration ?? {};
@@ -206,13 +228,13 @@ export function rebuildDiscussionReconsideration(state, { deterministicTimestamp
   const aliveIds = new Set((state.players ?? []).filter((player) => player.alive).map((player) => player.id));
   const items = [];
 
-  publicSpeechEvents(state)
+  speechEvents
     .filter((event) => event.status === 'published' && Number(event.day) === Number(discussion.day ?? state.game.day))
     .forEach((event) => {
       const eventRound = Number(event.payload?.round ?? 0);
       if (eventRound !== 3 || eventRound <= handledRound) return;
       const operation = validCoOperation(structuredOf(event).coOperation);
-      const reason = coReason(state, event, operation);
+      const reason = coReason(playerById, event, operation);
       if (!reason) return;
 
       const remainingAtSpeechStart = event.payload?.opportunityContext?.remainingByPlayerAtSpeechStart;
@@ -239,7 +261,7 @@ export function rebuildDiscussionReconsideration(state, { deterministicTimestamp
   );
   const sourceEventIds = unique(items.map((item) => item.sourceEventId));
   const sourceUpdatedAt = sourceEventIds
-    .map((eventId) => (state.events ?? []).find((event) => event.id === eventId))
+    .map((eventId) => eventById.get(eventId))
     .map((event) => event?.publishedAt ?? event?.createdAt ?? null)
     .filter(Boolean)
     .sort()
@@ -298,9 +320,17 @@ export function validatePublicStructuredHistory(state) {
 }
 
 export function rebuildPublicDerivedState(state, { deterministicTimestamps = false } = {}) {
-  rebuildRoleClaims(state);
-  rebuildPublicAbilityClaims(state);
-  rebuildPlayerDecisionStates(state);
-  rebuildDiscussionReconsideration(state, { deterministicTimestamps });
+  const eventById = buildEventIndex(state);
+  const playerById = buildPlayerIndex(state);
+  const speechEvents = publicSpeechEvents(state);
+  rebuildRoleClaims(state, { speechEvents });
+  rebuildPublicAbilityClaims(state, { speechEvents });
+  rebuildPlayerDecisionStates(state, { eventById, playerById });
+  rebuildDiscussionReconsideration(state, {
+    deterministicTimestamps,
+    speechEvents,
+    eventById,
+    playerById,
+  });
   return state;
 }

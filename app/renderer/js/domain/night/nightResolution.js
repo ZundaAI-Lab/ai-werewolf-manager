@@ -1,6 +1,6 @@
 /**
  * 責務: 状態付与・行動開始判定・護衛・襲撃・凍結・占い・後追いを定められた順序で調停し、夜の確定結果を生成する。
- * 変更ルール: 状態を変更しない。恐怖は共通の行動開始判定へ委譲し、行動阻害と実行後の効果不成立を別項目で保持する。襲撃は全生存人狼が恐怖の時だけ阻害する。
+ * 変更ルール: 状態を変更しない。恐怖は共通の行動開始判定へ委譲し、行動阻害と実行後の効果不成立を別項目で保持する。襲撃は全生存人狼が恐怖の時だけ阻害する。雪女の凍結は行動自体が実行済みでも、雪女本人または対象が同じ夜に死亡した場合は翌日の状態付与を行わない。
  */
 
 import { resolveNightDeaths, resolveFollowUpDeaths } from '../game/deathResolution.js';
@@ -59,6 +59,7 @@ export function resolveNightActions(state, {
   let frozenPlayerId = null;
   if (freezeSlot) {
     if (freezeExecution.executionState === 'blocked') freezeOutcome = 'not-executed';
+    else if (deadIds.has(freezeSlot.actorId)) freezeOutcome = 'actor-dead';
     else if (guardedTargetIds.includes(executedFreezeTargetId)) freezeOutcome = 'guarded';
     else if (deadIds.has(executedFreezeTargetId)) freezeOutcome = 'target-dead';
     else {
@@ -70,6 +71,7 @@ export function resolveNightActions(state, {
   const gmNotes = [...baseDeaths.gmNotes];
   if (attackExecution.executionState === 'blocked') gmNotes.push('生存人狼全員が恐怖状態のため、襲撃行動は実行されませんでした。');
   if (freezeExecution.executionState === 'blocked') gmNotes.push('雪女が恐怖状態のため、凍結行動は実行されませんでした。');
+  else if (freezeOutcome === 'actor-dead') gmNotes.push('凍結は実行されましたが、雪女が同じ夜に死亡したため翌日の凍結状態は付与されません。');
   else if (freezeOutcome === 'guarded') gmNotes.push('凍結は実行されましたが、対象が護衛されていたため効果が発生しませんでした。');
   else if (freezeOutcome === 'target-dead') gmNotes.push('凍結は実行されましたが、対象が同じ夜に死亡したため翌日の凍結状態は付与されません。');
 

@@ -6,6 +6,7 @@
 import { ROLE_DEFINITIONS, TEAM_LABELS } from '../../../config/constants.js';
 import { escapeHtml } from '../../../shared/utils.js';
 import { publicAbilityResultLabel } from '../../../domain/policies/publicAbilityClaimPolicy.js';
+import { formatAbilityClaimTiming } from '../../../domain/policies/abilityClaimTimingPolicy.js';
 import { createPublicSpeechReferenceIndex, renderPublicSpeechText } from '../../../public/publicSpeechReferences.js';
 
 function nameOf(snapshot, id) {
@@ -69,7 +70,7 @@ export function renderPublicSnapshot(snapshot) {
   const speechReferences = createPublicSpeechReferenceIndex(snapshot);
   const claims = snapshot.claims.map((claim) => `<li><strong>${escapeHtml(nameOf(snapshot, claim.actorId))}</strong>: ${escapeHtml(ROLE_DEFINITIONS[claim.roleId]?.name ?? claim.roleId)}CO</li>`).join('');
   const roleLabels = { seer: '占い', medium: '霊能', guard: '護衛' };
-  const abilityClaims = snapshot.publicAbilityClaims.map((claim) => `<li><strong>${escapeHtml(nameOf(snapshot, claim.actorId))}</strong>: Day ${escapeHtml(String(claim.observedDay))} ${escapeHtml(roleLabels[claim.claimedRoleId] ?? claim.claimedRoleId ?? '能力')} → ${escapeHtml(nameOf(snapshot, claim.targetId))}は${escapeHtml(publicAbilityResultLabel(claim.result, claim.claimedRoleId))}</li>`).join('');
+  const abilityClaims = snapshot.publicAbilityClaims.map((claim) => `<li><strong>${escapeHtml(nameOf(snapshot, claim.actorId))}</strong>: ${escapeHtml(formatAbilityClaimTiming(claim))} ${escapeHtml(roleLabels[claim.claimedRoleId] ?? claim.claimedRoleId ?? '能力')} → ${escapeHtml(nameOf(snapshot, claim.targetId))}は${escapeHtml(publicAbilityResultLabel(claim.result, claim.claimedRoleId))}</li>`).join('');
   const resultRoles = snapshot.result?.roles?.length
     ? `<details class="public-details"><summary>全役職</summary><ul>${snapshot.result.roles.map((item) => `<li>${escapeHtml(nameOf(snapshot, item.playerId))}: ${escapeHtml(ROLE_DEFINITIONS[item.roleId]?.name ?? item.roleId)}</li>`).join('')}</ul></details>`
     : '';

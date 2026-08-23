@@ -12,7 +12,7 @@
  * - 過去のAPI要求・生応答・継続アンカー・当日カプセルを再送せず、本人の継続情報は正式な現在状態と本人履歴から毎回導出する。
  * - delta時だけ本人の直近公開発言を一件補完し、タスク別応答契約はキャッシュ境界後へ置く。
  * - 公開履歴の順序・時系列とイベント参照番号を変更しない。
- * - 公開履歴はcompactを既定とし、fullは明示選択時だけ全件・全文、compactでは最新の正常AI登録位置以前の通常発言だけを構造的に選別して以後の履歴を全件・全文で維持する。
+ * - 公開履歴はdeltaを既定とし、前回の正常AI登録位置以後に増えた公開履歴だけを基本送信する。fullは明示選択時だけ全件・全文、compactでは最新の正常AI登録位置以前の通常発言だけを構造的に選別して以後の履歴を全件・全文で維持する。
  * - deltaの既存境界と再同期規則は変更せず、通常昼発言の非公開参考視点が参照する公開イベント番号はcompact・deltaの送信履歴へ必ず残す。
  * - 夜タスクは当日最終巡の公開発言、CO・能力結果を含む盤面、投票・処刑・夜明けの確定履歴を渡す。
  * - 公開質問先と回答元は保存済みの構造化interactionだけを表示し、公開発言本文から推定しない。
@@ -21,6 +21,7 @@
  * - 前回判断後の公開イベントは本文を複製せずイベント番号だけを前回判断状態へ添える。
  * - 能力者騙りが可能な非村陣営には後発CO用の能力履歴を残す。
  * - キャラクターの推理傾向は固定コンテキストを正本とし、現在タスク側へ重複掲載しない。
+ * - decisionPatch JSON例の処刑比較表示にはpromptSituation / promptSectionPolicyの既存判定をそのまま渡し、残り発言回数やvote条件を別実装しない。
  * - 公開会話では会話種のsubjectとtoneだけを短いroleplayCueとして渡す。
  * - 次の通常発言者本人宛ての質問はcurrent-task.requiredAnswersとして通常発言へ渡し、独立回答フェーズ用の指示と重複させない。
  * - 可視情報抽出はpromptContext.js、一般局面判定はpromptSituation.js、表示選択はpromptSectionPolicy.js、個別データ文章化はsections配下、最終文章化はpromptTemplates.jsを使用する。
@@ -114,6 +115,7 @@ import {
   claimTimingSection, dayConversationStatusSection, roleDecisionSection, abilityClaimTimelineSection, madmanClaimBranchSection,
 } from './sections/conversationSection.js';
 import { publicHistoryData, selfPublicContinuityData } from './sections/publicHistorySection.js';
+import { roleCompositionSituationSection } from './sections/roleCompositionSituationSection.js';
 import { graveyardCommunicationSection, masonCommunicationSection, wolfCommunicationSection } from './sections/privateConversationSection.js';
 import { currentTaskData } from './sections/currentTaskSection.js';
 
@@ -275,6 +277,7 @@ export function buildPromptModel(context, decision, {
     gameStateDataBlock: sectionPolicy.gameStateMode !== 'none'
       ? renderPromptDataBlock('game-state', compactPromptValue(gameStateData(context, { mode: sectionPolicy.gameStateMode })))
       : '',
+    roleCompositionSituationGuideSection: roleCompositionSituationSection(context, taskType),
     publicHistoryTitle: sectionPolicy.publicHistoryMode === 'delta'
       ? '前回の正常登録後に増えた公開会話・確定公開履歴'
       : sectionPolicy.publicHistoryMode === 'compact'
@@ -416,6 +419,11 @@ export function buildPromptModel(context, decision, {
         : true,
       exampleReferences: responseExampleReferences,
       decisionPatchRequired: Boolean(player.decisionInvalidation?.requiresReevaluation),
+      reasoningModeId: internalReasoningDirective?.modeId ?? null,
+      reasoningProfile: player.character?.reasoningProfile ?? null,
+      // 処刑判断の表示タイミングは既存の局面判定を正本とし、応答契約側で再判定しない。
+      isExecutionDecisionWindow: Boolean(sectionPolicy.showExecutionValuePolicy),
+      isFinalDiscussionDecisionWindow: Boolean(situation.isFinalDiscussionDecisionWindow),
     },
   };
 }
@@ -432,7 +440,7 @@ export function buildPromptContext(state, playerId, {
   taskType = 'speech',
   validTargetIds = [],
   slotId = '',
-  publicHistoryTransmissionMode = 'compact',
+  publicHistoryTransmissionMode = 'delta',
   forceFullPublicHistory = false,
 } = {}) {
   const context = buildPlayerVisibleContext(state, playerId, { taskType, validTargetIds, slotId });
@@ -548,6 +556,9 @@ export function buildPromptContext(state, playerId, {
       ownPublicClaimConsistency: model.ownPublicClaimConsistencySection,
       otherPublicClaimContradictions: model.otherPublicClaimContradictionsSection,
       ...(model.publicSpeechGuidance ? { publicSpeechGuidance: model.publicSpeechGuidance } : {}),
+      ...(taskType === 'graveyard-conversation'
+        ? { graveyardConversationGuidance: structuredClone(currentTaskData(context, taskType, { decision })?.conversationGuidance ?? {}) }
+        : {}),
     }),
     diagnostics: {
       appVersion: APP_VERSION,

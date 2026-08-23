@@ -10,6 +10,7 @@
  * - 構文キーを追加・変更する場合はresponseParser.js、responseAutoRepair.js、responseContractCatalog.js、activeResponseContract.jsを同時に変更する。
  * - 通常の完全例と、実行時だけ追加できる条件付き例を分離して生成工程・自動検査へ渡す。
  * - フェーズプロンプトへ掲載する項目の選択はactiveResponseContract.jsへ委譲し、回答検証契約との集合一致を要求しない。
+ * - 推理モード固有のdecisionPatch項目は今回ターンの思考整理用として許可するが、継続判断状態への永続保存や回答必須性を意味しない。
  * - 個人夜行動かどうかの分類はpersonalNightActionTasks.jsへ委譲し、本モジュールは各taskTypeの応答モード対応だけを明示する。
  * - 公開イベント番号は固定値を置かず、呼出元から渡された実在参照だけを使用する。
  * - heartVoiceのAI生成許可は通常昼発言系とpriority-answerだけに限定し、生成・保存契約は維持する一方、過去の保存済みheartVoiceが次回入力へ再投入されることを前提にしない。
@@ -19,11 +20,20 @@
 import { getFactionStrategyFields, isFactionStrategyRole } from '../../domain/game/factionStrategyState.js';
 import { isWolfPartnerDispositionApplicable } from '../../domain/game/wolfPartnerDispositionPolicy.js';
 import { getPublicAbilityClaimDefinition } from '../../domain/policies/publicAbilityClaimPolicy.js';
+import { buildAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 
 const COMMON_DECISION_CHANGE_KEYS = Object.freeze([
   'suspects', 'executionCandidates', 'intendedVote', 'assessmentLevel',
   'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference',
   'uncertainty', 'nextDiscriminatingInformation',
+  // 以下は今回ターンの推理整理用。応答として許可するが、継続判断状態への永続保存は要求しない。
+  'unresolvedPoint', 'responseImpact',
+  'changePoint', 'changeTrigger', 'changeNaturalness',
+  'conflictPoint', 'compatibleExplanation',
+  'commitmentAlignment', 'reversalExplanation',
+  'interactionAsymmetry', 'consensusIndependence', 'counterHypothesis',
+  'comparisonAxis', 'candidateDifference',
+  'supportingSignals', 'counterSignals', 'remainingHypotheses',
 ]);
 
 const VOTE_DECISION_CHANGE_KEYS = Object.freeze(
@@ -147,7 +157,8 @@ const EMPTY_EXAMPLE_REFERENCES = Object.freeze({
   decisionEvidenceRefs: Object.freeze([]),
   abilityEvidenceRefs: Object.freeze([]),
   truthfulAbilitySourceRefs: Object.freeze([]),
-  abilityResultDay: 1,
+  abilityActionDay: 0,
+  abilityAvailableDay: 1,
 });
 
 const DECISION_GROUNDING_REFERENCE_FIELDS = Object.freeze({
@@ -178,7 +189,8 @@ export function normalizeResponseExampleReferences(value = null) {
     decisionEvidenceRefs: normalizeExampleSequenceList(source.decisionEvidenceRefs),
     abilityEvidenceRefs: normalizeExampleSequenceList(source.abilityEvidenceRefs),
     truthfulAbilitySourceRefs: normalizeExampleSequenceList(source.truthfulAbilitySourceRefs),
-    abilityResultDay: Math.max(1, Number(source.abilityResultDay ?? 1)),
+    abilityActionDay: Math.max(0, Number(source.abilityActionDay ?? 0)),
+    abilityAvailableDay: Math.max(1, Number(source.abilityAvailableDay ?? 1)),
   };
 }
 
@@ -287,10 +299,12 @@ export function buildDeceptionAbilityClaimsConditionalExample(claimRolePolicy, e
   const roleId = roleIds.find((candidate) => candidate !== 'medium') ?? roleIds[0];
   if (!roleId) return null;
   const result = getPublicAbilityClaimDefinition(roleId)?.results?.[0] ?? 'unknown';
+  const timing = buildAbilityClaimTiming(roleId, references.abilityActionDay);
+  if (!timing || timing.availableDay !== references.abilityAvailableDay || (roleId === 'medium' && timing.actionDay < 1)) return null;
   const claim = {
     intent: 'deception',
     roleId,
-    resultDay: references.abilityResultDay,
+    ...timing,
     target: '能力対象の正式表示名',
     result,
   };
@@ -316,7 +330,7 @@ export function buildResponseConditionalExamples({
   return examples;
 }
 
-export function buildDecisionPatchExample(mode, exampleReferences = null) {
+export function buildDecisionPatchExample(mode, exampleReferences = null, { keys = null } = {}) {
   const references = normalizeResponseExampleReferences(exampleReferences);
   const values = {
     suspects: ['疑っている相手の正式表示名'],
@@ -328,16 +342,36 @@ export function buildDecisionPatchExample(mode, exampleReferences = null) {
     selectionDifference: '最有力の別候補との今日の処刑価値の差',
     uncertainty: '現在の判断に残る不確実性',
     nextDiscriminatingInformation: '次に判断を分ける情報',
-  };
-  const patch = Object.fromEntries(getDecisionChangeKeys(mode).map((key) => [key, values[key]]));
-  if (mode !== 'vote') {
-    patch.reason = mode === 'mason'
+    unresolvedPoint: '現在まだ解けていない確認点',
+    responseImpact: '相手の回答によって以前の評価がどう変わったか',
+    changePoint: '注目している発言・立場・投票姿勢などの変化',
+    changeTrigger: 'その変化を起こした可能性のある公開情報',
+    changeNaturalness: 'その公開情報で変化を自然に説明できるか',
+    conflictPoint: '同時には成立しにくい発言・行動',
+    compatibleExplanation: '矛盾に見える内容を自然に両立できる別解釈',
+    commitmentAlignment: '過去に示した立場と現在行動が一致しているか',
+    reversalExplanation: '立場変更を説明できる公開情報',
+    interactionAsymmetry: '二者間で確認できる態度・質問・評価などの非対称性',
+    consensusIndependence: '多数意見が独立した根拠か、他者への追従か',
+    counterHypothesis: '主流説以外に同じ公開情報から成立する説明',
+    comparisonAxis: '今回候補同士を比較する軸',
+    candidateDifference: 'その比較軸で確認できる候補間の具体的な差',
+    supportingSignals: ['現在の仮説を支持する独立した公開材料'],
+    counterSignals: ['現在の仮説に反する公開材料'],
+    remainingHypotheses: ['まだ排除できていない説明'],
+    reason: mode === 'mason'
       ? '共有者間で確認した現在の判断理由'
-      : '現在の判断を支える具体的な公開根拠';
-  }
-  patch.correctedSpeechRefs = [];
-  patch.evidenceRefs = [];
-  return patch;
+      : '現在の判断を支える具体的な公開根拠',
+    correctedSpeechRefs: [...references.correctedSpeechRefs],
+    evidenceRefs: [...references.decisionEvidenceRefs],
+  };
+  const allowed = new Set(getDecisionPatchKeys(mode));
+  const selectedKeys = Array.isArray(keys) ? keys : getDecisionPatchKeys(mode);
+  return Object.fromEntries(
+    selectedKeys
+      .filter((key) => allowed.has(key) && Object.hasOwn(values, key))
+      .map((key) => [key, values[key]]),
+  );
 }
 
 function strategyFieldExample(field, partnerDispositionPolicy) {

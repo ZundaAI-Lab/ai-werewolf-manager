@@ -1,12 +1,54 @@
 /**
  * 責務: 現在のAIタスクに必要な対象、質問、結果感想、秘密会話目的を最小データへ変換する。
- * 変更ルール: タスク契約にない項目を追加せず、個人夜行動では必ずcurrent-task.validTargetsを出す。対象IDは可視コンテキストの正式表示名へ変換し、雪女の推定契約で明示的にIDが必要な対象だけIDと表示名を併記する。監査専用イベントIDはプロンプトへ出さない。
+ * 変更ルール: タスク契約にない項目を追加せず、個人夜行動では必ずcurrent-task.validTargetsを出す。対象IDは可視コンテキストの正式表示名へ変換し、雪女の推定契約で明示的にIDが必要な対象だけIDと表示名を併記する。墓場会話では過去参加履歴だけから新規参加者か継続参加者かを判定し、秘密共有・答え合わせ・感想の会話目的を切り替える。監査専用イベントIDはプロンプトへ出さない。
  */
 
 import { isPersonalNightActionTask } from '../../config/personalNightActionTasks.js';
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 import { resolveSnowWomanEstimateLimit } from '../../domain/night/snowWomanEstimatePolicy.js';
 import { playerName } from './promptFormatters.js';
+
+
+function graveyardConversationGuidance(context) {
+  const current = context.graveyardCommunication.current;
+  const past = context.graveyardCommunication.past ?? [];
+  const priorParticipantIds = new Set(past.flatMap((session) => session.participantIds ?? []));
+  const newParticipantIds = (current?.participantIds ?? []).filter((id) => !priorParticipantIds.has(id));
+  const isNewParticipant = newParticipantIds.includes(context.player.id);
+  const newcomerMessageSpeakerIds = new Set((current?.messages ?? [])
+    .filter((message) => newParticipantIds.includes(message.speakerId))
+    .map((message) => message.speakerId));
+  const newParticipantNames = newParticipantIds.map((id) => playerName(context, id));
+  const newcomerMessageSpeakers = [...newcomerMessageSpeakerIds].map((id) => playerName(context, id));
+
+  if (isNewParticipant) {
+    return {
+      participantStatus: 'new',
+      newParticipants: newParticipantNames,
+      focus: '生前に墓場側が知らなかった秘密があれば優先して共有し、過去の墓場ログを読んだ感想や答え合わせも自然に添える。自分の真役職、能力結果、仲間情報、騙りの意図、行動理由など、まだ共有されていない重要情報を会話として話す。',
+    };
+  }
+  if (newcomerMessageSpeakers.length) {
+    return {
+      participantStatus: 'returning',
+      newParticipants: newParticipantNames,
+      newcomerMessageSpeakers,
+      focus: '新しく来た死亡者が明かした秘密や地上情報を受け、生前の予想との違い、驚き、納得、後悔などを中心に自然に返す。必要なら自分の生前の秘密や意図も共有する。',
+    };
+  }
+  if (newParticipantNames.length) {
+    return {
+      participantStatus: 'returning',
+      newParticipants: newParticipantNames,
+      focus: '前夜までの墓場会話を踏まえ、答え合わせの感想や印象を自然に話す。新しく来た死亡者がいるので、会話として必要なら自分の生前の秘密や意図も共有する。',
+    };
+  }
+  return {
+    participantStatus: 'returning',
+    newParticipants: [],
+    focus: '前夜までの墓場会話を受け、印象に残ったことや答え合わせの感想を自然に話す。必要なら自分の生前の秘密や意図も共有する。',
+  };
+}
 
 function withoutAuditReferences(value) {
   if (Array.isArray(value)) return value.map(withoutAuditReferences);
@@ -129,7 +171,8 @@ export function currentTaskData(context, taskType, { decision = null } = {}) {
       participants: (context.graveyardCommunication.current?.participantIds ?? []).map((id) => playerName(context, id)),
       knowledgeCutoffSequence: context.task.knowledgeCutoffSequence ?? null,
       publicKnowledgeFrozenAtDeath: Boolean(context.task.publicKnowledgeFrozenAtDeath),
-      instruction: '死亡後の地上情報は自動取得しない。墓場参加者の発言で共有された情報だけ追加で知る。',
+      conversationGuidance: graveyardConversationGuidance(context),
+      informationBoundary: '死亡後の地上情報は自動取得しない。墓場参加者の発言で共有された情報だけ追加で知る。',
     };
   }
   if (taskType === 'wolf-conversation') {

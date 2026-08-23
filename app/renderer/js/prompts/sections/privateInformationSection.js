@@ -8,6 +8,7 @@ import {
   ROLE_DEFINITIONS,
 } from '../../config/constants.js';
 import { publicAbilityResultLabel } from '../../domain/policies/publicAbilityClaimPolicy.js';
+import { buildAbilityClaimTiming, formatAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import {
   lines,
   playerName,
@@ -24,12 +25,19 @@ function privateAbilityResult(context, event) {
   const actionType = String(event?.payload?.actionType ?? '');
   const result = String(event?.payload?.result ?? '').trim().toLowerCase();
   const targetId = event?.payload?.targetId ?? event?.targetIds?.[0] ?? null;
+  const roleId = PRIVATE_ABILITY_ROLE_BY_ACTION[actionType] ?? null;
+  const availableDay = Number(event?.payload?.availableFromDay ?? event.day);
+  const actionDay = actionType === 'inspect'
+    ? Number(event?.payload?.nightDay ?? availableDay - 1)
+    : availableDay - 1;
+  const timing = buildAbilityClaimTiming(roleId, actionDay);
   return {
     ref: `P#${event.sequence}`,
     sourceRef: Number(event.sequence),
-    resultDay: Number(event?.payload?.availableFromDay ?? event.day),
+    ...(timing ?? {}),
+    timing: timing ? formatAbilityClaimTiming(timing) : null,
     actionType,
-    roleId: PRIVATE_ABILITY_ROLE_BY_ACTION[actionType] ?? null,
+    roleId,
     target: targetId ? playerName(context, targetId) : null,
     verdict: result === 'wolf' ? 'WOLF' : result === 'not-wolf' ? 'NOT_WOLF' : String(result || 'UNKNOWN').toUpperCase(),
   };
@@ -185,7 +193,11 @@ function publishedAbilityClaim(context, claim) {
       ? `#${publicSequenceByEventId(context, claim.sourceEventId)} D${claim.announcedDay}`
       : null,
     role: ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId,
-    resultDay: Number(claim.observedDay),
+    actionDay: Number(claim.actionDay),
+    actionPhase: claim.actionPhase,
+    availableDay: Number(claim.availableDay),
+    availablePhase: claim.availablePhase,
+    timing: formatAbilityClaimTiming(claim),
     target: playerName(context, claim.targetId),
     result: publicAbilityResultLabel(claim.result, claim.claimedRoleId),
     selectionBasis: claim.selectionBasis ?? null,
@@ -275,7 +287,11 @@ export function gameStateData(context, { mode = 'full' } = {}) {
       role: ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId,
       target: playerName(context, claim.targetId),
       result: publicAbilityResultLabel(claim.result, claim.claimedRoleId),
-      resultDay: Number(claim.observedDay),
+      actionDay: Number(claim.actionDay),
+      actionPhase: claim.actionPhase,
+      availableDay: Number(claim.availableDay),
+      availablePhase: claim.availablePhase,
+      timing: formatAbilityClaimTiming(claim),
       ...(Number.isInteger(Number(claim.announcedDay)) ? { announcedDay: Number(claim.announcedDay) } : {}),
     })),
   };

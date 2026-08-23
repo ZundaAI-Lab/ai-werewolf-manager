@@ -347,7 +347,10 @@ export function abilityClaimTimelineSection(context, situation, claimRolePolicy,
   const cutoffs = displayAbilityEvidenceCutoffs(context.board.abilityEvidenceCutoffs ?? {});
   const pendingMediumRequirements = (context.board.pendingMediumClaimRequirements ?? []).map((item) => ({
     roleId: item.roleId,
-    resultDay: item.observedDay,
+    actionDay: item.actionDay,
+    actionPhase: item.actionPhase,
+    availableDay: item.availableDay,
+    availablePhase: item.availablePhase,
     target: playerName(context, item.targetId),
   }));
   if (!(claimRolePolicy?.abilityClaimRoleIds ?? []).length && !pendingMediumRequirements.length) return '';
@@ -355,12 +358,12 @@ export function abilityClaimTimelineSection(context, situation, claimRolePolicy,
     ? `
 ${renderPromptDataBlock('pending-medium-claim-requirements', pendingMediumRequirements)}
 
-あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象とresultDayを対応する行へ一致させてください。selectionBasis・evidenceRefs・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
+あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象・処刑時点・結果取得時点を対応する行へ一致させてください。selectionBasis・evidenceRefs・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
     : '';
   return `## 能力履歴
 ${renderPromptDataBlock('ability-claim-evidence-windows', cutoffs)}${forcedBlock}
 
-resultDayは結果Day（夜行動は翌Day）。public-evidenceは指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
+actionDay/actionPhaseは能力を実行・成立させた時点、availableDay/availablePhaseは結果を取得した時点です。夜能力は実行した翌朝に取得し、霊能は処刑の翌朝に取得します。public-evidenceはactionDayの能力実行時点までの指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
 }
 
 export function tacticalOpportunitySection({ counterClaimOpportunity = null, ownerClaimCorroborationOpportunity = null } = {}) {

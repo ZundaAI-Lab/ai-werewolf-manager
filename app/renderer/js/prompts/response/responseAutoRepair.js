@@ -1,6 +1,6 @@
 /**
  * 責務: 構文回復と項目別の決定的修復を順に適用し、再検証用候補と監査操作を返す公開窓口である。
- * 変更ルール: 項目固有の修復規則を実装せず、repair配下の各責務を呼び分ける。必須値を新規生成しない。質問・回答関係・判断根拠のように意味を持つ構造化項目は、不正時に黙って破棄せず再生成対象として保持する。ただし投票では有効なactionAnswerを進行上の正本として保護し、意味を変えない任意項目だけを監査操作付きで破棄できる。
+ * 変更ルール: 項目固有の修復規則を実装せず、repair配下の各責務を呼び分ける。必須値を新規生成しない。判断根拠・陣営戦略のように意味を持つ構造化項目は、不正時に黙って破棄せず再生成対象として保持する。speechInteractionは公開本文とは独立した補助制御として専用修復後も不正なら未指定扱いにできる。投票では有効なactionAnswerを進行上の正本として保護し、意味を変えない任意項目だけを監査操作付きで破棄できる。
  */
 
 import { getRequiredResponseTopLevelKeys, getResponseTopLevelKeys } from './responseContract.js';
@@ -16,7 +16,7 @@ import { repairAttackAssessment } from './repair/attackAssessmentRepair.js';
 import { repairFreezeEstimates } from './repair/freezeEstimateRepair.js';
 import { repairSelectionRationale, repairInternalMemo, repairTopLevel } from './repair/responseValueRepair.js';
 
-const NON_DISCARDABLE_SEMANTIC_OPTIONAL_KEYS = new Set(['speechInteraction', 'decisionPatch', 'factionStrategy']);
+const NON_DISCARDABLE_SEMANTIC_OPTIONAL_KEYS = new Set(['decisionPatch', 'factionStrategy']);
 
 function isDiscardProtectedOptionalKey(topLevelKey, taskType) {
   if (String(taskType ?? '') === 'vote') return topLevelKey === 'speechInteraction';

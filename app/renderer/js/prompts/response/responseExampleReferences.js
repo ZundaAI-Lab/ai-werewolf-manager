@@ -30,8 +30,8 @@ function latestSequence(events) {
   return Number.isInteger(sequence) && sequence > 0 ? [sequence] : [];
 }
 
-function abilityEvidenceSequences(context, resultDay) {
-  const refs = context?.board?.abilityEvidenceCutoffs?.[resultDay]?.eligibleEvidenceRefs ?? [];
+function abilityEvidenceSequences(context, actionDay) {
+  const refs = context?.board?.abilityEvidenceCutoffs?.[actionDay]?.eligibleEvidenceRefs ?? [];
   const normalized = [...new Set(refs
     .map(Number)
     .filter((sequence) => Number.isInteger(sequence) && sequence > 0))]
@@ -56,7 +56,8 @@ function unansweredQuestionSequences(state, context, visibleSequences) {
 export function buildResponseExampleReferences(stateOrContext, maybeContext) {
   const { state, context } = resolveArguments(stateOrContext, maybeContext);
   const playerId = String(context?.player?.id ?? '');
-  const resultDay = Math.max(1, Number(context?.game?.day ?? 1));
+  const currentDay = Math.max(1, Number(context?.game?.day ?? 1));
+  const actionDay = Math.max(0, currentDay - 1);
   const publicEvents = visiblePublicEvents(context);
   const visibleSequences = new Set(publicEvents.map((event) => Number(event.sequence)));
   const publicSpeeches = publicEvents.filter((event) => event.type === 'public-speech');
@@ -69,7 +70,8 @@ export function buildResponseExampleReferences(stateOrContext, maybeContext) {
     answerToRefs: pendingQuestionSequences.length ? [pendingQuestionSequences.at(-1)] : [],
     correctedSpeechRefs: latestSequence(publicSpeeches.filter((event) => String(event?.actorId ?? '') === playerId)),
     decisionEvidenceRefs: latestSequence(publicEvents.filter((event) => DECISION_EVIDENCE_EVENT_TYPES.has(event?.type))),
-    abilityEvidenceRefs: abilityEvidenceSequences(context, resultDay),
-    abilityResultDay: resultDay,
+    abilityEvidenceRefs: abilityEvidenceSequences(context, actionDay),
+    abilityActionDay: actionDay,
+    abilityAvailableDay: currentDay,
   };
 }

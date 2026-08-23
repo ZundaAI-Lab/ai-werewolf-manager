@@ -1,6 +1,6 @@
 /**
  * 責務: AIタスクの本番プロンプト、固定共通システム指示、候補回答の項目単位回収・決定的自動補正・解析・検証、文章流用境界検査、生成工程用の完全機械契約例をUIと自動実行へ共通提供する。
- * 変更ルール: ゲーム状態を更新せず、DOM、API通信、設定保存を行わない。画面へ表示するフェーズ契約を生成工程用完全契約へ置き換えない。手動送信用テキストはAPI送信と同じ常時システム契約を先頭へ結合し、通常プロンプトへ固定原則を重複掲載しない。正常なAI生成項目を保持し、単純な任意項目の不正だけを未入力化する。質問・回答関係と陣営戦略の意味を持つ構造化項目は原則として黙って破棄しないが、投票では有効なactionAnswerを優先し、不正な任意項目だけを監査操作付きで未入力化する。必須項目は本サービスで創作・代替せず、補正後も既存responseParser・responseValidatorと文字列境界検査を必ず再実行する。
+ * 変更ルール: ゲーム状態を更新せず、DOM、API通信、設定保存を行わない。画面へ表示するフェーズ契約を生成工程用完全契約へ置き換えない。手動送信用テキストはAPI送信と同じ常時システム契約を先頭へ結合し、通常プロンプトへ固定原則を重複掲載しない。正常なAI生成項目を保持し、単純な任意項目の不正だけを未入力化する。speechInteractionは公開本文とは独立した補助制御として利用不能部分を監査付きで破棄できるが、判断・陣営戦略など意味を持つ構造化項目は原則として黙って破棄しない。投票では有効なactionAnswerを優先し、不正な任意項目だけを監査操作付きで未入力化する。必須項目は本サービスで創作・代替せず、補正後も既存responseParser・responseValidatorと文字列境界検査を必ず再実行する。
  */
 
 import { isPersonalNightActionTask } from '../config/personalNightActionTasks.js';
@@ -127,7 +127,7 @@ export function prepareAiTask(state, {
   playerId,
   taskType,
   slotId = '',
-  publicHistoryTransmissionMode = 'compact',
+  publicHistoryTransmissionMode = 'delta',
   forceFullPublicHistory = false,
 } = {}) {
   const validTargetIds = resolveAiTaskValidTargetIds(state, taskType, playerId);
@@ -157,7 +157,7 @@ export function prepareAiTask(state, {
     includeInitial: built.includeInitial,
     publicSequenceAtGeneration: built.publicSequenceAtGeneration,
     publicHistoryMode: built.publicHistoryMode,
-    publicHistoryTransmissionMode: String(publicHistoryTransmissionMode ?? 'compact'),
+    publicHistoryTransmissionMode: String(publicHistoryTransmissionMode ?? 'delta'),
     forceFullPublicHistory: Boolean(forceFullPublicHistory),
     context: built.context,
     decision: built.decision,
@@ -273,7 +273,7 @@ export function evaluateAiTaskCandidate(state, taskArtifact, rawResponse) {
     taskType: taskArtifact.taskType,
     validTargetIds: taskArtifact.validTargetIds,
     slotId: taskArtifact.slotId,
-    publicHistoryTransmissionMode: taskArtifact.publicHistoryTransmissionMode ?? (['compact', 'delta'].includes(taskArtifact.publicHistoryMode) ? taskArtifact.publicHistoryMode : 'compact'),
+    publicHistoryTransmissionMode: taskArtifact.publicHistoryTransmissionMode ?? (['full', 'compact', 'delta'].includes(taskArtifact.publicHistoryMode) ? taskArtifact.publicHistoryMode : 'delta'),
     forceFullPublicHistory: Boolean(taskArtifact.forceFullPublicHistory),
   });
   const initial = evaluateCandidateOnce(state, taskArtifact, originalRawResponse, current.fingerprint);

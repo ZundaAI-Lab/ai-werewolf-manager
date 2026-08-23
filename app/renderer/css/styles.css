@@ -1416,7 +1416,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .65; }
 
 /* ローカルLLM正式対応: 接続診断とモデル取得は折りたたみ内のプロファイルカードに限定する。 */
 
-/* プレイヤー相関図責務: 記録・管理と進行卓ダイアログでCO・疑い・公開能力結果・公開投票を同じノード図へ重ね、選択中の人物と関係だけを強調する。 */
+/* プレイヤー相関図責務: 記録・管理、進行卓ダイアログ、独立ウィンドウでCO・疑い・公開能力結果・公開投票を同じノード図へ重ね、選択中の人物と関係だけを強調する。疑い線は機密表示OFFでも相関図の基礎情報として表示し、真役職・内部確信度の秘匿とは分離する。 */
 .panel-title-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .records-primary-tabs {
   display: flex;
@@ -1447,8 +1447,15 @@ input:disabled, select:disabled, textarea:disabled { opacity: .65; }
 }
 
 .relationship-modal { width: min(1500px, calc(100vw - 32px)); max-height: calc(100vh - 32px); }
+
+.relationship-modal-actions { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; }
+html.standalone-relationship-document,
+html.standalone-relationship-document body { height: auto; min-height: 100%; overflow: auto; }
+body.standalone-relationship { min-width: 960px; padding: 16px; }
+.standalone-relationship #relationship-window-root { width: 100%; min-width: 0; }
+.standalone-relationship .player-relationship-view { width: 100%; min-width: 0; }
 .relationship-modal .modal-header { min-height: 62px; }
-.relationship-modal .modal-header > div { display: grid; gap: 3px; }
+.relationship-modal .modal-header > div:first-child { display: grid; gap: 3px; }
 .relationship-modal .modal-body.relationship-dialog-body { padding: 0; max-height: calc(100vh - 96px); }
 .relationship-modal .player-relationship-view { border: 0; border-radius: 0; }
 .player-relationship-view { padding: 0; overflow: hidden; }
@@ -1534,6 +1541,7 @@ input:disabled, select:disabled, textarea:disabled { opacity: .65; }
 .relationship-canvas .relationship-edge text { font-size: 12px; font-weight: 800; text-anchor: middle; paint-order: stroke; stroke: var(--bg); stroke-width: 4px; stroke-linejoin: round; }
 .relationship-edge-suspicion path { stroke: #ff7085; }
 .relationship-edge-suspicion text { fill: #ff9baa; }
+.relationship-edge-suspicion.relationship-suspicion-strength-hidden { opacity: .72; }
 .relationship-edge-suspicion.relationship-suspicion-strength-unresolved { opacity: .28; }
 .relationship-edge-suspicion.relationship-suspicion-strength-slight { opacity: .48; }
 .relationship-edge-suspicion.relationship-suspicion-strength-moderate { opacity: .72; }

@@ -1,6 +1,6 @@
 /**
  * 責務: 工程、タスク種別、検証済み候補から、工程プロンプトへ含める文章フィールド、固定構造、本人可視情報、キャラクター情報、履歴範囲を許可リスト方式で決定する。
- * 変更ルール: プロンプト本文、API通信、DOM、ゲーム状態更新を扱わない。生のcontextや候補全体を許可せず、新規区画・新規キーは明示登録されるまで出力対象にしない。公開発言化へ盤面全体を渡さず、currentMoment・characterSurface・callNamesと、会話開始・序盤反応に意味があるspeechGuidanceだけを許可する。文字数値は各工程末尾の最終確認へ集約し、人間向け発言量ラベルや長さ区分を中間工程へ渡さない。「最終確認」以下は各工程の固定末尾として位置・内容を維持し、キャッシュや中間区画整理のために前方へ移さない。深度3と4のdraft・render契約は共通とし、深度4だけがspeechとpriority-answerのpublicSpeech校正を後置する。heartVoiceの文章化対象は通常昼発言系とpriority-answerだけに限定し、遺言・墓場会話では生成工程へ渡さない。
+ * 変更ルール: プロンプト本文、API通信、DOM、ゲーム状態更新を扱わない。生のcontextや候補全体を許可せず、新規区画・新規キーは明示登録されるまで出力対象にしない。公開発言化へ盤面全体を渡さず、currentMoment・characterSurface・callNamesと、会話開始・序盤反応に意味があるspeechGuidanceだけを許可する。墓場会話の構造草案には昼推理用characterReasoningを渡さず、口調・人格はrender側のcharacterSurfaceだけで維持する。文字数値は各工程末尾の最終確認へ集約し、人間向け発言量ラベルや長さ区分を中間工程へ渡さない。「最終確認」以下は各工程の固定末尾として位置・内容を維持し、キャッシュや中間区画整理のために前方へ移さない。深度3と4のdraft・render契約は共通とし、深度4だけがspeechとpriority-answerのpublicSpeech校正を後置する。heartVoiceの文章化対象は通常昼発言系とpriority-answerだけに限定し、遺言・墓場会話では生成工程へ渡さない。
  */
 
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
@@ -46,7 +46,7 @@ const DRAFT_CONTEXT_SECTIONS_BY_TASK = Object.freeze({
   'result-impression': Object.freeze(['currentMoment', 'resultSummary', 'characterReasoning']),
   'wolf-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'recentWolfConversation', 'existingInternalMemo']),
   'mason-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'recentMasonConversation', 'existingInternalMemo']),
-  'graveyard-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'recentGraveyardConversation', 'pastGraveyardConversations', 'existingInternalMemo']),
+  'graveyard-conversation': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'recentGraveyardConversation', 'pastGraveyardConversations', 'existingInternalMemo']),
   'memo-consolidate': Object.freeze(['currentMoment', 'existingInternalMemo']),
   'wolf-attack': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'histories']),
 });

@@ -146,7 +146,7 @@ const CLAIM_KEYS = [
   'id', 'actorId', 'roleId', 'day', 'status', 'sourceEventId', 'withdrawnByEventId', 'voidedByEventId',
 ];
 const PUBLIC_ABILITY_CLAIM_KEYS = [
-  'id', 'actorId', 'claimedRoleId', 'actionType', 'targetId', 'result', 'observedDay',
+  'id', 'actorId', 'claimedRoleId', 'actionType', 'targetId', 'result', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase',
   'announcedDay', 'selectionBasis', 'evidenceEventIds', 'selectionReasonAtTime',
   'sourceEventId', 'sourceClaimIndex', 'status', 'voidedByEventId',
 ];

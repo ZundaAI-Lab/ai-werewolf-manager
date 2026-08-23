@@ -1,6 +1,6 @@
 /**
  * 責務: AI本人の前回正常回答登録位置と現在タスクから公開履歴の提示範囲を決定し、本番プロンプトと生成工程で共用する履歴選択を提供する。
- * 変更ルール: 差分境界の正本は既存decisionDeltaだけとし、本モジュールで独自カーソルを作成・更新しない。既定はcompactとし、fullは明示選択時だけ全件・全文、compactは境界以前の公開発言だけを構造的に選別して境界後は全件・全文を維持する。今回の非公開参考視点が公開イベント番号を参照する場合は、その参照先だけをcompactの保持対象およびdeltaの追加同梱対象として扱い、参考視点だけが送信履歴からぶら下がる状態を作らない。通常の夜タスクでは当日最終巡の公開発言と投票・処刑・夜明けなどの確定履歴を渡し、それ以前の通常発言は重複送信しない。墓場会話だけは死亡時点で凍結済みの公開履歴全体を継続記憶として渡すためfullを使用する。
+ * 変更ルール: 差分境界の正本は既存decisionDeltaだけとし、本モジュールで独自カーソルを作成・更新しない。既定はdeltaとし、前回正常回答登録後に増えた公開履歴だけを基本送信する。fullは明示選択時だけ全件・全文、compactは境界以前の公開発言だけを構造的に選別して境界後は全件・全文を維持する。今回の非公開参考視点が公開イベント番号を参照する場合は、その参照先だけをcompactの保持対象およびdeltaの追加同梱対象として扱い、参考視点だけが送信履歴からぶら下がる状態を作らない。通常の夜タスクでは当日最終巡の公開発言と投票・処刑・夜明けなどの確定履歴を渡し、それ以前の通常発言は重複送信しない。墓場会話だけは死亡時点で凍結済みの公開履歴全体を継続記憶として渡すためfullを使用する。
  */
 
 import { compactPriorPublicHistoryTimeline } from './priorPublicHistoryCompactor.js';
@@ -9,12 +9,12 @@ const NIGHT_HISTORY_MODES = new Set(['night', 'night-delta']);
 const PUBLIC_HISTORY_TRANSMISSION_MODES = new Set(['full', 'compact', 'delta']);
 
 export function normalizePublicHistoryTransmissionMode(value) {
-  const mode = String(value ?? 'compact');
-  return PUBLIC_HISTORY_TRANSMISSION_MODES.has(mode) ? mode : 'compact';
+  const mode = String(value ?? 'delta');
+  return PUBLIC_HISTORY_TRANSMISSION_MODES.has(mode) ? mode : 'delta';
 }
 
 export function resolvePublicHistoryMode(situation, {
-  transmissionMode = 'compact',
+  transmissionMode = 'delta',
   hasHistoryCursor = false,
   forceFull = false,
 } = {}) {

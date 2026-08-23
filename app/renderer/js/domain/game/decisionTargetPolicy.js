@@ -1,6 +1,6 @@
 /**
  * 責務: AI判断状態で使用可能な疑い候補・処刑価値候補・投票予定対象を現在盤面から導出し、永続化されたAI回答を変更せず利用時だけ現在盤面向けへ射影する。
- * 変更ルール: 永続判断状態を書き換えない。候補可否、候補依存文章の表示失効、日跨ぎ失効情報は本モジュールへ集約する。文章生成・応答解析・公開履歴生成は行わない。
+ * 変更ルール: 永続判断状態を書き換えない。候補可否、候補依存文章の表示失効、日跨ぎ失効情報は本モジュールへ集約する。日跨ぎでは疑い候補を維持し、処刑価値候補・投票予定・当日比較情報だけを失効させ、対象消滅とは区別する。文章生成・応答解析・公開履歴生成は行わない。
  */
 
 import { getAlivePlayers, getVoteCandidates } from './standardRules.js';
@@ -46,7 +46,8 @@ export function projectDecisionStateForPolicy(decisionState, policy, {
   const executionAllowed = new Set(policy?.executionCandidateIds ?? []);
   const intendedAllowed = new Set(policy?.intendedVoteCandidateIds ?? []);
   const suspicionCandidateIds = sourceSuspicionIds.filter((candidateId) => suspicionAllowed.has(candidateId));
-  const executionCandidateIds = sourceExecutionIds.filter((candidateId) => executionAllowed.has(candidateId));
+  const availableExecutionCandidateIds = sourceExecutionIds.filter((candidateId) => executionAllowed.has(candidateId));
+  const executionCandidateIds = resetDailyComparisons ? [] : availableExecutionCandidateIds;
   const intendedVoteId = resetDailyComparisons
     ? null
     : source.intendedVoteId === 'abstain' && policy?.abstentionAllowed
@@ -55,13 +56,13 @@ export function projectDecisionStateForPolicy(decisionState, policy, {
         ? source.intendedVoteId
         : null;
   const suspicionChanged = !sameIds(sourceSuspicionIds, suspicionCandidateIds);
-  const executionChanged = !sameIds(sourceExecutionIds, executionCandidateIds);
+  const executionTargetUnavailable = !sameIds(sourceExecutionIds, availableExecutionCandidateIds);
   const intendedChanged = (source.intendedVoteId ?? null) !== intendedVoteId;
   const intendedTargetUnavailable = !resetDailyComparisons && intendedChanged;
-  const targetContextChanged = suspicionChanged || executionChanged || intendedTargetUnavailable;
+  const targetContextChanged = suspicionChanged || executionTargetUnavailable || intendedTargetUnavailable;
   const comparisonContextInvalid = targetContextChanged || resetDailyComparisons;
   const removedSuspicionCandidateIds = sourceSuspicionIds.filter((id) => !suspicionCandidateIds.includes(id));
-  const removedExecutionCandidateIds = sourceExecutionIds.filter((id) => !executionCandidateIds.includes(id));
+  const removedExecutionCandidateIds = sourceExecutionIds.filter((id) => !availableExecutionCandidateIds.includes(id));
   const removedTargetIds = uniqueIds([
     ...removedSuspicionCandidateIds,
     ...removedExecutionCandidateIds,
@@ -79,7 +80,7 @@ export function projectDecisionStateForPolicy(decisionState, policy, {
       'decisionReason',
     ]
     : resetDailyComparisons
-      ? ['intendedVoteId', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference', 'decisionReason']
+      ? ['executionCandidateIds', 'intendedVoteId', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference', 'decisionReason']
       : [];
   const hasStoredDecision = Boolean(source.updatedAt);
   const usablePreviousDecision = hasStoredDecision && !targetContextChanged;

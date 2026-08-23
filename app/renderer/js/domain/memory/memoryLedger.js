@@ -7,6 +7,7 @@ import { ROLE_DEFINITIONS, TEAM_LABELS } from '../../config/constants.js';
 import { getPlayerTeam } from '../roles/roleAttributes.js';
 import { createId, nowIso } from '../../shared/utils.js';
 import { getCurrentDecisionProjection } from '../game/decisionTargetPolicy.js';
+import { formatAbilityClaimTiming } from '../policies/abilityClaimTimingPolicy.js';
 
 const INTERNAL_MEMORY_DUPLICATE_LOOKBACK = 8;
 const INTERNAL_MEMORY_NOTE_LIMIT = 20;
@@ -160,8 +161,8 @@ function publicCommitmentsForPlayer(state, player) {
         snowWoman: '凍結',
       }[claim.claimedRoleId] ?? null;
       const claimText = actionLabel
-        ? `Day ${claim.observedDay} ${playerName(state, claim.targetId)}への${actionLabel}履歴を公開`
-        : `Day ${claim.observedDay} ${playerName(state, claim.targetId)}は${claim.result === 'wolf' ? '人狼' : '人狼ではない'}と公開`;
+        ? `${formatAbilityClaimTiming(claim)} ${playerName(state, claim.targetId)}への${actionLabel}履歴を公開`
+        : `${formatAbilityClaimTiming(claim)} ${playerName(state, claim.targetId)}は${claim.result === 'wolf' ? '人狼' : '人狼ではない'}と公開`;
       commitments.push({
         id: `ability-claim:${claim.id}`,
         type: 'ability-claim',

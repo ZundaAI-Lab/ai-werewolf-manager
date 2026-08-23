@@ -1,6 +1,6 @@
 /**
  * 責務: 客観的な局面フラグから、プロンプトの説明区画と詳細度をタスク別に選択する。
- * 変更ルール: 可視データ本体、公開履歴、既存説明文へ介入せず、文章を生成せず、ゲーム状態を更新しない。区画の追加・削除はタスク別の必要情報だけで判断し、同じ確定情報を複数区画へ重複表示しない。継続アンカー・当日カプセルへ依存せず、最新判断・正式本人履歴を必要タスクへ直接表示する。保存済みheartVoiceは次回プロンプトの判断材料へ再投入しない。投票の人口・同票・処刑分岐はdecisionTaskSectionへ一元化し、一般人口区画を重ねない。実行タスクは役職通知の保持を前提にせず、本人プロフィールをその都度選択する。相手別呼称は公開・秘密の会話文章を生成するタスクだけへ表示し、構造化行動タスクへ表示しない。昼の発言状況と質問可能範囲は一つの会話状況区画として選択する。回答フェーズは通常発言数を消費しないがCO可能な公開判断機会なので、役職固有判断・CO戦術・公開順序・陣営戦術を通常議論と同じ正本から表示する。判断材料を完全非表示にする変更は対応テストを追加してから行う。
+ * 変更ルール: 可視データ本体、公開履歴、既存説明文へ介入せず、文章を生成せず、ゲーム状態を更新しない。区画の追加・削除はタスク別の必要情報だけで判断し、同じ確定情報を複数区画へ重複表示しない。継続アンカー・当日カプセルへ依存せず、最新判断・正式本人履歴を必要タスクへ直接表示する。保存済みheartVoiceは次回プロンプトの判断材料へ再投入しない。投票の人口・同票・処刑分岐はdecisionTaskSectionへ一元化し、一般人口区画を重ねない。実行タスクは役職通知の保持を前提にせず、本人プロフィールをその都度選択する。相手別呼称は公開・秘密の会話文章を生成するタスクだけへ表示し、構造化行動タスクへ表示しない。昼の発言状況と質問可能範囲は一つの会話状況区画として選択する。回答フェーズは通常発言数を消費しないがCO可能な公開判断機会なので、役職固有判断・CO戦術・公開順序・陣営戦術を通常議論と同じ正本から表示する。墓場会話は生前判断の継続ではなく秘密共有・答え合わせ・感想を目的とするため、latestDecision を再投入しない。判断材料を完全非表示にする変更は対応テストを追加してから行う。
  */
 
 import { PERSONAL_NIGHT_ACTION_TASK_TYPES, isPersonalNightActionTask } from '../../config/personalNightActionTasks.js';
@@ -21,7 +21,7 @@ const WOLF_HISTORY_TASKS = new Set(['wolf-conversation', 'wolf-attack']);
 const LATEST_DECISION_TASKS = new Set([
   ...NORMAL_SPEECH_TASK_TYPES, DISCUSSION_OPENING_PREFERENCE_TASK, 'priority-answer', 'vote',
   ...PERSONAL_NIGHT_ACTION_TASK_TYPES,
-  'mason-conversation', 'wolf-conversation', 'graveyard-conversation', 'wolf-attack',
+  'mason-conversation', 'wolf-conversation', 'wolf-attack',
 ]);
 const DAY_SHARED_COMMUNICATION_TASKS = new Set([...NORMAL_SPEECH_TASK_TYPES, DISCUSSION_OPENING_PREFERENCE_TASK, 'priority-answer', 'vote']);
 const WOLF_PRIVATE_TASKS = new Set(['wolf-conversation', 'wolf-attack']);

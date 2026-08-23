@@ -1,6 +1,6 @@
 /**
  * 責務: 公開CO・公開能力結果・公開投票と参加者別判断状態から、リアルタイム表示および日終了スナップショット用のプレイヤー相関モデルを決定的に構築・射影・保存する。
- * 変更ルール: 公開発言本文を自然言語解析しない。リアルタイム疑いは生存者同士だけへ射影し、日終了保存では当日死亡者に接続する最終疑いだけを保持して前日以前の死亡者との疑いを除去する。機密情報非表示への射影では疑い関係・疑い強度・真役職を必ず除去する。スナップショットは同じDayを一件だけ保持し、訂正後の再進行時は同Dayを置換する。
+ * 変更ルール: 公開発言本文を自然言語解析しない。リアルタイム疑いは生存者同士だけへ射影し、日終了保存では当日死亡者に接続する最終疑いだけを保持して前日以前の死亡者との疑いを除去する。疑い対象と疑い線は公開議論上の対立関係に近い相関図の基礎情報として機密表示OFFでも保持し、真役職と内部確信度である疑い強度・判断更新日は機密表示時だけ射影する。この境界を役職等の秘密情報と同一視して疑い線まで隠さない。スナップショットは同じDayを一件だけ保持し、訂正後の再進行時は同Dayを置換する。
  */
 
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
@@ -49,7 +49,7 @@ function activeClaimByActor(state) {
 function activeAbilityClaims(state) {
   return (state.publicAbilityClaims ?? [])
     .filter((claim) => claim?.status === 'active')
-    .sort((a, b) => Number(a.announcedDay ?? a.observedDay ?? 0) - Number(b.announcedDay ?? b.observedDay ?? 0));
+    .sort((a, b) => Number(a.availableDay ?? a.announcedDay ?? 0) - Number(b.availableDay ?? b.announcedDay ?? 0));
 }
 
 function pushOrReplaceEdge(edgeMap, edge, { replace = false } = {}) {
@@ -137,24 +137,24 @@ export function buildPlayerRelationshipModel(state, {
     .filter((player) => canConnectSuspicion(player, normalizedSnapshotDay))
     .map((player) => player.id));
 
-  if (showConfidential) {
-    players.forEach((player) => {
-      if (!suspicionParticipantIds.has(player.id)) return;
-      const currentDecision = decisionByPlayerId.get(player.id);
-      unique(currentDecision?.suspicionCandidateIds)
-        .filter((targetId) => targetId !== player.id
-          && playerIds.has(targetId)
-          && suspicionParticipantIds.has(targetId))
-        .forEach((targetId) => pushOrReplaceEdge(edgeMap, normalizedEdge({
-          id: `suspicion:${player.id}:${targetId}`,
-          type: 'suspicion',
-          sourceId: player.id,
-          targetId,
-          label: '疑い',
-          day: Number(currentDecision?.sourceDay ?? 0),
-        })));
-    });
-  }
+  // 疑い先は公開議論の対立関係とほぼ同質で、相関図の主要価値を構成する。
+  // 機密表示OFFでも線自体は残し、内部確信度や真役職だけを後段で秘匿する。
+  players.forEach((player) => {
+    if (!suspicionParticipantIds.has(player.id)) return;
+    const currentDecision = decisionByPlayerId.get(player.id);
+    unique(currentDecision?.suspicionCandidateIds)
+      .filter((targetId) => targetId !== player.id
+        && playerIds.has(targetId)
+        && suspicionParticipantIds.has(targetId))
+      .forEach((targetId) => pushOrReplaceEdge(edgeMap, normalizedEdge({
+        id: `suspicion:${player.id}:${targetId}`,
+        type: 'suspicion',
+        sourceId: player.id,
+        targetId,
+        label: '疑い',
+        day: Number(currentDecision?.sourceDay ?? 0),
+      })));
+  });
 
   abilityClaims.forEach((claim) => {
     if (!playerIds.has(claim.actorId) || !playerIds.has(claim.targetId) || claim.actorId === claim.targetId) return;
@@ -166,7 +166,7 @@ export function buildPlayerRelationshipModel(state, {
       targetId: claim.targetId,
       label: `${claimedRoleName}・${publicAbilityResultLabel(claim.result, claim.claimedRoleId)}`,
       graphLabel: `${claimedRoleName}${claim.result === 'wolf' ? '●' : claim.result === 'not-wolf' ? '○' : '◇'}`,
-      day: Number(claim.observedDay ?? claim.announcedDay ?? 0),
+      day: Number(claim.availableDay ?? claim.announcedDay ?? 0),
       result: claim.result,
       sourceEventId: claim.sourceEventId ?? null,
     });
@@ -191,7 +191,7 @@ export function buildPlayerRelationshipModel(state, {
     const claim = claims.get(player.id) ?? null;
     const currentDecision = decisionByPlayerId.get(player.id);
     const canConnect = suspicionParticipantIds.has(player.id);
-    const suspicionTargetIds = showConfidential && canConnect
+    const suspicionTargetIds = canConnect
       ? unique(currentDecision?.suspicionCandidateIds)
         .filter((id) => playerIds.has(id) && id !== player.id && suspicionParticipantIds.has(id))
       : [];
@@ -231,12 +231,11 @@ export function projectPlayerRelationshipSnapshot(snapshot, {
     ...node,
     actualRoleId: confidential ? node.actualRoleId : null,
     actualRoleName: confidential ? node.actualRoleName : '',
-    suspicionTargetIds: confidential ? [...(node.suspicionTargetIds ?? [])] : [],
+    suspicionTargetIds: [...(node.suspicionTargetIds ?? [])],
     suspicionStrength: confidential ? normalizedSuspicionStrength(node.suspicionStrength) : null,
     decisionSourceDay: confidential ? node.decisionSourceDay ?? null : null,
   }));
   const edges = (snapshot?.edges ?? [])
-    .filter((edge) => confidential || edge.type !== 'suspicion')
     .map((edge) => {
       const projected = { ...edge };
       if (edge.type === 'ability') projected.abilityRoleId = abilityRoleIdFromEvent(state, edge);

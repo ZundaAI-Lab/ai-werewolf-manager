@@ -40,6 +40,14 @@ test('夜行動・襲撃・雪女は理由と比較をフェーズ主形式に�
   })), ['estimate', 'actionAnswer', 'rationale']);
 });
 
+
+test('墓場はmemoAddを機械許可のまま保持してもAI向けJSON例にはgraveyardMessageだけを表示する', () => {
+  assert.equal(getResponseTopLevelKeys('graveyard').includes('memoAdd'), true, '未提示でも回答検証契約からは削除しない');
+  assert.deepEqual(Object.keys(buildActiveResponseContractExample({ mode: 'graveyard', roleId: 'villager' })), [
+    'graveyardMessage',
+  ]);
+});
+
 test('全モードの完全例キーは機械許可キーの範囲内にある', () => {
   for (const [mode, roleId] of [
     ['speech', 'wolf'], ['speech-designated', 'wolf'], ['speech-free', 'wolf'],
@@ -118,3 +126,65 @@ test('vote structured schemaも単独狼のpartnerDispositionをchanges候補へ
   assert.equal(Object.hasOwn(changes, 'dayWinPath'), true);
 });
 
+
+
+test('decisionPatchのJSON例は推理モードと既存の処刑判断局面だけで任意項目を切り替える', () => {
+  const neutralProfile = {
+    updateTempo: 'gradual',
+    hypothesisBreadth: 'balanced',
+    uncertaintyStyle: 'emotional',
+  };
+  const normal = buildActiveResponseContractExample({
+    mode: 'speech',
+    roleId: 'villager',
+    reasoningModeId: 'trace-change',
+    reasoningProfile: neutralProfile,
+  });
+  assert.deepEqual(Object.keys(normal.decisionPatch), [
+    'suspects', 'assessmentLevel', 'reason', 'evidenceRefs',
+    'changePoint', 'changeTrigger', 'changeNaturalness',
+  ]);
+  assert.equal(Object.hasOwn(normal.decisionPatch, 'executionCandidates'), false);
+  assert.equal(Object.hasOwn(normal.decisionPatch, 'intendedVote'), false);
+
+  const finalDiscussion = buildActiveResponseContractExample({
+    mode: 'speech',
+    roleId: 'villager',
+    reasoningModeId: 'trace-change',
+    reasoningProfile: neutralProfile,
+    isExecutionDecisionWindow: true,
+    isFinalDiscussionDecisionWindow: true,
+  });
+  assert.equal(Object.hasOwn(finalDiscussion.decisionPatch, 'executionCandidates'), true);
+  assert.equal(Object.hasOwn(finalDiscussion.decisionPatch, 'leaveAliveBenefit'), true);
+  assert.equal(Object.hasOwn(finalDiscussion.decisionPatch, 'misexecutionCost'), true);
+  assert.equal(Object.hasOwn(finalDiscussion.decisionPatch, 'selectionDifference'), true);
+  assert.equal(Object.hasOwn(finalDiscussion.decisionPatch, 'intendedVote'), true);
+
+  const vote = buildActiveResponseContractExample({
+    mode: 'vote',
+    roleId: 'villager',
+    reasoningProfile: neutralProfile,
+    isExecutionDecisionWindow: true,
+  });
+  assert.equal(Object.hasOwn(vote.decisionPatch, 'executionCandidates'), true);
+  assert.equal(Object.hasOwn(vote.decisionPatch, 'intendedVote'), false);
+  assert.equal(Object.hasOwn(vote.decisionPatch, 'reason'), false);
+
+  const analytical = buildActiveResponseContractExample({
+    mode: 'speech',
+    roleId: 'villager',
+    reasoningModeId: 'hold-judgment',
+    reasoningProfile: {
+      updateTempo: 'conservative',
+      hypothesisBreadth: 'wide',
+      uncertaintyStyle: 'analytical',
+    },
+    exampleReferences: { correctedSpeechRefs: [12], decisionEvidenceRefs: [15] },
+  });
+  assert.equal(Object.hasOwn(analytical.decisionPatch, 'remainingHypotheses'), true);
+  assert.equal(Object.hasOwn(analytical.decisionPatch, 'nextDiscriminatingInformation'), true);
+  assert.equal(Object.hasOwn(analytical.decisionPatch, 'counterSignals'), true);
+  assert.deepEqual(analytical.decisionPatch.correctedSpeechRefs, [12]);
+  assert.deepEqual(analytical.decisionPatch.evidenceRefs, [15]);
+});

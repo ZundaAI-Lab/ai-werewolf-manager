@@ -60,7 +60,7 @@ function expectedAbilityEdges(events, maximumSequence, eventById, playerIdSet) {
     .flatMap((event) => (event.payload?.structured?.abilityClaims ?? []).map((claim, index) => ({ event, claim, index })))
     .filter(({ claim }) => claim?.action === 'publish')
     .sort((left, right) => {
-      const dayDifference = Number(left.claim.observedDay ?? left.event.day ?? 0) - Number(right.claim.observedDay ?? right.event.day ?? 0);
+      const dayDifference = Number(left.claim.availableDay ?? left.event.day ?? 0) - Number(right.claim.availableDay ?? right.event.day ?? 0);
       return dayDifference || Number(left.event.sequence) - Number(right.event.sequence) || left.index - right.index;
     });
   const expected = new Map();
@@ -79,7 +79,7 @@ function expectedAbilityEdges(events, maximumSequence, eventById, playerIdSet) {
       targetId,
       label: `${claimedRoleName}・${publicAbilityResultLabel(result, claimedRoleId)}`,
       graphLabel: `${claimedRoleName}${result === 'wolf' ? '●' : result === 'not-wolf' ? '○' : '◇'}`,
-      day: Number(claim.observedDay ?? event.day ?? 0),
+      day: Number(claim.availableDay ?? event.day ?? 0),
       result,
       sourceEventId: event.id,
     });

@@ -2,6 +2,7 @@
  * 責務: buildPromptContext()の構造化結果とタスク固有決定値から、工程プロンプト投影専用のstageSourceと、AIへ送信しない文章境界検査参照を決定的に構築する。
  * 変更ルール:
  * - 通常昼発言の構造草案へ、直接生成と同じ解決済み非公開参考視点を引き継ぐ。参考視点の再選択・再解釈は行わず、そのanchorEventSequencesが参照する公開イベントも本番と同じ履歴選択へ必ず残す。
+ * - Day 2以降の通常昼議論第1巡では、直接生成と同じ初期公開役職構成由来の夜明け状況ガイドを草案工程へ引き継ぎ、現在の生存・死亡・CO等で候補を絞らない。
  * - 元プロンプト文字列を解析せず、API通信、DOM、ゲーム状態更新を行わない。公開履歴は本番プロンプトと同じ履歴ポリシーとpublicHistorySection.jsの射影を正本とし、draftへ生イベントを渡さない。未登録キーをstageSourceへ通さず、内部UUIDは工程プロンプトへ直接掲載しない。保存済みheartVoiceは生成・監査用状態に残してもstageSourceへ再投影しない。公開発言の文字数目安・上限は工程プロンプト末尾の最終確認だけで使える構造値として保持し、人間向け発言量ラベルや不透明な長さ区分を中間コンテキストへ投影しない。会話開始・序盤反応の意味がある追加指示はroleTaskData.promptGuidanceを正本とする。characterExpressionには工程で実際に使用する口調・呼称だけを投影する。safetyReferencesとrecentPublicTimelineはローカル検査・参照変換専用とし、draftへ直接投影しない。
  */
 
@@ -16,6 +17,7 @@ import {
 import { resolvePublicSpeechLengthPolicy } from '../../domain/policies/publicSpeechLengthPolicy.js';
 import { MAX_FREEZE_ACTION_RATIONALE_LENGTH, MAX_NIGHT_ACTION_RATIONALE_LENGTH } from '../../config/constants.js';
 import { publicHistoryData, selfPublicContinuityData } from '../sections/publicHistorySection.js';
+import { buildRoleCompositionSituationGuide } from '../sections/roleCompositionSituationSection.js';
 
 const RESPONSE_CONTRACT_KEYS = Object.freeze([
   'mode',
@@ -125,7 +127,7 @@ export function buildGenerationStageSource({
   playerId,
   slotId,
   validTargetIds,
-  publicHistoryMode = 'compact',
+  publicHistoryMode = 'delta',
   responseContract,
   generationGuidance = null,
   internalReasoningDirective = null,
@@ -174,6 +176,7 @@ export function buildGenerationStageSource({
       },
       currentVoteState: clone(context?.game?.vote, null),
       recentOutcomeSummary: recentOutcomeSummary(context),
+      roleCompositionSituationGuide: clone(buildRoleCompositionSituationGuide(context, taskType), null),
     },
     privateState: {
       ownRole: {
@@ -238,7 +241,7 @@ export function buildGenerationStageSource({
       },
     },
     histories: {
-      publicHistoryMode: String(publicHistoryMode ?? 'compact'),
+      publicHistoryMode: String(publicHistoryMode ?? 'delta'),
       publicHistoryProjection,
       ownPublicHistoryProjection,
       recentPublicTimeline,

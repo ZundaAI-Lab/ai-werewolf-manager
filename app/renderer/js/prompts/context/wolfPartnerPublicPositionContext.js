@@ -43,7 +43,10 @@ function activeAbilityClaims(state, playerId) {
     .filter((claim) => claim.actorId === playerId && claim.status !== 'voided')
     .map((claim) => ({
       role: ROLE_DEFINITIONS[claim.claimedRoleId]?.name ?? claim.claimedRoleId,
-      resultDay: claim.observedDay,
+      actionDay: claim.actionDay,
+      actionPhase: claim.actionPhase,
+      availableDay: claim.availableDay,
+      availablePhase: claim.availablePhase,
       target: playerName(state, claim.targetId),
       result: publicAbilityResultLabel(claim.result, claim.claimedRoleId),
     }));

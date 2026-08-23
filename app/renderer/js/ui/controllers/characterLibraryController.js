@@ -25,6 +25,7 @@ import {
   currentUserCharacterLibrary,
   importUserCharacterLibrary,
   saveUserCharacterGroups,
+  USER_CHARACTER_LIBRARY_MAX_BYTES,
   setCharacterEnabled,
   setCharacterGroupEnabled,
   setCharacterGroupOrder,
@@ -635,6 +636,9 @@ export function createCharacterLibraryController({ render, modal, aiGenerationDi
   async function handleImportFile(file) {
     if (!file) return;
     try {
+      if (file.size > USER_CHARACTER_LIBRARY_MAX_BYTES) {
+        throw new RangeError(`ユーザーキャラクターJSONは${USER_CHARACTER_LIBRARY_MAX_BYTES / (1024 * 1024)}MB以下にしてください。`);
+      }
       const raw = JSON.parse(await readFileText(file));
       const count = await importUserCharacterLibrary(raw);
       await notifyCatalogChanged();

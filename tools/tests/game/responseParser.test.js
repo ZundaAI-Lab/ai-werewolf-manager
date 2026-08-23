@@ -369,9 +369,69 @@ test('truthful能力公開は本人P#正本から対象・Day・結果を解決�
   assert.equal(validation.resolvedAbilityClaims[0].claimedRoleId, 'seer');
   assert.equal(validation.resolvedAbilityClaims[0].targetId, target.id);
   assert.equal(validation.resolvedAbilityClaims[0].result, 'not-wolf');
-  assert.equal(validation.resolvedAbilityClaims[0].observedDay, 1);
+  assert.deepEqual(
+    {
+      actionDay: validation.resolvedAbilityClaims[0].actionDay,
+      actionPhase: validation.resolvedAbilityClaims[0].actionPhase,
+      availableDay: validation.resolvedAbilityClaims[0].availableDay,
+      availablePhase: validation.resolvedAbilityClaims[0].availablePhase,
+    },
+    { actionDay: 0, actionPhase: 'night', availableDay: 1, availablePhase: 'day' },
+  );
   assert.equal(validation.normalizedParsedAbilityClaims.claims[0].result, 'not-wolf');
   assert.equal(validation.normalizedParsedAbilityClaims.claims[0].targetName, target.name);
+});
+
+
+test('truthful占い公開はown-historyに表示されるnight-action P#から対応する正式結果を解決できる', () => {
+  const state = createInitialState(6);
+  const actor = state.players.find((player) => player.roleId === 'seer');
+  const target = state.players.find((player) => player.id !== actor.id);
+  state.game.day = 0;
+  state.game.phase = 'night';
+  const actionEvent = createEvent(state, {
+    type: 'night-action',
+    actorId: actor.id,
+    targetIds: [target.id],
+    audience: { type: 'player', targetIds: [actor.id] },
+    payload: {
+      actionType: 'inspect',
+      targetId: target.id,
+      nightDay: 0,
+    },
+  });
+  state.game.day = 1;
+  state.game.phase = 'discussion';
+  createEvent(state, {
+    type: 'private-result',
+    actorId: actor.id,
+    targetIds: [target.id],
+    audience: { type: 'player', targetIds: [actor.id] },
+    payload: {
+      actionType: 'inspect',
+      targetId: target.id,
+      result: 'not-wolf',
+      availableFromDay: 1,
+      nightDay: 0,
+    },
+  });
+
+  const parsed = parseAiResponse(JSON.stringify({
+    publicSpeech: '昨夜の占い結果を公開します。',
+    coOperation: { action: 'declare', roleId: 'seer' },
+    abilityClaims: [{ intent: 'truthful', sourceRef: actionEvent.sequence }],
+  }), 'speech');
+  const validation = validateAiResponse(state, {
+    parsed,
+    playerId: actor.id,
+    taskType: 'speech',
+  });
+
+  assert.equal(validation.ok, true, validation.errors.join('\n'));
+  assert.equal(validation.resolvedAbilityClaims[0].targetId, target.id);
+  assert.equal(validation.resolvedAbilityClaims[0].result, 'not-wolf');
+  assert.equal(validation.resolvedAbilityClaims[0].actionDay, 0);
+  assert.equal(validation.resolvedAbilityClaims[0].availableDay, 1);
 });
 
 
@@ -417,6 +477,15 @@ test('truthful霊能公開は非人狼の正本をwolfへ反転できず、decep
   });
   assert.equal(truthfulValidation.ok, true, truthfulValidation.errors.join('\n'));
   assert.equal(truthfulValidation.resolvedAbilityClaims[0].result, 'not-wolf');
+  assert.deepEqual(
+    {
+      actionDay: truthfulValidation.resolvedAbilityClaims[0].actionDay,
+      actionPhase: truthfulValidation.resolvedAbilityClaims[0].actionPhase,
+      availableDay: truthfulValidation.resolvedAbilityClaims[0].availableDay,
+      availablePhase: truthfulValidation.resolvedAbilityClaims[0].availablePhase,
+    },
+    { actionDay: 1, actionPhase: 'execution', availableDay: 2, availablePhase: 'day' },
+  );
 
   const injected = parseAiResponse(JSON.stringify({
     publicSpeech: '霊能結果を公開します。',
@@ -440,7 +509,10 @@ test('truthful霊能公開は非人狼の正本をwolfへ反転できず、decep
     abilityClaims: [{
       intent: 'deception',
       roleId: 'seer',
-      resultDay: 1,
+      actionDay: 0,
+      actionPhase: 'night',
+      availableDay: 1,
+      availablePhase: 'day',
       target: deceptionTarget.name,
       result: 'wolf',
       selectionBasis: 'no-public-information',
@@ -454,4 +526,71 @@ test('truthful霊能公開は非人狼の正本をwolfへ反転できず、decep
   });
   assert.equal(deceptionValidation.ok, true, deceptionValidation.errors.join('\n'));
   assert.equal(deceptionValidation.resolvedAbilityClaims[0].result, 'wolf');
+});
+
+
+test('deception能力公開は取得前の未来時点を主張できない', () => {
+  const state = createInitialState(6);
+  const wolf = state.players.find((player) => player.roleId === 'wolf');
+  const target = state.players.find((player) => player.id !== wolf.id);
+  state.game.day = 3;
+  state.game.phase = 'discussion';
+
+  const parsed = parseAiResponse(JSON.stringify({
+    publicSpeech: '今夜の占い結果だと主張します。',
+    coOperation: { action: 'declare', roleId: 'seer' },
+    abilityClaims: [{
+      intent: 'deception',
+      roleId: 'seer',
+      actionDay: 3,
+      actionPhase: 'night',
+      availableDay: 4,
+      availablePhase: 'day',
+      target: target.name,
+      result: 'wolf',
+      selectionBasis: 'no-public-information',
+      evidenceRefs: [],
+    }],
+  }), 'speech');
+
+  const validation = validateAiResponse(state, {
+    parsed,
+    playerId: wolf.id,
+    taskType: 'speech',
+  });
+  assert.equal(validation.ok, false);
+  assert.match(validation.errors.join('\n'), /まだ取得していない未来の能力結果は公開できません/u);
+});
+
+
+test('推理モード固有decisionPatch項目は回答任意で、出力した場合も継続判断必須項目へ昇格しない', () => {
+  const minimal = parseAiResponse(JSON.stringify({ publicSpeech: 'まだ判断材料を集めます。' }), 'speech');
+  assert.deepEqual(minimal.diagnostics.errors, []);
+
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  const parsed = parseAiResponse(JSON.stringify({
+    publicSpeech: '回答を受けて見方を更新します。',
+    decisionPatch: {
+      responseImpact: '回答によって以前より疑いを弱めた。',
+      supportingSignals: ['公開発言の説明が前回より具体化した。'],
+      counterSignals: ['ただし投票姿勢はまだ確認できていない。'],
+      remainingHypotheses: ['村として説明不足だった可能性', '意図的に曖昧にした可能性'],
+    },
+  }), 'speech');
+  assert.deepEqual(parsed.diagnostics.errors, []);
+  assert.equal(parsed.value.decisionUpdate.changes.responseImpact, '回答によって以前より疑いを弱めた。');
+  assert.deepEqual(parsed.value.decisionUpdate.changes.remainingHypotheses, [
+    '村として説明不足だった可能性', '意図的に曖昧にした可能性',
+  ]);
+
+  const validation = validateAiResponse(state, {
+    parsed,
+    playerId: actor.id,
+    taskType: 'speech',
+    candidateIds: state.players.slice(1).map((player) => player.id),
+  });
+  assert.equal(validation.ok, true, validation.errors.join('\n'));
+  assert.equal(Object.hasOwn(validation.resolvedDecisionUpdate, 'responseImpact'), false);
+  assert.equal(Object.hasOwn(validation.resolvedDecisionUpdate, 'remainingHypotheses'), false);
 });

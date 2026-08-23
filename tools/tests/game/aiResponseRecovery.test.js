@@ -46,7 +46,10 @@ test('任意構造のnull除去・列挙正規化・重複除去を未定義参�
       {
         intent: ' DECEPTION ',
         roleId: ' SEER ',
-        resultDay: '1',
+        actionDay: '0',
+        actionPhase: ' NIGHT ',
+        availableDay: '1',
+        availablePhase: ' DAY ',
         target: target.name,
         result: ' NOT-WOLF ',
         selectionBasis: null,
@@ -56,7 +59,10 @@ test('任意構造のnull除去・列挙正規化・重複除去を未定義参�
       {
         intent: ' DECEPTION ',
         roleId: ' SEER ',
-        resultDay: '1',
+        actionDay: '0',
+        actionPhase: ' NIGHT ',
+        availableDay: '1',
+        availablePhase: ' DAY ',
         target: target.name,
         result: ' NOT-WOLF ',
         selectionBasis: null,
@@ -78,7 +84,10 @@ test('任意構造のnull除去・列挙正規化・重複除去を未定義参�
   assert.deepEqual(candidate.abilityClaims, [{
     intent: 'deception',
     roleId: 'seer',
-    resultDay: 1,
+    actionDay: 0,
+    actionPhase: 'night',
+    availableDay: 1,
+    availablePhase: 'day',
     target: target.name,
     result: 'not-wolf',
   }]);

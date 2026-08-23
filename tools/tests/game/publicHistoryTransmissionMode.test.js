@@ -1,5 +1,5 @@
 /**
- * 責務: 公開履歴のfull・compact・deltaが同じ正常回答境界を使用し、既定圧縮・無圧縮・過去選別・差分送信・参考視点anchor保持・夜の当日最終巡保持契約を維持することを検証する。
+ * 責務: 公開履歴のfull・compact・deltaが同じ正常回答境界を使用し、既定差分・無圧縮・過去選別・差分送信・参考視点anchor保持・夜の当日最終巡保持契約を維持することを検証する。
  * 変更ルール: Day境界や文字数切断を圧縮条件にせず、保存済み構造情報・判断根拠・参加者ごとの直近発言と今回の参考視点が参照する公開イベントだけを重要履歴として扱う。
  */
 
@@ -186,8 +186,11 @@ test('deltaの多段生成stageSourceも参考視点anchorを公開履歴へ引�
   });
   assert.deepEqual(source.histories.recentPublicTimeline.map((event) => event.sequence), [1, 2, 3]);
   assert.deepEqual(source.internalReasoningDirective.anchorEventSequences, [1, 2]);
-  assert.match(source.histories.publicHistoryProjection.speeches.join('\n'), /#1\/D1\/甲/u);
-  assert.match(source.histories.publicHistoryProjection.voteResults.join('\n'), /#2\/D1 投票/u);
+  const projection = source.histories.publicHistoryProjection.timeline.join('\n');
+  assert.match(projection, /#1\/D1\/甲/u);
+  assert.match(projection, /#2\/D1 投票/u);
+  assert.ok(projection.indexOf('#1/') < projection.indexOf('#2/'));
+  assert.ok(projection.indexOf('#2/') < projection.indexOf('#3/'));
 });
 
 test('compactは構造保持だけでは残らない過去発言も参考視点anchorなら保持する', () => {
@@ -206,13 +209,14 @@ test('deltaで本人の直近境界前発言がanchor保持済みならさらに
   assert.equal(selectLatestOwnSpeechBeforeDelta(context, decision, 'delta', selected), null);
 });
 
-test('compactは既定値で、境界なしと再同期時だけfullへ戻り、夜タスクは当日最終巡を維持する', () => {
-  assert.equal(normalizePublicHistoryTransmissionMode(undefined), 'compact');
-  assert.equal(resolvePublicHistoryMode(DAY_SITUATION, { transmissionMode: 'compact', hasHistoryCursor: false }), 'full');
+test('deltaは既定値で、境界なしと再同期時だけfullへ戻り、夜タスクは当日最終巡を維持する', () => {
+  assert.equal(normalizePublicHistoryTransmissionMode(undefined), 'delta');
+  assert.equal(resolvePublicHistoryMode(DAY_SITUATION, { hasHistoryCursor: false }), 'full');
+  assert.equal(resolvePublicHistoryMode(DAY_SITUATION, { hasHistoryCursor: true }), 'delta');
+  assert.equal(resolvePublicHistoryMode(DAY_SITUATION, { hasHistoryCursor: true, forceFull: true }), 'full');
+  assert.equal(resolvePublicHistoryMode(NIGHT_SITUATION, { hasHistoryCursor: true }), 'night-delta');
   assert.equal(resolvePublicHistoryMode(DAY_SITUATION, { transmissionMode: 'compact', hasHistoryCursor: true }), 'compact');
-  assert.equal(resolvePublicHistoryMode(DAY_SITUATION, { transmissionMode: 'compact', hasHistoryCursor: true, forceFull: true }), 'full');
   assert.equal(resolvePublicHistoryMode(NIGHT_SITUATION, { transmissionMode: 'compact', hasHistoryCursor: true }), 'night');
-  assert.equal(resolvePublicHistoryMode(NIGHT_SITUATION, { transmissionMode: 'delta', hasHistoryCursor: true }), 'night-delta');
 
   const { context, decision } = contextAndDecision();
   const night = selectPublicHistoryTimeline(context, decision, 'night');

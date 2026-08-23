@@ -24,7 +24,7 @@ export function createSettingsPersistenceCoordinator(context) {
   let autosaveWriteChain = Promise.resolve();
 
   function applyPromptHistorySetting() {
-      runtime().setPublicHistoryTransmissionMode(controller.settings.aiOptions?.publicHistoryMode ?? 'compact');
+      runtime().setPublicHistoryTransmissionMode(controller.settings.aiOptions?.publicHistoryMode ?? 'delta');
     }
 
   function applyAiExecutionSettings() {
@@ -37,11 +37,26 @@ export function createSettingsPersistenceCoordinator(context) {
     }
 
   async function persistSettings(settings, { refresh = true, statusMessage = '' } = {}) {
-      controller.settings = await bridge.saveSettings(settings);
+      const previousSettings = controller.settings;
+      const savedSettings = await bridge.saveSettings(settings);
+      const previousById = new Map((previousSettings?.profiles ?? []).map((profile) => [profile.id, profile]));
+      const invalidatedKeyProfiles = (savedSettings.profiles ?? []).filter((profile) => {
+        const previous = previousById.get(profile.id);
+        return previous
+          && previous.provider === profile.provider
+          && previous.endpoint !== profile.endpoint
+          && previous.hasApiKey === true
+          && profile.hasApiKey === false;
+      });
+      controller.settings = savedSettings;
       applyPromptHistorySetting();
       applyAiExecutionSettings();
       if (refresh) refreshVisibleUi();
       if (statusMessage) setStatus(statusMessage, 'success');
+      if (invalidatedKeyProfiles.length) {
+        const labels = invalidatedKeyProfiles.map((profile) => profile.label).filter(Boolean).join('、');
+        runtime().toast(`${labels || 'AIプロファイル'}の接続先を変更したため、APIキーを再入力してください。`, 'warning');
+      }
       return controller.settings;
     }
 

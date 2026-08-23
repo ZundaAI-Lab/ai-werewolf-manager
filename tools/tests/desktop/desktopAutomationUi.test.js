@@ -192,6 +192,42 @@ test('AI実行操作をAI管理画面へ集約する', () => {
   assert.match(html, /data-ai-action="resync-all"/u);
 });
 
+test('AI管理の割り当て表示更新はassignmentControllerの責務を参照する', () => {
+  const context = vm.createContext({ console });
+  context.__automationTestModules = Object.create(null);
+  executeAutomationModule('aiManagementController.js', context);
+  const { createAiManagementController } = context.__automationTestModules['aiManagementController.js'];
+  const updateManagementReadouts = () => {};
+  const applyManagementExecutionModeUi = () => {};
+  const controller = createAiManagementController({
+    profileEditorController: {
+      switchProfileEditor() {},
+      switchProfileEditorTab() {},
+      syncProfileProviderFields() {},
+      updateProfileEditorPreview() {},
+    },
+    aiProfileTransferController: {
+      exportSelectedProfileJson() {},
+      importProfileJsonFile() {},
+    },
+    assignmentController: {
+      updateManagementReadouts,
+      applyManagementExecutionModeUi,
+      saveAssignment() {},
+      showBulkAssignmentFeedback() {},
+    },
+    generationTestController: {
+      testProfile() {},
+      generationCandidateAnswer() {},
+      buildGenerationTestStageSnapshots() {},
+      testGenerationPipeline() {},
+      listProfileModels() {},
+    },
+  });
+  assert.equal(controller.updateManagementReadouts, updateManagementReadouts);
+  assert.equal(controller.applyManagementExecutionModeUi, applyManagementExecutionModeUi);
+});
+
 test('AIプロファイルの並び替え計算は境界位置を越えない', () => {
   const api = loadAutomationApi();
   const html = api.renderManagementPage(sampleState());
@@ -229,7 +265,7 @@ test('ローカルLLM正式対応の設定・モデル取得・認証任意表�
   assert.match(html, /data-local-model-action/u);
   assert.match(html, /data-profile-setting="contextWindowTokens"/u);
   assert.match(html, /data-profile-setting="promptCacheMode"/u);
-  assert.match(html, /通常は「過去履歴を圧縮」を推奨します。/u);
+  assert.match(html, /通常は「前回の正常回答後に増えた公開履歴だけを送信」を使用します。/u);
   assert.match(html, /data-profile-setting="jsonRequestMode"/u);
   assert.match(html, /data-profile-setting="jsonResponseMode"/u);
   assert.match(html, /data-profile-setting="thinkingLevel"/u);
@@ -307,7 +343,7 @@ test('AI管理画面は生成深度・工程担当・上書き・接続テスト
   assert.doesNotMatch(html, /レビュー/u);
   assert.doesNotMatch(html, /現在と同じ方式|通常1回|通常2回|通常3回/u);
   assert.match(html, /上で選んだ生成深度を使用/u);
-  assert.match(html, /通常は「過去履歴を圧縮」を推奨します。/u);
+  assert.match(html, /通常は「前回の正常回答後に増えた公開履歴だけを送信」を使用します。/u);
   assert.match(html, /最初のJSONオブジェクトだけを取り出す/u);
   assert.match(html, /現在の設定でテスト回答を生成し、結果を比較できます。/u);
 

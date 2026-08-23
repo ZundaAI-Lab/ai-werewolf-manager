@@ -1,6 +1,6 @@
 /**
  * 責務: リアルタイムまたは日終了スナップショットのプレイヤー相関モデルを、公開／機密境界と選択中レイヤーに従って描画する。
- * 変更ルール: ゲーム状態とスナップショットを更新しない。モデル構築・日終了保存・死亡時点別の疑い線除外はdomain/records/playerRelationshipModel.jsへ委譲し、機密情報非表示時は疑い関係・疑い強度・真役職をDOMへ生成しない。公開能力結果はそのゲームの配役に含まれる公開主張可能役職だけを独立レイヤーとして切り替え、配役に存在しない役職の切替UIは生成しない。線種は能力役職、疑い線は判断強度を表示クラスへ射影する。SVGではプレイヤーカードを先に描画し、相関線を後から描画して常にカードより前面へ表示する。状態由来の文字列と識別子は必ずHTMLエスケープする。
+ * 変更ルール: ゲーム状態とスナップショットを更新しない。モデル構築・日終了保存・死亡時点別の疑い線除外・公開／機密境界はdomain/records/playerRelationshipModel.jsへ委譲する。疑い対象と疑い線は機密表示OFFでも描画し、内部確信度である疑い強度と真役職だけを機密表示へ限定する。公開能力結果はそのゲームの配役に含まれる公開主張可能役職だけを独立レイヤーとして切り替え、配役に存在しない役職の切替UIは生成しない。線種は能力役職、疑い線は機密表示時だけ判断強度を表示クラスへ射影する。SVGではプレイヤーカードを先に描画し、相関線を後から描画して常にカードより前面へ表示する。状態由来の文字列と識別子は必ずHTMLエスケープする。
  */
 
 import {
@@ -158,19 +158,24 @@ function renderEdges(edges, positions, selectedPlayerId, suspicionStrengthBySour
     if (!geometry) return '';
     const connected = !selectedPlayerId || edge.sourceId === selectedPlayerId || edge.targetId === selectedPlayerId;
     const abilityRoleVariant = edge.type === 'ability' ? abilityVariant(edge) : '';
-    const suspicionStrength = edge.type === 'suspicion'
-      ? normalizedSuspicionStrength(suspicionStrengthBySource.get(edge.sourceId))
+    const rawSuspicionStrength = edge.type === 'suspicion' ? suspicionStrengthBySource.get(edge.sourceId) : null;
+    const suspicionStrength = edge.type === 'suspicion' && rawSuspicionStrength
+      ? normalizedSuspicionStrength(rawSuspicionStrength)
       : '';
     const variantClass = edge.type === 'ability'
       ? `relationship-ability-${abilityRoleVariant}`
       : edge.type === 'suspicion'
-        ? `relationship-suspicion-strength-${suspicionStrength}`
+        ? suspicionStrength
+          ? `relationship-suspicion-strength-${suspicionStrength}`
+          : 'relationship-suspicion-strength-hidden'
         : '';
     const className = `relationship-edge ${relationClass(edge.type)} ${variantClass} ${connected ? '' : 'is-dimmed'}`;
     const pathId = `relationship-edge-path-${index}`;
     const label = edge.type === 'ability' ? String(edge.graphLabel || edge.label || '').trim() : '';
     const title = edge.type === 'suspicion'
-      ? `疑い（${SUSPICION_STRENGTH_LABELS[suspicionStrength]}）`
+      ? suspicionStrength
+        ? `疑い（${SUSPICION_STRENGTH_LABELS[suspicionStrength]}）`
+        : '疑い'
       : edge.label;
     const markerVariant = edge.type === 'ability' ? abilityRoleVariant : '';
     return `<g class="${className}"><title>${escapeHtml(title)}</title><path id="${pathId}" d="${geometry.path}" marker-end="url(#${markerId(edge.type, markerVariant)})"></path>${label ? `<text x="${geometry.labelX}" y="${geometry.labelY}"><tspan>${escapeHtml(compact(label, 12))}</tspan></text>` : ''}</g>`;
@@ -211,7 +216,7 @@ function renderLegend(model, visibleTypes, getRoleName, state) {
     disabled: false,
   }));
   const items = [
-    { layerKey: 'suspicion', relationType: 'suspicion', roleId: null, label: model.showConfidential ? '疑い' : '疑い（機密情報）', count: model.counts.suspicion, disabled: !model.showConfidential },
+    { layerKey: 'suspicion', relationType: 'suspicion', roleId: null, label: '疑い', count: model.counts.suspicion, disabled: false },
     ...abilityItems,
     { layerKey: 'vote', relationType: 'vote', roleId: null, label: model.latestVoteDay === null ? '公開投票' : `Day ${model.latestVoteDay} 投票`, count: model.counts.vote, disabled: false },
   ];
@@ -230,7 +235,7 @@ function renderSelectedPlayerDetail(model, selectedPlayerId, getRoleName, visibl
   const nodeById = new Map(model.nodes.map((node) => [node.id, node]));
   const selected = nodeById.get(selectedPlayerId) ?? null;
   if (!selected) {
-    return `<div class="relationship-summary"><h3>相関図の見方</h3><p>プレイヤーを選ぶと、その人物から出る関係と向けられている関係を強調します。</p><dl><div><dt>参加者</dt><dd>${model.nodes.length}名</dd></div><div><dt>CO中</dt><dd>${model.nodes.filter((node) => node.claimedRoleId).length}名</dd></div><div><dt>疑い関係</dt><dd>${model.showConfidential ? `${model.counts.suspicion}本` : '機密情報非表示'}</dd></div><div><dt>公開能力結果</dt><dd>${model.counts.ability}本</dd></div><div><dt>公開投票</dt><dd>${model.counts.vote}本</dd></div></dl></div>`;
+    return `<div class="relationship-summary"><h3>相関図の見方</h3><p>プレイヤーを選ぶと、その人物から出る関係と向けられている関係を強調します。</p><dl><div><dt>参加者</dt><dd>${model.nodes.length}名</dd></div><div><dt>CO中</dt><dd>${model.nodes.filter((node) => node.claimedRoleId).length}名</dd></div><div><dt>疑い関係</dt><dd>${model.counts.suspicion}本</dd></div><div><dt>公開能力結果</dt><dd>${model.counts.ability}本</dd></div><div><dt>公開投票</dt><dd>${model.counts.vote}本</dd></div></dl></div>`;
   }
 
   const outgoingSuspicion = model.edges.filter((edge) => edge.type === 'suspicion' && edge.sourceId === selected.id);
@@ -242,7 +247,7 @@ function renderSelectedPlayerDetail(model, selectedPlayerId, getRoleName, visibl
   const outgoingNames = namesForIds(outgoingSuspicion.map((edge) => edge.targetId), nodeById);
   const incomingNames = namesForIds(incomingSuspicion.map((edge) => edge.sourceId), nodeById);
 
-  return `<div class="relationship-player-detail"><div class="relationship-detail-head"><div><span>${selected.alive ? '生存' : '死亡'}・${selected.controller === 'ai' ? 'AI' : '人間'}</span><h3>${escapeHtml(selected.name)}</h3></div><button class="button ghost small" data-action="relationship-clear-selection" type="button">全体表示</button></div><dl class="relationship-detail-list"><div><dt>公開CO</dt><dd>${selected.claimedRoleId ? escapeHtml(`${selected.claimedRoleName}CO`) : 'なし'}</dd></div>${selected.actualRoleId ? `<div><dt>真の役職</dt><dd>${escapeHtml(getRoleName(selected.actualRoleId))}</dd></div>` : ''}<div><dt>疑っている相手</dt><dd>${model.showConfidential ? escapeHtml(outgoingNames.join('、') || 'なし') : '機密情報非表示'}</dd></div><div><dt>疑いを向けている相手</dt><dd>${model.showConfidential ? escapeHtml(incomingNames.join('、') || 'なし') : '機密情報非表示'}</dd></div><div><dt>公開能力結果</dt><dd>${abilityClaims.length ? abilityClaims.map((edge) => `${escapeHtml(nodeById.get(edge.targetId)?.name ?? '不明')}：${escapeHtml(edge.label)}`).join('<br>') : 'なし'}</dd></div><div><dt>最新の公開投票</dt><dd>${votes.length ? escapeHtml(nodeById.get(votes[0].targetId)?.name ?? '不明') : 'なし'}</dd></div></dl></div>`;
+  return `<div class="relationship-player-detail"><div class="relationship-detail-head"><div><span>${selected.alive ? '生存' : '死亡'}・${selected.controller === 'ai' ? 'AI' : '人間'}</span><h3>${escapeHtml(selected.name)}</h3></div><button class="button ghost small" data-action="relationship-clear-selection" type="button">全体表示</button></div><dl class="relationship-detail-list"><div><dt>公開CO</dt><dd>${selected.claimedRoleId ? escapeHtml(`${selected.claimedRoleName}CO`) : 'なし'}</dd></div>${selected.actualRoleId ? `<div><dt>真の役職</dt><dd>${escapeHtml(getRoleName(selected.actualRoleId))}</dd></div>` : ''}<div><dt>疑っている相手</dt><dd>${escapeHtml(outgoingNames.join('、') || 'なし')}</dd></div><div><dt>疑いを向けている相手</dt><dd>${escapeHtml(incomingNames.join('、') || 'なし')}</dd></div><div><dt>公開能力結果</dt><dd>${abilityClaims.length ? abilityClaims.map((edge) => `${escapeHtml(nodeById.get(edge.targetId)?.name ?? '不明')}：${escapeHtml(edge.label)}`).join('<br>') : 'なし'}</dd></div><div><dt>最新の公開投票</dt><dd>${votes.length ? escapeHtml(nodeById.get(votes[0].targetId)?.name ?? '不明') : 'なし'}</dd></div></dl></div>`;
 }
 
 function renderPlayerIndex(nodes, selectedPlayerId) {
@@ -275,7 +280,7 @@ export function renderPlayerRelationshipView({
   const hasAnyRelation = edges.length > 0;
   const viewTitle = snapshot ? `Day ${Number(snapshot.day)} 終了時点` : 'リアルタイム';
 
-  return `<section class="player-relationship-view panel">${renderSnapshotSelector(state.relationshipSnapshots, resolvedSnapshotId)}<div class="relationship-toolbar"><div><span class="eyebrow">プレイヤー相関図・${escapeHtml(viewTitle)}</span><h3>CO・疑い・公開結果</h3></div>${renderLegend(model, visibleTypes, getRoleName, state)}</div><div class="relationship-layout"><div class="relationship-canvas-wrap"><svg class="relationship-canvas" viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" role="img" aria-label="${escapeHtml(viewTitle)}のプレイヤーCOと関係を示す相関図"><defs>${renderMarkerDefinitions()}</defs>${renderNodes(model.nodes, positions, edges, validSelectedPlayerId)}${renderEdges(edges, positions, validSelectedPlayerId, suspicionStrengthBySource)}</svg>${hasAnyRelation ? '' : `<div class="relationship-empty">${!showConfidential && model.counts.ability === 0 && model.counts.vote === 0 ? 'CO以外の公開関係はまだありません。疑い関係は機密情報を表示すると確認できます。' : '選択中の関係はまだ記録されていません。'}</div>`}</div><aside class="relationship-side-panel">${renderSelectedPlayerDetail(model, validSelectedPlayerId, getRoleName, visibleTypes)}${renderPlayerIndex(model.nodes, validSelectedPlayerId)}</aside></div></section>`;
+  return `<section class="player-relationship-view panel">${renderSnapshotSelector(state.relationshipSnapshots, resolvedSnapshotId)}<div class="relationship-toolbar"><div><span class="eyebrow">プレイヤー相関図・${escapeHtml(viewTitle)}</span><h3>CO・疑い・公開結果</h3></div>${renderLegend(model, visibleTypes, getRoleName, state)}</div><div class="relationship-layout"><div class="relationship-canvas-wrap"><svg class="relationship-canvas" viewBox="0 0 ${GRAPH_WIDTH} ${GRAPH_HEIGHT}" role="img" aria-label="${escapeHtml(viewTitle)}のプレイヤーCOと関係を示す相関図"><defs>${renderMarkerDefinitions()}</defs>${renderNodes(model.nodes, positions, edges, validSelectedPlayerId)}${renderEdges(edges, positions, validSelectedPlayerId, suspicionStrengthBySource)}</svg>${hasAnyRelation ? '' : '<div class="relationship-empty">選択中の関係はまだ記録されていません。</div>'}</div><aside class="relationship-side-panel">${renderSelectedPlayerDetail(model, validSelectedPlayerId, getRoleName, visibleTypes)}${renderPlayerIndex(model.nodes, validSelectedPlayerId)}</aside></div></section>`;
 }
 
 export {

@@ -9,6 +9,7 @@ import { recordHumanTestament, skipTestament } from '../../domain/execution/test
 import { recordGraveyardMessage, recordMasonMessage, recordNightAction, recordWolfAttackVote, recordWolfMessage } from '../../domain/night/nightCommands.js';
 import { acknowledgePrivateResults, recordResultImpression } from '../../domain/result/resultCommands.js';
 import { recordVote } from '../../domain/vote/voteCommands.js';
+import { buildAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import { renderHumanRoleNoticeDialog } from '../views/briefing/briefingView.js';
 
 function value(card, name, fallback = '') {
@@ -25,12 +26,14 @@ function abilityClaims(state, card) {
     const targetId = field('targetId');
     if (!targetId) return null;
     const evidenceEventIds = String(field('evidence')).split(/[\s,、]+/u).map((item) => Number(item.replace(/^#/u, ''))).filter(Number.isInteger).map((sequence) => bySequence.get(sequence)).filter(Boolean);
+    const claimedRoleId = field('claimedRoleId');
+    const timing = buildAbilityClaimTiming(claimedRoleId, Number(field('actionDay', '0')));
     return {
       action: 'publish',
-      claimedRoleId: field('claimedRoleId'),
+      claimedRoleId,
+      ...(timing ?? {}),
       targetId,
       result: field('result'),
-      observedDay: Number(field('observedDay', '1')),
       selectionBasis: field('selectionBasis', 'no-public-information'),
       evidenceEventIds,
       selectionReasonAtTime: String(field('selectionReasonAtTime')).trim(),
