@@ -41,7 +41,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 };
 /**
  * 責務: 製品版で永続化・入出力するユーザーデータJSONの現行schemaVersionを一元管理する。
- * 変更ルール: アプリの製品versionとは独立して増分する。保存項目の追加・削除・意味変更・必須条件変更時だけ対象schemaを+1し、同時にmigrationRegistry.jsへ旧schema→次schemaの一方向migrationを追加する。製品版1.0.0の基準schemaはすべて1とし、開発版のschema番号を引き継がない。
+ * 変更ルール: アプリの製品versionとは独立して増分する。保存項目の追加・削除・意味変更・必須条件変更時だけ対象schemaを+1する。後方互換を提供する変更だけmigrationRegistry.jsへ旧schema→次schemaの一方向migrationを追加し、互換不要の破壊変更では旧schemaを現行として読み替えない。製品版1.0.0の基準schemaはすべて1とする。
  */
 (function initializeDataSchemaVersions(root, factory) {
     'use strict';
@@ -68,12 +68,12 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     });
     const CURRENT_DATA_SCHEMA_VERSIONS = Object.freeze({
         [DATA_SCHEMA_KIND.GAME_STATE]: 1,
-        [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 1,
+        [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 2,
         [DATA_SCHEMA_KIND.APPEARANCE]: 1,
         [DATA_SCHEMA_KIND.CHAT_ROOM]: 1,
         [DATA_SCHEMA_KIND.SPECTATOR_ROOM]: 1,
         [DATA_SCHEMA_KIND.USER_CHARACTER_LIBRARY]: 1,
-        [DATA_SCHEMA_KIND.AI_PROFILE_PACKAGE]: 1,
+        [DATA_SCHEMA_KIND.AI_PROFILE_PACKAGE]: 2,
         [DATA_SCHEMA_KIND.USAGE_SUMMARY]: 1,
         [DATA_SCHEMA_KIND.PRIVACY_NOTICE]: 1,
     });
@@ -87,7 +87,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 });
 /**
  * 責務: 製品版ユーザーデータの「schema N → N+1」migrationをデータ種別ごとに登録・解決する。
- * 変更ルール: migrationは一方向だけを登録し、既存migrationを削除・意味変更しない。旧実装を本体へ残さず、旧schema対応は本レジストリ配下だけに閉じ込める。新schema追加時は専用migration関数とfixtureを追加し、飛び級migrationは作らない。
+ * 変更ルール: migrationは後方互換を明示的に提供する場合だけ一方向で登録し、提供を継続するmigrationの意味を変更しない。旧実装を本体へ残さず、互換対応は本レジストリ配下だけに閉じ込める。互換不要の破壊変更ではmigrationを追加せず旧schemaを拒否し、migrationを追加する場合は専用関数とfixtureを用意して飛び級migrationを作らない。
  */
 (function initializeMigrationRegistry(root, factory) {
     'use strict';
@@ -101,8 +101,8 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
     'use strict';
-    // 製品版1.0.0は全ユーザーデータschema=1が基準点のため、現時点のmigrationは空。
-    // schemaを2へ上げるときに { 1: migrateV1ToV2 } の形で対象kindへ追加する。
+    // 現在のschema更新は後方互換を提供しない破壊変更のためmigrationは空。
+    // 将来、互換を明示的に提供する場合だけ { 1: migrateV1ToV2 } の形で対象kindへ追加する。
     const DATA_MIGRATIONS = Object.freeze({});
     function migrationFor(kind, fromVersion, registry = DATA_MIGRATIONS) {
         return registry?.[kind]?.[fromVersion] ?? null;
@@ -111,7 +111,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 });
 /**
  * 責務: 製品版ユーザーデータJSONのschemaVersionを検査し、登録済みの一方向migrationを順番に適用して現行schemaへ変換する。
- * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。旧schemaは必ずN→N+1を順に通し、変換前入力を破壊しない。各データの意味検証・sanitize・永続化は呼出元の責務とする。
+ * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。旧schemaは必要なN→N+1 Migrationが全段登録されている場合だけ順に変換し、1段でも欠ければ拒否する。変換前入力を破壊せず、各データの意味検証・sanitize・永続化は呼出元の責務とする。
  */
 (function initializeDataMigration(root, factory) {
     'use strict';
@@ -606,8 +606,8 @@ define("generated/buildInfo", ["require", "exports"], function (require, exports
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BUNDLE_SHA256 = exports.BUILD_ID = void 0;
-    exports.BUILD_ID = '5ab439bd629f8112b6eacbd9306ca776db5d56d431f5a8239825326c8b5a461e';
-    exports.BUNDLE_SHA256 = 'f7a9d9920a1b528c7bb830bff79731b61e6ecea2a31bb7055136da63766892f8';
+    exports.BUILD_ID = 'c414f1e5fc61fc316716fee9979d5be2eab8e46ecab1b8d7c5b6742c83851e56';
+    exports.BUNDLE_SHA256 = '509b1f660bf0154d99c7421443a62c3be6e671944ffb2ac24d2cfc56333cd610';
 });
 /**
  * 責務: 副作用の小さい汎用処理と、出力ファイル名部品のOS非依存な正規化を提供する。
@@ -6921,7 +6921,7 @@ define("js/state/validators/conversationStateValidator", ["require", "exports", 
 });
 /**
  * 責務: 夜行動スロット、夜開始時生存者、能力実行、襲撃・護衛・凍結・死亡解決の保存値整合を検査する。
- * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。後追い期待値は夜開始時生存者だけを対象とする。
+ * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。後追い期待値は夜開始時生存者だけを対象とし、凍結appliedとfrozenPlayerIdの対応など解決結果の不変条件は実装分岐の単純コピーではなく独立して検証する。
  */
 define("js/state/validators/nightStateValidator", ["require", "exports", "js/domain/roles/roleAttributes", "js/domain/game/playerStatus"], function (require, exports, roleAttributes_js_7, playerStatus_js_2) {
     "use strict";
@@ -7145,9 +7145,9 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                     checkIds(execution.consumedFearPlayerIds, '夜行動で解除する恐怖対象');
                     if (!['wolf-attack', 'freeze'].includes(execution.actionType))
                         errors.push(`${label}: 夜行動制御のactionTypeが不正です。`);
-                    if (!['not-required', 'executed', 'blocked'].includes(execution.executionState))
+                    if (!['not-required', 'unavailable', 'executed', 'blocked'].includes(execution.executionState))
                         errors.push(`${label}: 夜行動制御のexecutionStateが不正です。`);
-                    if (![null, 'fear'].includes(execution.blockReason))
+                    if (![null, 'fear', 'no-eligible-actor'].includes(execution.blockReason))
                         errors.push(`${label}: 夜行動制御のblockReasonが不正です。`);
                 });
                 const deaths = Array.isArray(resolution.deaths) ? resolution.deaths : [];
@@ -7188,27 +7188,32 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                     .filter((player) => (0, roleAttributes_js_7.countsAsWolf)(raw, player) && aliveAtStart.has(player.id))
                     .map((player) => player.id);
                 const expectedWolfFearIds = aliveWolfIdsAtStart.filter((id) => fearAtActionIds.has(id));
+                const attackUnavailable = Boolean(plannedAttackTargetId) && aliveWolfIdsAtStart.length === 0;
                 const attackBlockedByFear = Boolean(plannedAttackTargetId)
-                    && aliveWolfIdsAtStart.length > 0
+                    && !attackUnavailable
                     && expectedWolfFearIds.length === aliveWolfIdsAtStart.length;
                 const expectedAttackExecution = {
                     actionType: 'wolf-attack',
-                    actorIds: plannedAttackTargetId ? aliveWolfIdsAtStart : [],
-                    fearfulActorIds: plannedAttackTargetId ? expectedWolfFearIds : [],
-                    executionState: !plannedAttackTargetId ? 'not-required' : attackBlockedByFear ? 'blocked' : 'executed',
-                    blockReason: attackBlockedByFear ? 'fear' : null,
+                    actorIds: plannedAttackTargetId && !attackUnavailable ? aliveWolfIdsAtStart : [],
+                    fearfulActorIds: plannedAttackTargetId && !attackUnavailable ? expectedWolfFearIds : [],
+                    executionState: !plannedAttackTargetId ? 'not-required' : attackUnavailable ? 'unavailable' : attackBlockedByFear ? 'blocked' : 'executed',
+                    blockReason: attackUnavailable ? 'no-eligible-actor' : attackBlockedByFear ? 'fear' : null,
                     consumedFearPlayerIds: attackBlockedByFear ? expectedWolfFearIds : [],
                 };
                 const freezeSlot = submittedFreezeSlots[0] ?? null;
-                const freezeActorIds = freezeSlot ? [freezeSlot.actorId] : [];
+                const freezeActor = freezeSlot ? raw.players.find((player) => player.id === freezeSlot.actorId) ?? null : null;
+                const freezeActorIds = freezeSlot && freezeActor && aliveAtStart.has(freezeSlot.actorId) && (0, roleAttributes_js_7.isNightActionActor)(raw, freezeActor, 'freeze')
+                    ? [freezeSlot.actorId]
+                    : [];
+                const freezeUnavailable = Boolean(freezeSlot) && freezeActorIds.length === 0;
                 const expectedFreezeFearIds = freezeActorIds.filter((id) => fearAtActionIds.has(id));
-                const freezeBlockedByFear = Boolean(freezeSlot) && expectedFreezeFearIds.length === freezeActorIds.length;
+                const freezeBlockedByFear = Boolean(freezeSlot) && !freezeUnavailable && expectedFreezeFearIds.length === freezeActorIds.length;
                 const expectedFreezeExecution = {
                     actionType: 'freeze',
                     actorIds: freezeActorIds,
                     fearfulActorIds: expectedFreezeFearIds,
-                    executionState: !freezeSlot ? 'not-required' : freezeBlockedByFear ? 'blocked' : 'executed',
-                    blockReason: freezeBlockedByFear ? 'fear' : null,
+                    executionState: !freezeSlot ? 'not-required' : freezeUnavailable ? 'unavailable' : freezeBlockedByFear ? 'blocked' : 'executed',
+                    blockReason: freezeUnavailable ? 'no-eligible-actor' : freezeBlockedByFear ? 'fear' : null,
                     consumedFearPlayerIds: freezeBlockedByFear ? expectedFreezeFearIds : [],
                 };
                 const expectedActionExecutions = [expectedAttackExecution, expectedFreezeExecution];
@@ -7219,7 +7224,7 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                 const attackedPlayer = raw.players.find((player) => player.id === expectedAttacked) ?? null;
                 const expectedAttackOutcome = !plannedAttackTargetId
                     ? 'not-required'
-                    : attackBlockedByFear
+                    : (attackUnavailable || attackBlockedByFear)
                         ? 'not-executed'
                         : (0, roleAttributes_js_7.isActualFox)(raw, attackedPlayer)
                             ? 'fox-immune'
@@ -7284,7 +7289,7 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                 let expectedFreezeOutcome = 'not-required';
                 let expectedFrozenPlayerId = null;
                 if (freezeSlot) {
-                    if (freezeBlockedByFear)
+                    if (freezeUnavailable || freezeBlockedByFear || !expectedFreezeTargetId)
                         expectedFreezeOutcome = 'not-executed';
                     else if (deathById.has(freezeSlot.actorId))
                         expectedFreezeOutcome = 'actor-dead';
@@ -7305,6 +7310,12 @@ define("js/state/validators/nightStateValidator", ["require", "exports", "js/dom
                     errors.push(`${label}: 凍結結果が行動開始判定・護衛・死亡状態と一致しません。`);
                 if ((resolution.frozenPlayerId ?? null) !== expectedFrozenPlayerId)
                     errors.push(`${label}: 翌昼の凍結者が凍結結果と一致しません。`);
+                const freezeApplied = resolution.freezeOutcome === 'applied';
+                const hasFrozenPlayer = (resolution.frozenPlayerId ?? null) !== null;
+                if (freezeApplied !== hasFrozenPlayer)
+                    errors.push(`${label}: 凍結結果appliedと翌昼の凍結者の有無が矛盾しています。`);
+                if (freezeApplied && resolution.frozenPlayerId !== resolution.freezeTargetId)
+                    errors.push(`${label}: 翌昼の凍結者が実行済み凍結対象と一致しません。`);
                 const privateInspectKeys = new Set((resolution.privateResults ?? []).filter((entry) => entry.actionType === 'inspect').map((entry) => `${entry.actorId}:${entry.targetId}`));
                 submittedInspectSlots.forEach((slot) => {
                     if (!privateInspectKeys.has(`${slot.actorId}:${slot.targetId}`))
@@ -24099,7 +24110,7 @@ define("js/domain/game/deathResolution", ["require", "exports", "js/domain/game/
 });
 /**
  * 責務: 夜行動の開始前に共通状態異常を評価し、行動を実行できるかと消費する状態を純粋に決定する。
- * 変更ルール: 効果解決・死亡・護衛・状態反映を行わない。共同アクションは構成員全員が阻害された場合だけ行動全体を阻害し、その場合だけ恐怖を消費する。
+ * 変更ルール: 効果解決・死亡・護衛・状態反映を行わない。共同アクションは構成員全員が阻害された場合だけ行動全体を阻害し、その場合だけ恐怖を消費する。required=trueなのに実行可能な行動者がいない場合はnot-requiredへ潰さずunavailableとして記録する。
  */
 define("js/domain/night/actionExecutionPolicy", ["require", "exports", "js/domain/game/standardRules", "js/domain/roles/roleAttributes"], function (require, exports, standardRules_js_19, roleAttributes_js_27) {
     "use strict";
@@ -24135,13 +24146,23 @@ define("js/domain/night/actionExecutionPolicy", ["require", "exports", "js/domai
             const actor = (0, standardRules_js_19.getPlayer)(state, actorId);
             return Boolean(actor?.alive && (0, roleAttributes_js_27.getFearActionGroup)(state, actor) === actionType);
         });
-        if (!required || !normalizedActorIds.length) {
+        if (!required) {
             return {
                 actionType,
                 actorIds: [],
                 fearfulActorIds: [],
                 executionState: 'not-required',
                 blockReason: null,
+                consumedFearPlayerIds: [],
+            };
+        }
+        if (!normalizedActorIds.length) {
+            return {
+                actionType,
+                actorIds: [],
+                fearfulActorIds: [],
+                executionState: 'unavailable',
+                blockReason: 'no-eligible-actor',
                 consumedFearPlayerIds: [],
             };
         }
@@ -24193,7 +24214,7 @@ define("js/domain/night/actionExecutionPolicy", ["require", "exports", "js/domai
 });
 /**
  * 責務: 状態付与・行動開始判定・護衛・襲撃・凍結・占い・後追いを定められた順序で調停し、夜の確定結果を生成する。
- * 変更ルール: 状態を変更しない。恐怖は共通の行動開始判定へ委譲し、行動阻害と実行後の効果不成立を別項目で保持する。襲撃は全生存人狼が恐怖の時だけ阻害する。雪女の凍結は行動自体が実行済みでも、雪女本人または対象が同じ夜に死亡した場合は翌日の状態付与を行わない。
+ * 変更ルール: 状態を変更しない。恐怖は共通の行動開始判定へ委譲し、行動阻害と実行不能、実行後の効果不成立を別項目で保持する。襲撃は全生存人狼が恐怖の時だけ阻害する。required=trueでも実行可能者がいない行動はnot-executedとし、凍結appliedは必ず実行済み対象IDを伴う。雪女の凍結は行動自体が実行済みでも、雪女本人または対象が同じ夜に死亡した場合は翌日の状態付与を行わない。
  */
 define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game/deathResolution", "js/domain/roles/roleAttributes", "js/domain/night/actionExecutionPolicy"], function (require, exports, deathResolution_js_1, roleAttributes_js_28, actionExecutionPolicy_js_1) {
     "use strict";
@@ -24229,14 +24250,16 @@ define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game
             inspections: inspectSlots.map((slot) => ({ actorId: slot.actorId, targetId: slot.targetId })),
             random,
         });
-        if (attackExecution.executionState === 'blocked')
+        if (['blocked', 'unavailable'].includes(attackExecution.executionState))
             baseDeaths.attackOutcome = 'not-executed';
         const deaths = (0, deathResolution_js_1.resolveFollowUpDeaths)(state, baseDeaths.deaths);
         const deadIds = new Set(deaths.map((death) => death.playerId));
         let freezeOutcome = 'not-required';
         let frozenPlayerId = null;
         if (freezeSlot) {
-            if (freezeExecution.executionState === 'blocked')
+            if (freezeExecution.executionState !== 'executed')
+                freezeOutcome = 'not-executed';
+            else if (!executedFreezeTargetId)
                 freezeOutcome = 'not-executed';
             else if (deadIds.has(freezeSlot.actorId))
                 freezeOutcome = 'actor-dead';
@@ -24252,8 +24275,12 @@ define("js/domain/night/nightResolution", ["require", "exports", "js/domain/game
         const gmNotes = [...baseDeaths.gmNotes];
         if (attackExecution.executionState === 'blocked')
             gmNotes.push('生存人狼全員が恐怖状態のため、襲撃行動は実行されませんでした。');
+        else if (attackExecution.executionState === 'unavailable')
+            gmNotes.push('襲撃を実行できる生存人狼がいないため、襲撃行動は実行されませんでした。');
         if (freezeExecution.executionState === 'blocked')
             gmNotes.push('雪女が恐怖状態のため、凍結行動は実行されませんでした。');
+        else if (freezeExecution.executionState === 'unavailable')
+            gmNotes.push('凍結を実行できる生存中の雪女がいないため、凍結行動は実行されませんでした。');
         else if (freezeOutcome === 'actor-dead')
             gmNotes.push('凍結は実行されましたが、雪女が同じ夜に死亡したため翌日の凍結状態は付与されません。');
         else if (freezeOutcome === 'guarded')
@@ -25798,7 +25825,7 @@ define("js/domain/records/playerRelationshipModel", ["require", "exports", "js/c
 });
 /**
  * 責務: 投票開始・入力・集計・公開、処刑解決・公開を実行し、処刑あり／なしの公開確定時に当日終了のプレイヤー相関スナップショットを保存する。
- * 変更ルール: 投票候補と同票処理はvoteResolutionを正本とし、結果公開前に次フェーズへ進めない。遺言の要否・凍結による自動スキップはtestamentPolicyを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。相関スナップショットの構築・同日置換はplayerRelationshipModel.jsへ委譲する。
+ * 変更ルール: 投票候補と同票処理はvoteResolutionを正本とし、結果公開前に次フェーズへ進めない。逐次公開済みの票は通常操作で再入力へ戻さず、秘密投票だけ確定前の再入力を許可する。遺言の要否・凍結による自動スキップはtestamentPolicyを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。相関スナップショットの構築・同日置換はplayerRelationshipModel.jsへ委譲する。
  */
 define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/standardRules", "js/domain/game/deathResolution", "js/domain/vote/voteResolution", "js/domain/events/eventStore", "js/shared/utils", "js/domain/events/publicDerivation", "js/domain/discussion/priorityAnswerPolicy", "js/domain/memory/memoryLedger", "js/domain/game/playerStatus", "js/domain/correction/restorePointPolicy", "js/domain/game/gameRuntimeShared", "js/domain/night/nightRuntime", "js/domain/result/resultRuntime", "js/domain/records/playerRelationshipModel", "js/domain/execution/testamentPolicy"], function (require, exports, standardRules_js_23, deathResolution_js_2, voteResolution_js_2, eventStore_js_11, utils_js_30, publicDerivation_js_5, priorityAnswerPolicy_js_4, memoryLedger_js_10, playerStatus_js_10, restorePointPolicy_js_5, gameRuntimeShared_js_5, nightRuntime_js_2, resultRuntime_js_2, playerRelationshipModel_js_1, testamentPolicy_js_2) {
     "use strict";
@@ -25847,6 +25874,18 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
         };
         (0, gameRuntimeShared_js_5.setPhase)(state, type === 'runoff' ? 'runoff' : 'vote');
         return (0, gameRuntimeShared_js_5.result)(true, type === 'runoff' ? '決選投票を開始しました。' : '投票を開始しました。');
+    }
+    function firstPendingVoteIndex(session) {
+        return session.eligibleVoterIds.findIndex((id) => !Object.hasOwn(session.votes, id));
+    }
+    function refreshVoteSessionReadiness(session) {
+        const pendingIndex = firstPendingVoteIndex(session);
+        if (session.inputMode === 'sequential') {
+            session.currentVoterIndex = pendingIndex < 0 ? session.eligibleVoterIds.length : pendingIndex;
+        }
+        if (pendingIndex < 0 && session.status === 'input')
+            session.status = 'ready';
+        return pendingIndex;
     }
     function recordVote(state, { voterId, targetId, heartVoice = '', internalMemoUpdate = null, selectionRationale = '', rawResponse = '', generationRun = null, promptText = '', promptFingerprint = '', promptMode = 'runtime', publicSequenceAtGeneration = 0, warnings = [], override = null, decisionUpdate = null, parsedDecisionUpdate = null, factionStrategyPatch = null, parsedFactionStrategyPatch = null, }) {
         const guard = (0, gameRuntimeShared_js_5.commandGuard)(state, { phases: ['vote', 'runoff'] });
@@ -25940,12 +25979,7 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
             });
         }
         (0, publicDerivation_js_5.rebuildPublicDerivedState)(state);
-        if (session.inputMode === 'sequential') {
-            const nextIndex = session.eligibleVoterIds.findIndex((id, index) => index > session.currentVoterIndex && !(id in session.votes));
-            session.currentVoterIndex = nextIndex >= 0 ? nextIndex : session.eligibleVoterIds.length;
-        }
-        if (Object.keys(session.votes).length === session.eligibleVoterIds.length)
-            session.status = 'ready';
+        refreshVoteSessionReadiness(session);
         return (0, gameRuntimeShared_js_5.result)(true, '投票を登録しました。', { eventId: event.id });
     }
     function recordRandomVote(state, voterId, reason = 'AI回答を正常に取得できないためランダム決定', { random = Math.random } = {}) {
@@ -25973,11 +26007,8 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
         if (!['sequential', 'list'].includes(mode))
             return (0, gameRuntimeShared_js_5.result)(false, '入力方式が不正です。');
         state.voteSession.inputMode = mode;
-        if (mode === 'sequential') {
-            state.voteSession.currentVoterIndex = state.voteSession.eligibleVoterIds.findIndex((id) => !(id in state.voteSession.votes));
-            if (state.voteSession.currentVoterIndex < 0)
-                state.voteSession.currentVoterIndex = state.voteSession.eligibleVoterIds.length;
-        }
+        if (mode === 'sequential')
+            refreshVoteSessionReadiness(state.voteSession);
         return (0, gameRuntimeShared_js_5.result)(true, '投票入力方式を変更しました。');
     }
     function reopenVoteInput(state) {
@@ -25987,14 +26018,16 @@ define("js/domain/vote/voteRuntime", ["require", "exports", "js/domain/game/stan
         const session = state.voteSession;
         if (!session || !['ready', 'finalized'].includes(session.status))
             return (0, gameRuntimeShared_js_5.result)(false, '修正できる投票状態ではありません。');
+        if (state.game.rules.vote.visibilityDuringInput === 'public') {
+            return (0, gameRuntimeShared_js_5.result)(false, '逐次公開済みの投票は通常操作で変更できません。必要な場合は訂正・復元を使用してください。');
+        }
         if (session.status === 'finalized') {
             session.tally = [];
             session.result = null;
         }
         session.status = 'input';
-        session.currentVoterIndex = session.eligibleVoterIds.findIndex((id) => !(id in session.votes));
-        if (session.currentVoterIndex < 0)
-            session.currentVoterIndex = 0;
+        const pendingIndex = firstPendingVoteIndex(session);
+        session.currentVoterIndex = pendingIndex < 0 ? 0 : pendingIndex;
         return (0, gameRuntimeShared_js_5.result)(true, '投票入力へ戻しました。');
     }
     function finalizeVote(state, random = Math.random) {
@@ -28928,7 +28961,7 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
             const completed = Object.keys(session.votes).length;
             const progress = session.eligibleVoterIds.map((id) => {
-                const done = id in session.votes;
+                const done = Object.hasOwn(session.votes, id);
                 const publicTarget = state.game.rules.vote.visibilityDuringInput === 'public' && done
                     ? ` → ${session.votes[id] === 'abstain' ? '棄権' : (0, selectors_js_3.getPlayerName)(state, session.votes[id])}` : '';
                 return `<span class="vote-progress ${done ? 'done' : ''}">${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getPlayerName)(state, id))}${(0, utils_js_43.escapeHtml)(publicTarget)}</span>`;
@@ -28949,8 +28982,15 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                 return `<div class="list-input-row"><strong>${(0, utils_js_43.escapeHtml)(voter.name)}</strong><select data-vote-list="${(0, utils_js_43.escapeHtml)(voterId)}" ${locked ? 'disabled' : ''}>${(0, components_js_5.playerOptions)(candidates, current, '選択してください', { allowAbstain: state.game.rules.vote.abstentionAllowed })}</select><button class="button small" data-action="save-list-vote" data-player-id="${(0, utils_js_43.escapeHtml)(voterId)}" ${locked ? 'disabled' : ''} type="button">保存</button></div>`;
             }).join('')}</div>`;
         }
-        renderFinalizeVote() {
-            return `<div class="success-card"><h3>全員の投票が揃いました</h3><p>確定前であれば投票入力へ戻って修正できます。</p><div class="button-row"><button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button><button class="button primary" data-action="finalize-vote" type="button">投票を集計</button></div></div>`;
+        renderFinalizeVote(state) {
+            const publicDuringInput = state.game.rules.vote.visibilityDuringInput === 'public';
+            const correction = publicDuringInput
+                ? '<p>逐次公開済みの票は通常操作では変更できません。必要な場合は訂正・復元を使用してください。</p>'
+                : '<p>確定前であれば投票入力へ戻って修正できます。</p>';
+            const reopenButton = publicDuringInput
+                ? ''
+                : '<button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button>';
+            return `<div class="success-card"><h3>全員の投票が揃いました</h3>${correction}<div class="button-row">${reopenButton}<button class="button primary" data-action="finalize-vote" type="button">投票を集計</button></div></div>`;
         }
         renderPublishVote(state) {
             const session = state.voteSession;
@@ -28966,7 +29006,10 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
                     : session.result.resolution === 'tie-no-execution'
                         ? '決選投票上限後も同票: 吊りなし'
                         : '有効票なし: 吊りなし';
-            return `<div class="task-head"><span class="task-count">公開前確認</span><h3>投票結果</h3></div>${mode !== 'execution-target-only' ? `<ul class="tally-list">${tally}</ul>` : ''}${mode === 'all-ballots' ? `<details class="optional-box" open><summary>全投票先</summary><ul>${ballots}</ul></details>` : ''}<div class="result-banner">${(0, utils_js_43.escapeHtml)(resultLabel)}</div><div class="button-row"><button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button><button class="button primary" data-action="publish-vote" type="button">投票結果を公開</button></div>`;
+            const reopenButton = state.game.rules.vote.visibilityDuringInput === 'public'
+                ? ''
+                : '<button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button>';
+            return `<div class="task-head"><span class="task-count">公開前確認</span><h3>投票結果</h3></div>${mode !== 'execution-target-only' ? `<ul class="tally-list">${tally}</ul>` : ''}${mode === 'all-ballots' ? `<details class="optional-box" open><summary>全投票先</summary><ul>${ballots}</ul></details>` : ''}<div class="result-banner">${(0, utils_js_43.escapeHtml)(resultLabel)}</div><div class="button-row">${reopenButton}<button class="button primary" data-action="publish-vote" type="button">投票結果を公開</button></div>`;
         }
         renderExecution(state, playerId) {
             const player = (0, standardRules_js_29.getPlayer)(state, playerId);
@@ -29487,7 +29530,7 @@ ${renderPromptDataBlock('vote-retry', retryData)}
 });
 /**
  * 責務: AIプロファイルとタスク種別から生成深度・工程・工程担当プロファイルを決定する。
- * 変更ルール: API通信、プロンプト本文生成、DOM、ゲーム状態更新を行わない。モデル名から性能を推測せず、保存済み設定だけを正本とする。深度1は既存の直接生成を一切変更せず、深度2は判断→キャラ発言化、深度3は客観分析→最終回答、深度4は客観分析→批判的検証→最終回答とする。保存済みdraftProfileIdはdecide/analyze、renderProfileIdはrender/finalize、proofreadProfileIdはcritiqueの担当参照として利用する。
+ * 変更ルール: API通信、プロンプト本文生成、DOM、ゲーム状態更新を行わない。モデル名から性能を推測せず、保存済み設定だけを正本とする。深度1は既存の直接生成を一切変更せず、深度2は判断→キャラ発言化、深度3は客観分析→最終回答、深度4は客観分析→批判的検証→最終回答とする。保存済みreasoningProfileIdはdecide/analyze、outputProfileIdはrender/finalize、critiqueProfileIdはcritiqueの担当参照として利用する。
  */
 define("js/services/generationDepthPolicy", ["require", "exports", "js/config/generationTaskCategories", "js/config/discussionAiTaskTypes", "js/config/generationTaskCategories", "js/ai/responseRetryPolicy"], function (require, exports, generationTaskCategories_js_2, discussionAiTaskTypes_js_23, generationTaskCategories_js_3) {
     "use strict";
@@ -29520,11 +29563,11 @@ define("js/services/generationDepthPolicy", ["require", "exports", "js/config/ge
     }
     function executorReferenceKey(stageId) {
         return ({
-            decide: 'draftProfileId',
-            analyze: 'draftProfileId',
-            critique: 'proofreadProfileId',
-            render: 'renderProfileId',
-            finalize: 'renderProfileId',
+            decide: 'reasoningProfileId',
+            analyze: 'reasoningProfileId',
+            critique: 'critiqueProfileId',
+            render: 'outputProfileId',
+            finalize: 'outputProfileId',
         })[stageId] ?? null;
     }
     function resolveExecutorProfileId(ownerProfile, profilesById, stageId) {
@@ -29714,8 +29757,8 @@ define("js/prompts/stages/generationStagePromptPolicy", ["require", "exports", "
     }
 });
 /**
- * 責務: Analyze/Critique自由記述の推奨出力量と、後続プロンプトへ渡す参照文字数の安全上限を一元管理する。
- * 変更ルール: API設定やゲーム状態を変更しない。元回答は監査側で保持し、このモジュールは後続工程へ渡す参照本文だけを制限する。上限変更時はAnalyze/Critiqueのプロンプト表示値と参照切り詰めを同時に更新する。
+ * 責務: Analyze/Critique自由記述の推奨出力量、後続プロンプト参照上限、監査保存上限を一元管理する。
+ * 変更ルール: API設定やゲーム状態を変更しない。後続参照と監査保存は別上限とし、外部LLMの過大応答をゲーム状態へ無制限に保持しない。上限変更時はAnalyze/Critiqueのプロンプト表示値、参照切り詰め、監査切り詰めを同時に確認する。
  */
 define("js/prompts/stages/generationIntermediateTextPolicy", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -29723,9 +29766,11 @@ define("js/prompts/stages/generationIntermediateTextPolicy", ["require", "export
     exports.generationIntermediateTextPolicy = generationIntermediateTextPolicy;
     exports.limitGenerationIntermediateReference = limitGenerationIntermediateReference;
     exports.intermediateReferenceTruncationIssue = intermediateReferenceTruncationIssue;
+    exports.limitGenerationIntermediateAudit = limitGenerationIntermediateAudit;
+    exports.intermediateAuditTruncationIssue = intermediateAuditTruncationIssue;
     const INTERMEDIATE_TEXT_POLICY = Object.freeze({
-        analyze: Object.freeze({ promptMaxItems: 10, promptMaxChars: 1600, referenceMaxChars: 2400 }),
-        critique: Object.freeze({ promptMaxItems: 6, promptMaxChars: 1000, referenceMaxChars: 1600 }),
+        analyze: Object.freeze({ promptMaxItems: 10, promptMaxChars: 1600, referenceMaxChars: 2400, auditMaxChars: 64000 }),
+        critique: Object.freeze({ promptMaxItems: 6, promptMaxChars: 1000, referenceMaxChars: 1600, auditMaxChars: 64000 }),
     });
     function generationIntermediateTextPolicy(stageId) {
         const policy = INTERMEDIATE_TEXT_POLICY[String(stageId ?? '')];
@@ -29754,6 +29799,29 @@ define("js/prompts/stages/generationIntermediateTextPolicy", ["require", "export
         return {
             code: 'INTERMEDIATE_TEXT_TRUNCATED',
             message: `${stageId}の自由記述が${limited.originalLength}文字だったため、後続工程への参照は${limited.maxChars}文字に制限しました。`,
+        };
+    }
+    function limitGenerationIntermediateAudit(stageId, value) {
+        const policy = generationIntermediateTextPolicy(stageId);
+        const rawText = String(value ?? '');
+        if (rawText.length <= policy.auditMaxChars) {
+            return { text: rawText, truncated: false, originalLength: rawText.length, maxChars: policy.auditMaxChars };
+        }
+        const suffix = '…';
+        const bodyLength = Math.max(0, policy.auditMaxChars - suffix.length);
+        return {
+            text: `${rawText.slice(0, bodyLength)}${suffix}`,
+            truncated: true,
+            originalLength: rawText.length,
+            maxChars: policy.auditMaxChars,
+        };
+    }
+    function intermediateAuditTruncationIssue(stageId, limited) {
+        if (!limited?.truncated)
+            return null;
+        return {
+            code: 'INTERMEDIATE_AUDIT_TRUNCATED',
+            message: `${stageId}の自由記述が${limited.originalLength}文字だったため、監査保存は${limited.maxChars}文字に制限しました。`,
         };
     }
 });
@@ -30839,7 +30907,7 @@ define("js/services/generationTextPatchService", ["require", "exports", "js/prom
 });
 /**
  * 責務: 手動多段AI生成の計画解決、セッション署名、判断・客観分析・批判的検証・最終回答・発言化プロンプト、監査、回答検証から最終登録までの手動生成ワークフローを管理する。
- * 変更ルール: 中間処理でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ状態遷移を戻さない。analyze/critiqueは自由記述として監査へ全文を保持し、後続参照だけ安全上限へ制限して候補JSON検証へ流さない。renderは専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
+ * 変更ルール: 中間処理でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ状態遷移を戻さない。analyze/critiqueは自由記述として後続参照上限と監査保存上限を別々に適用し、候補JSON検証へ流さない。renderは専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
  */
 define("js/ui/ai/manualGenerationController", ["require", "exports", "js/services/generationDepthPolicy", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/stages/generationStageEnvelope", "js/prompts/response/responseAutoRepair", "js/services/generationTextPatchService", "js/prompts/stages/generationIntermediateTextPolicy", "js/shared/utils", "js/services/aiTaskService"], function (require, exports, generationDepthPolicy_js_1, generationStagePromptPolicy_js_1, generationStagePromptBuilder_js_1, generationStageEnvelope_js_1, responseAutoRepair_js_2, generationTextPatchService_js_1, generationIntermediateTextPolicy_js_2, utils_js_45, aiTaskService_js_1) {
     "use strict";
@@ -31123,16 +31191,21 @@ define("js/ui/ai/manualGenerationController", ["require", "exports", "js/service
                 if (!rawResponse)
                     throw new Error(`${exports.MANUAL_STAGE_LABELS[stage.stageId]}の回答を貼り付けてください。`);
                 if (['analyze', 'critique'].includes(stage.stageId)) {
-                    const limited = (0, generationIntermediateTextPolicy_js_2.limitGenerationIntermediateReference)(stage.stageId, rawResponse);
+                    const referenceLimited = (0, generationIntermediateTextPolicy_js_2.limitGenerationIntermediateReference)(stage.stageId, rawResponse);
+                    const auditLimited = (0, generationIntermediateTextPolicy_js_2.limitGenerationIntermediateAudit)(stage.stageId, rawResponse);
                     if (stage.stageId === 'analyze')
-                        session.analysisText = limited.text;
+                        session.analysisText = referenceLimited.text;
                     else
-                        session.critiqueText = limited.text;
-                    const truncationIssue = (0, generationIntermediateTextPolicy_js_2.intermediateReferenceTruncationIssue)(stage.stageId, limited);
+                        session.critiqueText = referenceLimited.text;
+                    const referenceTruncationIssue = (0, generationIntermediateTextPolicy_js_2.intermediateReferenceTruncationIssue)(stage.stageId, referenceLimited);
+                    const auditTruncationIssue = (0, generationIntermediateTextPolicy_js_2.intermediateAuditTruncationIssue)(stage.stageId, auditLimited);
                     session.generationRun.stages.push(manualStageAudit(stage, {
                         status: 'accepted',
-                        rawResponse,
-                        issues: truncationIssue ? [truncationIssue] : [],
+                        rawResponse: auditLimited.text,
+                        issues: [
+                            ...(referenceTruncationIssue ? [referenceTruncationIssue] : []),
+                            ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+                        ],
                     }));
                     session.stageIndex += 1;
                     session.pendingFallback = null;
@@ -41300,7 +41373,7 @@ define("js/ui/appearance/appearanceController", ["require", "exports", "js/appea
 });
 /**
  * 責務: 生成計画に従い、既存の直接生成、判断、客観分析、批判的検証、最終回答、キャラクター発言化を実行し、最終候補と工程監査情報を返す。
- * 変更ルール: ゲーム状態を直接更新せず、API通信は注入関数へ委譲する。decide/finalizeだけが完成候補JSONを生成し、analyze/critiqueは自由記述を一時参照情報として保持する。renderはgenerationTextPatchServiceを唯一の適用入口とし、確定済みのゲーム判断を変更しない。analyze/critique失敗は後続候補生成を妨げず監査へ記録し、analyze失敗時はcritiqueを省略する。完成候補の検証不合格は失敗生回答を複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけをrejectedAttemptsへ保持する。自由記述の元回答は監査へ保持し、後続参照だけgenerationIntermediateTextPolicyの安全上限へ制限する。将来工程の最低1呼び出しを予約し、前段再試行が後段を枯渇させない。
+ * 変更ルール: ゲーム状態を直接更新せず、API通信は注入関数へ委譲する。decide/finalizeだけが完成候補JSONを生成し、analyze/critiqueは自由記述を一時参照情報として保持する。renderはgenerationTextPatchServiceを唯一の適用入口とし、確定済みのゲーム判断を変更しない。analyze/critique失敗は後続候補生成を妨げず監査へ記録し、analyze失敗時はcritiqueを省略する。完成候補の検証不合格は失敗生回答を複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけをrejectedAttemptsへ保持する。Analyze/Critique自由記述は後続参照上限と監査保存上限を別々に適用し、外部LLMの過大応答をゲーム状態へ無制限に保持しない。将来工程の最低1呼び出しを予約し、前段再試行が後段を枯渇させない。
  */
 define("js/services/generationPipeline", ["require", "exports", "js/services/generationTextPatchService", "js/prompts/response/responseAutoRepair", "js/prompts/stages/generationIntermediateTextPolicy"], function (require, exports, generationTextPatchService_js_2, responseAutoRepair_js_4, generationIntermediateTextPolicy_js_3) {
     "use strict";
@@ -41525,40 +41598,54 @@ define("js/services/generationPipeline", ["require", "exports", "js/services/gen
                     });
                     addAttemptCount(response?.attemptCount);
                     const rawResponse = String(response?.rawResponse ?? '').trim();
+                    const auditLimited = (0, generationIntermediateTextPolicy_js_3.limitGenerationIntermediateAudit)(stage.stageId, rawResponse || response?.rawResponse);
+                    const auditTruncationIssue = (0, generationIntermediateTextPolicy_js_3.intermediateAuditTruncationIssue)(stage.stageId, auditLimited);
                     if (!response?.ok || !rawResponse) {
                         stages.push(stageAudit(stage, {
                             status: 'fallback',
                             attemptCount: response?.attemptCount,
-                            rawResponse: response?.rawResponse,
+                            rawResponse: auditLimited.text,
                             fallbackUsed: true,
-                            issues: response?.issues?.length ? response.issues : [{ code: 'EMPTY_ANALYSIS_RESPONSE', message: '分析回答を取得できませんでした。' }],
+                            issues: [
+                                ...(response?.issues?.length ? response.issues : [{ code: 'EMPTY_ANALYSIS_RESPONSE', message: '分析回答を取得できませんでした。' }]),
+                                ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+                            ],
                             usage: response?.usage,
                         }));
                         continue;
                     }
-                    const limited = (0, generationIntermediateTextPolicy_js_3.limitGenerationIntermediateReference)(stage.stageId, rawResponse);
+                    const referenceLimited = (0, generationIntermediateTextPolicy_js_3.limitGenerationIntermediateReference)(stage.stageId, rawResponse);
                     if (stage.stageId === 'analyze')
-                        analysisText = limited.text;
+                        analysisText = referenceLimited.text;
                     else
-                        critiqueText = limited.text;
-                    const truncationIssue = (0, generationIntermediateTextPolicy_js_3.intermediateReferenceTruncationIssue)(stage.stageId, limited);
+                        critiqueText = referenceLimited.text;
+                    const referenceTruncationIssue = (0, generationIntermediateTextPolicy_js_3.intermediateReferenceTruncationIssue)(stage.stageId, referenceLimited);
                     stages.push(stageAudit(stage, {
                         status: 'accepted',
                         attemptCount: response?.attemptCount,
-                        rawResponse: response?.rawResponse,
-                        issues: [...(response?.issues ?? []), ...(truncationIssue ? [truncationIssue] : [])],
+                        rawResponse: auditLimited.text,
+                        issues: [
+                            ...(response?.issues ?? []),
+                            ...(referenceTruncationIssue ? [referenceTruncationIssue] : []),
+                            ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+                        ],
                         usage: response?.usage,
                     }));
                 }
                 catch (cause) {
                     const attemptCount = Number(cause?.attemptCount ?? 0);
                     addAttemptCount(attemptCount);
+                    const auditLimited = (0, generationIntermediateTextPolicy_js_3.limitGenerationIntermediateAudit)(stage.stageId, cause?.rawResponse);
+                    const auditTruncationIssue = (0, generationIntermediateTextPolicy_js_3.intermediateAuditTruncationIssue)(stage.stageId, auditLimited);
                     stages.push(stageAudit(stage, {
                         status: 'fallback',
                         attemptCount,
-                        rawResponse: cause?.rawResponse,
+                        rawResponse: auditLimited.text,
                         fallbackUsed: true,
-                        issues: cause?.issues ?? [{ code: 'STAGE_API_ERROR', message: cause?.message ?? String(cause) }],
+                        issues: [
+                            ...(cause?.issues ?? [{ code: 'STAGE_API_ERROR', message: cause?.message ?? String(cause) }]),
+                            ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+                        ],
                         usage: cause?.usage,
                     }));
                 }
@@ -42298,7 +42385,7 @@ define("js/automation/automationRunControl", ["require", "exports"], function (r
 });
 /**
  * 責務: 1件のAIタスクについて生成深度ごとの既存直接生成・判断・客観分析・批判的検証・最終回答・発言化API要求、通信再試行、全履歴再同期、応答修復、正式登録または項目代替までを実行する。
- * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一タスク内で一度だけThinkingを無効化する。
+ * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一工程API要求内で一度だけThinkingを無効化し、後続工程や別プロフィールへ引き継がない。
  */
 define("js/automation/automaticAiExecutor", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -42356,7 +42443,6 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
             runtimeApi.dismissToast?.(responseRetryToastKey);
             let taskApiCallCount = 0;
             let regenerationRecorded = false;
-            let ollamaThinkingFallbackUsed = false;
             function addStageUsage(target, usage) {
                 for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens', 'costUsd']) {
                     const value = Number(usage?.[key] ?? 0);
@@ -42455,6 +42541,9 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
             async function requestStageApi({ stage, prompt, requestPurpose, generationStage = stage.stageId, callBudget, publicHistoryMode = taskArtifact.publicHistoryMode ?? 'full', onResync = null, }) {
                 let attemptCount = 0;
                 let apiRetryIndex = 0;
+                // Ollama投票のThinking無効化は、この工程API要求内の再試行だけに限定する。
+                // 後続工程や別プロフィールへ持ち越すと、本来のThinking設定を上書きしてしまう。
+                let ollamaThinkingFallbackUsed = false;
                 const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, costUsd: 0 };
                 const issues = [];
                 let currentPrompt = prompt;
@@ -42913,9 +43002,9 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
         function defaultGenerationSettings() {
             return {
                 depth: 1,
-                draftProfileId: null,
-                renderProfileId: null,
-                proofreadProfileId: null,
+                reasoningProfileId: null,
+                outputProfileId: null,
+                critiqueProfileId: null,
                 taskOverrides: Object.fromEntries(GENERATION_TASK_OVERRIDE_DEFS.map(({ key }) => [key, null])),
             };
         }
@@ -42924,9 +43013,9 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
             const depth = Number(generation?.depth);
             return {
                 depth: [1, 2, 3, 4].includes(depth) ? depth : 1,
-                draftProfileId: generation?.draftProfileId ?? null,
-                renderProfileId: generation?.renderProfileId ?? null,
-                proofreadProfileId: generation?.proofreadProfileId ?? null,
+                reasoningProfileId: generation?.reasoningProfileId ?? null,
+                outputProfileId: generation?.outputProfileId ?? null,
+                critiqueProfileId: generation?.critiqueProfileId ?? null,
                 taskOverrides: Object.fromEntries(GENERATION_TASK_OVERRIDE_DEFS.map(({ key }) => {
                     const value = generation?.taskOverrides?.[key];
                     return [key, [1, 2, 3, 4].includes(Number(value)) ? Number(value) : null];
@@ -42958,7 +43047,7 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
             const reviewer = generationExecutorProfile(profile, settings, 'critique');
             const reviewerLabel = reviewer?.id === profile.id
                 ? '自己検証'
-                : `「${reviewer?.label ?? `不明なプロファイル（${settings.proofreadProfileId ?? ''}）`}」による批判的検証`;
+                : `「${reviewer?.label ?? `不明なプロファイル（${settings.critiqueProfileId ?? ''}）`}」による批判的検証`;
             return `深度4・客観分析 → ${reviewerLabel} → 最終回答`;
         }
         function generationFlowHtml(profile, generation) {
@@ -42995,7 +43084,7 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
             return new Set(generationTaskPlans(generation).flatMap((plan) => plan.stages));
         }
         function generationExecutorReferenceKey(stageId) {
-            return ({ decide: 'draftProfileId', analyze: 'draftProfileId', critique: 'proofreadProfileId', render: 'renderProfileId', finalize: 'renderProfileId' })[stageId] ?? null;
+            return ({ decide: 'reasoningProfileId', analyze: 'reasoningProfileId', critique: 'critiqueProfileId', render: 'outputProfileId', finalize: 'outputProfileId' })[stageId] ?? null;
         }
         function generationExecutorProfile(profile, generation, stageId) {
             const referenceKey = generationExecutorReferenceKey(stageId);
@@ -43047,9 +43136,9 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
       <div class="ai-depth-options">${generationDepthOptionsHtml(generation.depth, profile.id)}</div>
       <div class="ai-generation-flow" data-generation-flow>${generationFlowHtml(profile, generation)}</div>
       <div class="ai-stage-assignment-grid">
-        <label class="field" data-generation-stage-assignment="thinking" ${firstThinkingNeeded ? '' : 'hidden'}><span>第1工程（判断／客観分析）の担当AI</span><select data-generation-profile-id="draftProfileId">${generationProfileOptions(generation.draftProfileId, profile.id)}</select></label>
-        <label class="field" data-generation-stage-assignment="render" ${renderNeeded ? '' : 'hidden'}><span>第2/最終工程（発言化／最終回答）の担当AI</span><select data-generation-profile-id="renderProfileId">${generationProfileOptions(generation.renderProfileId, profile.id)}</select></label>
-        <label class="field" data-generation-stage-assignment="review" ${reviewNeeded ? '' : 'hidden'}><span>批判的検証の担当AI</span><select data-generation-profile-id="proofreadProfileId">${generationProfileOptions(generation.proofreadProfileId, profile.id)}</select></label>
+        <label class="field" data-generation-stage-assignment="thinking" ${firstThinkingNeeded ? '' : 'hidden'}><span>第1工程（判断／客観分析）の担当AI</span><select data-generation-profile-id="reasoningProfileId">${generationProfileOptions(generation.reasoningProfileId, profile.id)}</select></label>
+        <label class="field" data-generation-stage-assignment="render" ${renderNeeded ? '' : 'hidden'}><span>第2/最終工程（発言化／最終回答）の担当AI</span><select data-generation-profile-id="outputProfileId">${generationProfileOptions(generation.outputProfileId, profile.id)}</select></label>
+        <label class="field" data-generation-stage-assignment="review" ${reviewNeeded ? '' : 'hidden'}><span>批判的検証の担当AI</span><select data-generation-profile-id="critiqueProfileId">${generationProfileOptions(generation.critiqueProfileId, profile.id)}</select></label>
       </div>
       <div class="ai-review-policy" data-review-policy ${reviewNeeded ? '' : 'hidden'}><strong>批判的検証では客観分析をゲーム情報と照合します。</strong><span>✓ 事実・対象・時系列の取り違え</span><span>✓ 根拠から結論への飛躍</span><span>✓ 多数意見への過度な依存</span><span>✓ 別仮説や有力候補の見落とし</span><span>✓ 役職・陣営目標との不整合</span><small>妥当な部分は無理に否定せず、問題点と解釈し直すべき点を自由記述で整理します。</small></div>
       <details class="ai-task-depth-grid"><summary>タスク別に生成深度を変更</summary><div class="form-grid">${generationTaskOverrideHtml(generation.taskOverrides)}</div></details>
@@ -43067,9 +43156,9 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
             const generation = normalizeGenerationSettings({
                 depth,
                 taskOverrides,
-                draftProfileId: card.querySelector('[data-generation-profile-id="draftProfileId"]')?.value || null,
-                renderProfileId: card.querySelector('[data-generation-profile-id="renderProfileId"]')?.value || null,
-                proofreadProfileId: card.querySelector('[data-generation-profile-id="proofreadProfileId"]')?.value || null,
+                reasoningProfileId: card.querySelector('[data-generation-profile-id="reasoningProfileId"]')?.value || null,
+                outputProfileId: card.querySelector('[data-generation-profile-id="outputProfileId"]')?.value || null,
+                critiqueProfileId: card.querySelector('[data-generation-profile-id="critiqueProfileId"]')?.value || null,
             });
             const requiredStages = generationRequiredStages(generation);
             card.querySelectorAll('.ai-depth-option').forEach((option) => option.classList.toggle('is-selected', option.contains(checked)));
@@ -43765,9 +43854,9 @@ define("js/automation/desktopAutomationManagementView", ["require", "exports"], 
                     },
                     generation: {
                         depth: Number(card.querySelector('[data-generation-depth]:checked')?.value ?? previous?.generation?.depth ?? 1),
-                        draftProfileId: card.querySelector('[data-generation-profile-id="draftProfileId"]')?.value || null,
-                        renderProfileId: card.querySelector('[data-generation-profile-id="renderProfileId"]')?.value || null,
-                        proofreadProfileId: card.querySelector('[data-generation-profile-id="proofreadProfileId"]')?.value || null,
+                        reasoningProfileId: card.querySelector('[data-generation-profile-id="reasoningProfileId"]')?.value || null,
+                        outputProfileId: card.querySelector('[data-generation-profile-id="outputProfileId"]')?.value || null,
+                        critiqueProfileId: card.querySelector('[data-generation-profile-id="critiqueProfileId"]')?.value || null,
                         taskOverrides: Object.fromEntries(GENERATION_TASK_OVERRIDE_DEFS.map(({ key }) => {
                             const value = card.querySelector(`[data-generation-task-override="${key}"]`)?.value ?? '';
                             return [key, value === '' ? null : Number(value)];
@@ -44465,8 +44554,8 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
     }
 });
 /**
- * 責務: AI設定保存、参加者割り当て整合、プロファイル別使用量再読込、自動保存の遅延集約と終了前送信を所有する。
- * 変更ルール: ゲーム状態を直接変更せず、desktopAutomation.jsから渡された正式runtime・bridge・設定依存だけを使用する。自動保存はruntimeの専用スナップショットだけを取得し、通常時は短時間の変更を集約するが、最大待機時間と終了前flushを必ず設ける。処理本体をdesktopAutomation.jsへ戻さない。外部LLM確認は設定保存と分離し、実際に通信を開始する各ControllerとMain側Gateだけが担当する。
+ * 責務: AI設定保存、設定読込時のMain通知表示、参加者割り当て整合、プロファイル別使用量再読込、自動保存の遅延集約と終了前送信を所有する。
+ * 変更ルール: ゲーム状態を直接変更せず、desktopAutomation.jsから渡された正式runtime・bridge・設定依存だけを使用する。設定読込通知はMainが返した構造化codeだけを表示へ変換し、永続設定へ混ぜない。自動保存はruntimeの専用スナップショットだけを取得し、通常時は短時間の変更を集約するが、最大待機時間と終了前flushを必ず設ける。処理本体をdesktopAutomation.jsへ戻さない。外部LLM確認は設定保存と分離し、実際に通信を開始する各ControllerとMain側Gateだけが担当する。
  */
 define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -44489,6 +44578,60 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
         async function refreshUsageSummary() {
             controller.persistedUsage = await bridge.getUsageSummary().catch(() => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }));
             runtime().refreshTab('ai-management');
+        }
+        function reportStartupSettingsNotices(notices) {
+            for (const notice of Array.isArray(notices) ? notices : []) {
+                const backupPath = String(notice?.backupPath ?? '').trim();
+                const backupSuffix = backupPath ? ` バックアップ: ${backupPath}` : '';
+                if (notice?.code === 'SETTINGS_PROFILE_ENDPOINT_UNAVAILABLE') {
+                    const label = String(notice.profileLabel ?? '').trim() || 'AIプロファイル';
+                    const reason = String(notice.reason ?? '').trim();
+                    runtime().toast(`${label}の接続先は現在の通信ルールでは使用できません。AI設定で接続先を更新してください。${reason ? ` ${reason}` : ''}`, 'warning', {
+                        key: `settings-endpoint-unavailable:${String(notice.profileId ?? '')}`,
+                        durationMs: 0,
+                        forceDisplay: true,
+                        source: 'settings-startup',
+                    });
+                    continue;
+                }
+                if (notice?.code === 'SETTINGS_UNSUPPORTED_SCHEMA') {
+                    const sourceVersion = Number.isInteger(notice.sourceSchemaVersion) ? notice.sourceSchemaVersion : '不明';
+                    const currentVersion = Number.isInteger(notice.currentSchemaVersion) ? notice.currentSchemaVersion : '不明';
+                    runtime().toast(`以前または別バージョンのAI設定（schema ${sourceVersion}）は現在のschema ${currentVersion}では読み込めません。既定設定で起動しました。${backupSuffix}`, 'error', {
+                        key: 'settings-load-failure',
+                        durationMs: 0,
+                        forceDisplay: true,
+                        source: 'settings-startup',
+                    });
+                    continue;
+                }
+                if (notice?.code === 'SETTINGS_INVALID_JSON') {
+                    runtime().toast(`AI設定ファイルのJSONが壊れているため、既定設定で起動しました。${backupSuffix}`, 'error', {
+                        key: 'settings-load-failure',
+                        durationMs: 0,
+                        forceDisplay: true,
+                        source: 'settings-startup',
+                    });
+                    continue;
+                }
+                if (notice?.code === 'SETTINGS_LOAD_FAILED_READ_ONLY') {
+                    runtime().toast('AI設定を読み込めず、元ファイルの退避にも失敗したため、この起動中はAI設定を保存できません。アプリを終了してdesktop-settings.jsonを確認してください。', 'error', {
+                        key: 'settings-load-failure',
+                        durationMs: 0,
+                        forceDisplay: true,
+                        source: 'settings-startup',
+                    });
+                    continue;
+                }
+                if (notice?.code === 'SETTINGS_UNREADABLE') {
+                    runtime().toast(`AI設定を解釈できないため、既定設定で起動しました。${backupSuffix}`, 'error', {
+                        key: 'settings-load-failure',
+                        durationMs: 0,
+                        forceDisplay: true,
+                        source: 'settings-startup',
+                    });
+                }
+            }
         }
         async function persistSettings(settings, { refresh = true, statusMessage = '' } = {}) {
             const previousSettings = controller.settings;
@@ -44609,6 +44752,7 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
         return Object.freeze({
             applyPromptHistorySetting,
             applyAiExecutionSettings,
+            reportStartupSettingsNotices,
             refreshUsageSummary,
             persistSettings,
             reconcileAssignments,
@@ -44977,7 +45121,7 @@ define("js/automation/aiProfileTransferController", ["require", "exports", "js/c
         'jsonRequestMode', 'jsonResponseMode', 'thinkingLevel', 'localServerPreset', 'billing', 'generation',
     ]);
     const BILLING_KEYS = Object.freeze(['inputUsdPerMillion', 'cachedInputUsdPerMillion', 'cacheWriteUsdPerMillion', 'outputUsdPerMillion', 'profileBudgetUsd']);
-    const GENERATION_KEYS = Object.freeze(['depth', 'draftProfileId', 'renderProfileId', 'proofreadProfileId', 'taskOverrides']);
+    const GENERATION_KEYS = Object.freeze(['depth', 'reasoningProfileId', 'outputProfileId', 'critiqueProfileId', 'taskOverrides']);
     const TASK_OVERRIDE_KEYS = Object.freeze(['speech', 'vote', 'nightAction', 'privateConversation', 'resultImpression', 'memoConsolidate']);
     function plainObject(value) {
         return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -45045,7 +45189,7 @@ define("js/automation/aiProfileTransferController", ["require", "exports", "js/c
         if (!ids.has(raw.rootProfileId))
             throw new RangeError('AIプロファイルJSON.rootProfileIdがprofiles内に存在しません。');
         raw.profiles.forEach((profile, index) => {
-            for (const key of ['draftProfileId', 'renderProfileId', 'proofreadProfileId']) {
+            for (const key of ['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']) {
                 assertNullableProfileId(profile.generation[key], `AIプロファイルJSON.profiles[${index}].generation.${key}`, ids);
             }
         });
@@ -45095,7 +45239,7 @@ define("js/automation/aiProfileTransferController", ["require", "exports", "js/c
             visited.add(id);
             selected.push(profile);
             const generation = normalizeGenerationSettings(profile.generation);
-            for (const key of ['draftProfileId', 'renderProfileId', 'proofreadProfileId']) {
+            for (const key of ['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']) {
                 if (generation[key] && !visited.has(generation[key]))
                     queue.push(generation[key]);
             }
@@ -45147,7 +45291,7 @@ define("js/automation/aiProfileTransferController", ["require", "exports", "js/c
             const idMap = new Map(packageValue.profiles.map((profile) => [profile.id, createProfileId()]));
             const imported = packageValue.profiles.map((profile) => {
                 const generation = structuredClone(profile.generation);
-                for (const key of ['draftProfileId', 'renderProfileId', 'proofreadProfileId']) {
+                for (const key of ['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']) {
                     generation[key] = generation[key] === null ? null : idMap.get(generation[key]) ?? null;
                 }
                 return {
@@ -45835,9 +45979,9 @@ define("js/automation/aiManagementController", ["require", "exports"], function 
                         return [];
                     const generation = normalizeGenerationSettings(sourceProfile.generation);
                     return [
-                        ['第1工程（判断／客観分析）', generation.draftProfileId],
-                        ['第2/最終工程（発言化／最終回答）', generation.renderProfileId],
-                        ['批判的検証', generation.proofreadProfileId],
+                        ['第1工程（判断／客観分析）', generation.reasoningProfileId],
+                        ['第2/最終工程（発言化／最終回答）', generation.outputProfileId],
+                        ['批判的検証', generation.critiqueProfileId],
                     ].filter(([, referenceId]) => referenceId === profileId).map(([stageLabel]) => `${sourceProfile.label}の${stageLabel}担当`);
                 });
                 if (generationReferences.length)
@@ -46952,6 +47096,10 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
                 liveProgressController.refreshLiveView();
             });
             controller.settings = await bridge.getSettings().catch(() => defaultSettings());
+            const settingsStartupNotices = bridge.isDesktop && typeof bridge.getSettingsStartupNotices === 'function'
+                ? await bridge.getSettingsStartupNotices().catch(() => [])
+                : [];
+            settingsPersistenceCoordinator.reportStartupSettingsNotices(settingsStartupNotices);
             liveProgressController.syncExecutionModeWorkbenchView({ refresh: false });
             settingsPersistenceCoordinator.applyPromptHistorySetting();
             settingsPersistenceCoordinator.applyAiExecutionSettings();

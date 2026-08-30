@@ -1,6 +1,6 @@
 /**
  * 責務: 手動多段AI生成の計画解決、セッション署名、判断・客観分析・批判的検証・最終回答・発言化プロンプト、監査、回答検証から最終登録までの手動生成ワークフローを管理する。
- * 変更ルール: 中間処理でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ状態遷移を戻さない。analyze/critiqueは自由記述として監査へ全文を保持し、後続参照だけ安全上限へ制限して候補JSON検証へ流さない。renderは専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
+ * 変更ルール: 中間処理でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ状態遷移を戻さない。analyze/critiqueは自由記述として後続参照上限と監査保存上限を別々に適用し、候補JSON検証へ流さない。renderは専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
  */
 
 import { resolveGenerationPlan } from '../../services/generationDepthPolicy.js';
@@ -15,7 +15,12 @@ import {
 import { flattenGenerationStagePromptEnvelope, projectGenerationStagePromptEnvelope } from '../../prompts/stages/generationStageEnvelope.js';
 import { autoRepairIssues } from '../../prompts/response/responseAutoRepair.js';
 import { validateAndMergeGenerationTextPatch } from '../../services/generationTextPatchService.js';
-import { intermediateReferenceTruncationIssue, limitGenerationIntermediateReference } from '../../prompts/stages/generationIntermediateTextPolicy.js';
+import {
+  intermediateAuditTruncationIssue,
+  intermediateReferenceTruncationIssue,
+  limitGenerationIntermediateAudit,
+  limitGenerationIntermediateReference,
+} from '../../prompts/stages/generationIntermediateTextPolicy.js';
 import { copyText, escapeHtml } from '../../shared/utils.js';
 import { composeManualAiPrompt } from '../../services/aiTaskService.js';
 
@@ -291,14 +296,19 @@ export class ManualGenerationController {
       const rawResponse = String(this.host.drafts().get(`manual-stage-response:${key}:${stage.stageId}`) ?? '').trim();
       if (!rawResponse) throw new Error(`${MANUAL_STAGE_LABELS[stage.stageId]}の回答を貼り付けてください。`);
       if (['analyze', 'critique'].includes(stage.stageId)) {
-        const limited = limitGenerationIntermediateReference(stage.stageId, rawResponse);
-        if (stage.stageId === 'analyze') session.analysisText = limited.text;
-        else session.critiqueText = limited.text;
-        const truncationIssue = intermediateReferenceTruncationIssue(stage.stageId, limited);
+        const referenceLimited = limitGenerationIntermediateReference(stage.stageId, rawResponse);
+        const auditLimited = limitGenerationIntermediateAudit(stage.stageId, rawResponse);
+        if (stage.stageId === 'analyze') session.analysisText = referenceLimited.text;
+        else session.critiqueText = referenceLimited.text;
+        const referenceTruncationIssue = intermediateReferenceTruncationIssue(stage.stageId, referenceLimited);
+        const auditTruncationIssue = intermediateAuditTruncationIssue(stage.stageId, auditLimited);
         session.generationRun.stages.push(manualStageAudit(stage, {
           status: 'accepted',
-          rawResponse,
-          issues: truncationIssue ? [truncationIssue] : [],
+          rawResponse: auditLimited.text,
+          issues: [
+            ...(referenceTruncationIssue ? [referenceTruncationIssue] : []),
+            ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+          ],
         }));
         session.stageIndex += 1;
         session.pendingFallback = null;

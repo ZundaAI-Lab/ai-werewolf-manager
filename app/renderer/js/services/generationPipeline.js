@@ -1,11 +1,16 @@
 /**
  * 責務: 生成計画に従い、既存の直接生成、判断、客観分析、批判的検証、最終回答、キャラクター発言化を実行し、最終候補と工程監査情報を返す。
- * 変更ルール: ゲーム状態を直接更新せず、API通信は注入関数へ委譲する。decide/finalizeだけが完成候補JSONを生成し、analyze/critiqueは自由記述を一時参照情報として保持する。renderはgenerationTextPatchServiceを唯一の適用入口とし、確定済みのゲーム判断を変更しない。analyze/critique失敗は後続候補生成を妨げず監査へ記録し、analyze失敗時はcritiqueを省略する。完成候補の検証不合格は失敗生回答を複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけをrejectedAttemptsへ保持する。自由記述の元回答は監査へ保持し、後続参照だけgenerationIntermediateTextPolicyの安全上限へ制限する。将来工程の最低1呼び出しを予約し、前段再試行が後段を枯渇させない。
+ * 変更ルール: ゲーム状態を直接更新せず、API通信は注入関数へ委譲する。decide/finalizeだけが完成候補JSONを生成し、analyze/critiqueは自由記述を一時参照情報として保持する。renderはgenerationTextPatchServiceを唯一の適用入口とし、確定済みのゲーム判断を変更しない。analyze/critique失敗は後続候補生成を妨げず監査へ記録し、analyze失敗時はcritiqueを省略する。完成候補の検証不合格は失敗生回答を複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけをrejectedAttemptsへ保持する。Analyze/Critique自由記述は後続参照上限と監査保存上限を別々に適用し、外部LLMの過大応答をゲーム状態へ無制限に保持しない。将来工程の最低1呼び出しを予約し、前段再試行が後段を枯渇させない。
  */
 
 import { validateAndMergeGenerationTextPatch } from './generationTextPatchService.js';
 import { autoRepairIssues } from '../prompts/response/responseAutoRepair.js';
-import { intermediateReferenceTruncationIssue, limitGenerationIntermediateReference } from '../prompts/stages/generationIntermediateTextPolicy.js';
+import {
+  intermediateAuditTruncationIssue,
+  intermediateReferenceTruncationIssue,
+  limitGenerationIntermediateAudit,
+  limitGenerationIntermediateReference,
+} from '../prompts/stages/generationIntermediateTextPolicy.js';
 
 const ZERO_USAGE = Object.freeze({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 });
 
@@ -256,37 +261,51 @@ export async function runGenerationPipeline({
         });
         addAttemptCount(response?.attemptCount);
         const rawResponse = String(response?.rawResponse ?? '').trim();
+        const auditLimited = limitGenerationIntermediateAudit(stage.stageId, rawResponse || response?.rawResponse);
+        const auditTruncationIssue = intermediateAuditTruncationIssue(stage.stageId, auditLimited);
         if (!response?.ok || !rawResponse) {
           stages.push(stageAudit(stage, {
             status: 'fallback',
             attemptCount: response?.attemptCount,
-            rawResponse: response?.rawResponse,
+            rawResponse: auditLimited.text,
             fallbackUsed: true,
-            issues: response?.issues?.length ? response.issues : [{ code: 'EMPTY_ANALYSIS_RESPONSE', message: '分析回答を取得できませんでした。' }],
+            issues: [
+              ...(response?.issues?.length ? response.issues : [{ code: 'EMPTY_ANALYSIS_RESPONSE', message: '分析回答を取得できませんでした。' }]),
+              ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+            ],
             usage: response?.usage,
           }));
           continue;
         }
-        const limited = limitGenerationIntermediateReference(stage.stageId, rawResponse);
-        if (stage.stageId === 'analyze') analysisText = limited.text;
-        else critiqueText = limited.text;
-        const truncationIssue = intermediateReferenceTruncationIssue(stage.stageId, limited);
+        const referenceLimited = limitGenerationIntermediateReference(stage.stageId, rawResponse);
+        if (stage.stageId === 'analyze') analysisText = referenceLimited.text;
+        else critiqueText = referenceLimited.text;
+        const referenceTruncationIssue = intermediateReferenceTruncationIssue(stage.stageId, referenceLimited);
         stages.push(stageAudit(stage, {
           status: 'accepted',
           attemptCount: response?.attemptCount,
-          rawResponse: response?.rawResponse,
-          issues: [...(response?.issues ?? []), ...(truncationIssue ? [truncationIssue] : [])],
+          rawResponse: auditLimited.text,
+          issues: [
+            ...(response?.issues ?? []),
+            ...(referenceTruncationIssue ? [referenceTruncationIssue] : []),
+            ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+          ],
           usage: response?.usage,
         }));
       } catch (cause) {
         const attemptCount = Number(cause?.attemptCount ?? 0);
         addAttemptCount(attemptCount);
+        const auditLimited = limitGenerationIntermediateAudit(stage.stageId, cause?.rawResponse);
+        const auditTruncationIssue = intermediateAuditTruncationIssue(stage.stageId, auditLimited);
         stages.push(stageAudit(stage, {
           status: 'fallback',
           attemptCount,
-          rawResponse: cause?.rawResponse,
+          rawResponse: auditLimited.text,
           fallbackUsed: true,
-          issues: cause?.issues ?? [{ code: 'STAGE_API_ERROR', message: cause?.message ?? String(cause) }],
+          issues: [
+            ...(cause?.issues ?? [{ code: 'STAGE_API_ERROR', message: cause?.message ?? String(cause) }]),
+            ...(auditTruncationIssue ? [auditTruncationIssue] : []),
+          ],
           usage: cause?.usage,
         }));
       }
