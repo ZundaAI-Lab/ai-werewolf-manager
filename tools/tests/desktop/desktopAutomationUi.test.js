@@ -179,12 +179,16 @@ test('AI管理の割り当て表示更新はassignmentControllerの責務を参�
   const { createAiManagementController } = context.__automationTestModules['aiManagementController.js'];
   const updateManagementReadouts = () => {};
   const applyManagementExecutionModeUi = () => {};
+  const testProfile = () => {};
+  const listProfileModels = () => {};
   const controller = createAiManagementController({
     profileEditorController: {
       switchProfileEditor() {},
       switchProfileEditorTab() {},
       syncProfileProviderFields() {},
       updateProfileEditorPreview() {},
+      testProfile,
+      listProfileModels,
     },
     aiProfileTransferController: {
       exportSelectedProfileJson() {},
@@ -197,15 +201,15 @@ test('AI管理の割り当て表示更新はassignmentControllerの責務を参�
       showBulkAssignmentFeedback() {},
     },
     generationTestController: {
-      testProfile() {},
       generationCandidateAnswer() {},
       buildGenerationTestStageSnapshots() {},
       testGenerationPipeline() {},
-      listProfileModels() {},
     },
   });
   assert.equal(controller.updateManagementReadouts, updateManagementReadouts);
   assert.equal(controller.applyManagementExecutionModeUi, applyManagementExecutionModeUi);
+  assert.equal(controller.testProfile, testProfile);
+  assert.equal(controller.listProfileModels, listProfileModels);
 });
 
 test('AIプロファイルの並び替え計算は境界位置を越えない', () => {

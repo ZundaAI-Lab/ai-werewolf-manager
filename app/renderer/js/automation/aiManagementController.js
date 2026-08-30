@@ -51,11 +51,14 @@ export function createAiManagementController(context) {
     assignmentController,
     generationTestController,
   } = context;
+  // 接続診断はプロファイル編集Controller、生成工程診断は生成テストControllerを正本とする。
   const {
     switchProfileEditor,
     switchProfileEditorTab,
     syncProfileProviderFields,
     updateProfileEditorPreview,
+    testProfile,
+    listProfileModels,
   } = profileEditorController;
   const { exportSelectedProfileJson, importProfileJsonFile } = aiProfileTransferController;
   const {
@@ -65,11 +68,9 @@ export function createAiManagementController(context) {
     showBulkAssignmentFeedback,
   } = assignmentController;
   const {
-    testProfile,
     generationCandidateAnswer,
     buildGenerationTestStageSnapshots,
     testGenerationPipeline,
-    listProfileModels,
   } = generationTestController;
 
   const LOCKED_AI_ACTIONS = new Set([

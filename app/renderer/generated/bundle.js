@@ -295,7 +295,7 @@ define("js/config/constants", ["require", "exports", "js/config/dataCompatibilit
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.TASK_LABELS = exports.AUDIENCE_LABELS = exports.EVENT_TYPE_LABELS = exports.DEFAULT_RULES = exports.DEFAULT_CHARACTER = exports.DEFAULT_REASONING_PROFILE = exports.REASONING_PROFILE_PROMPT_DESCRIPTIONS = exports.REASONING_PROFILE_OPTION_LABELS = exports.PRESET_NOTES = exports.PRESET_ROLES = exports.ROLE_IDS = exports.ROLE_DEFINITIONS = exports.TEAM_LABELS = exports.PHASE_LABELS = exports.PHASES = exports.VOTE_TIE_RESOLUTIONS = exports.SUPPORTED_PLAYER_COUNTS = exports.MAX_PLAYER_COUNT = exports.MIN_PLAYER_COUNT = exports.MAX_RESTORE_POINTS = exports.MAX_UNDO = exports.MAX_RESULT_IMPRESSION_LENGTH = exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = exports.PROMPT_SPEC_VERSION = exports.SCHEMA_VERSION = exports.APP_VERSION = void 0;
-    exports.APP_VERSION = '1.0.5';
+    exports.APP_VERSION = '1.0.6';
     // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
     // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。
     // 製品版1.0.0の基準schemaは1。項目追加・削除・意味変更・必須条件変更時だけ増やす。
@@ -692,8 +692,8 @@ define("generated/buildInfo", ["require", "exports"], function (require, exports
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BUNDLE_SHA256 = exports.BUILD_ID = void 0;
-    exports.BUILD_ID = '507b9b4fa2d96f29bc179973466f3ba8367d885a25b6830a0eb95b86efcd0167';
-    exports.BUNDLE_SHA256 = 'f7eb66dcc4b62c65de77045f47e4f609821f0daf4ed904916cc9c2abaede68a8';
+    exports.BUILD_ID = 'b3f7024c44e150ce14cfe54a1d055fc6dd5d67df46fc40314eca1ab628c73afb';
+    exports.BUNDLE_SHA256 = '9e3649916eac10cf370e2c9e9f55f3954e3eb40af01c24809be62cd1dc11ce25';
 });
 /**
  * 責務: 副作用の小さい汎用処理と、出力ファイル名部品のOS非依存な正規化を提供する。
@@ -45725,10 +45725,11 @@ define("js/automation/aiManagementController", ["require", "exports"], function 
     exports.createAiManagementController = createAiManagementController;
     function createAiManagementController(context) {
         const { AI_COMMIT_RESULT_EVENT, DEFAULT_OLLAMA_THINKING_LEVEL, LOCAL_SERVER_PRESETS, assignmentValidation, automationRunControl, bridge, bulkAssignmentProfileId, captureManagementSectionState, collectManagementForm, controller, createProfileId, currentGameState, defaultGenerationSettings, emptyUsage, enableLiveView, firstEnabledProfileId, handleManualAiCommitResult, hideLiveView, isAutomationAiRequestLocked, isAutomationMutationLocked, normalizeGenerationSettings, openHumanTask, openManualAiTask, performOneStep, persistSettings, playerName, prepareLiveWorkbench, refreshLiveView, refreshVisibleUi, reorderedProfiles, resumeAutomaticAfterHuman, runLoop, runtime, setAutomationMode, setManagementDirty, setStatus, stopLoop, showPendingManualAiTask, syncExecutionModeWorkbenchView, updateButtons, updateGenerationCardUi, profileEditorController, aiProfileTransferController, assignmentController, generationTestController, } = context;
-        const { switchProfileEditor, switchProfileEditorTab, syncProfileProviderFields, updateProfileEditorPreview, } = profileEditorController;
+        // 接続診断はプロファイル編集Controller、生成工程診断は生成テストControllerを正本とする。
+        const { switchProfileEditor, switchProfileEditorTab, syncProfileProviderFields, updateProfileEditorPreview, testProfile, listProfileModels, } = profileEditorController;
         const { exportSelectedProfileJson, importProfileJsonFile } = aiProfileTransferController;
         const { updateManagementReadouts, applyManagementExecutionModeUi, saveAssignment, showBulkAssignmentFeedback, } = assignmentController;
-        const { testProfile, generationCandidateAnswer, buildGenerationTestStageSnapshots, testGenerationPipeline, listProfileModels, } = generationTestController;
+        const { generationCandidateAnswer, buildGenerationTestStageSnapshots, testGenerationPipeline, } = generationTestController;
         const LOCKED_AI_ACTIONS = new Set([
             'open-manual', 'step', 'add-profile', 'duplicate-profile', 'move-profile-up',
             'move-profile-down', 'delete-profile', 'import-profile-json', 'export-profile-json', 'bulk-assign', 'resync-player', 'resync-all', 'reset-profile-usage', 'reset-all-usage',
