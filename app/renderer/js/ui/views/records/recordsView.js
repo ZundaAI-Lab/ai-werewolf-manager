@@ -109,7 +109,15 @@ export function formatGenerationRun(run, getAiProfileLabel = () => null) {
     const issues = stage.issues?.length
       ? `<ul>${stage.issues.map((issue) => `<li>${escapeHtml(issue.code)}: ${escapeHtml(issue.message)}</li>`).join('')}</ul>`
       : '';
-    return `<li><strong>${escapeHtml(label)}</strong>: ${escapeHtml(executor)} / ${escapeHtml(stage.status)}${calls}${fields}${fallback}${issues}</li>`;
+    const rejectedAttempts = stage.rejectedAttempts?.length
+      ? `<ul>${stage.rejectedAttempts.map((attempt) => {
+        const codes = attempt.issueCodes?.length ? attempt.issueCodes.join(', ') : 'VALIDATION_ERROR';
+        const paths = [...new Set((attempt.issues ?? []).map((issue) => issue.path).filter(Boolean))];
+        const pathText = paths.length ? ` / ${paths.join(', ')}` : '';
+        return `<li>不採用試行 ${Number(attempt.attempt ?? 0)} / ${escapeHtml(attempt.phase ?? '')}: ${escapeHtml(codes)}${escapeHtml(pathText)}</li>`;
+      }).join('')}</ul>`
+      : '';
+    return `<li><strong>${escapeHtml(label)}</strong>: ${escapeHtml(executor)} / ${escapeHtml(stage.status)}${calls}${fields}${fallback}${issues}${rejectedAttempts}</li>`;
   }).join('');
   return `<details class="optional-box"><summary>生成工程の詳細</summary><p>生成深度: ${Number(run.depth ?? 1)}（${escapeHtml(callSummary)}）</p><ul>${stages}</ul><p>最終採用: ${escapeHtml(GENERATION_STAGE_LABELS[run.finalStageId] ?? run.finalStageId)}</p></details>`;
 }

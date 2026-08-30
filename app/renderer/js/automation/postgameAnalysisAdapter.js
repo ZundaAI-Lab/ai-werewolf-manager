@@ -95,6 +95,7 @@ function compactGenerationRun(run) {
       targetTextFields: stage.targetTextFields,
       fallbackUsed: stage.fallbackUsed,
       issues: stage.issues,
+      rejectedAttempts: stage.rejectedAttempts ?? [],
       rawResponse: boundedText(stage.rawResponse, 300_000),
     })),
   };

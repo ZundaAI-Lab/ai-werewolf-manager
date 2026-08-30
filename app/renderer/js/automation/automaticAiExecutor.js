@@ -1,6 +1,6 @@
 /**
  * 責務: 1件のAIタスクについて生成深度ごとの既存直接生成・判断・客観分析・批判的検証・最終回答・発言化API要求、通信再試行、全履歴再同期、応答修復、正式登録または項目代替までを実行する。
- * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は有効対象だけの最小契約、それ以外は最新の基準プロンプトを参照する。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、その工程API要求内だけThinkingを無効化し、別工程・別プロファイルへ状態を持ち越さない。
+ * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一タスク内で一度だけThinkingを無効化する。
  */
 
 
@@ -78,6 +78,7 @@ function createAutomaticAiExecutor(dependencies) {
     runtimeApi.dismissToast?.(responseRetryToastKey);
     let taskApiCallCount = 0;
     let regenerationRecorded = false;
+    let ollamaThinkingFallbackUsed = false;
 
     function addStageUsage(target, usage) {
       for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens', 'costUsd']) {
@@ -116,6 +117,42 @@ function createAutomaticAiExecutor(dependencies) {
       return [...new Set(names)];
     }
 
+    function voteRetryContext(evaluation = null) {
+      if (taskType !== 'vote') return {};
+      const state = currentGameState();
+      const validIds = new Set((taskArtifact.validTargetIds ?? []).map(String));
+      const validNames = new Set(validVoteTargetNames());
+      const actor = (state?.players ?? []).find((player) => String(player?.id ?? '') === playerId) ?? null;
+      const nameForId = (id) => {
+        const normalizedId = String(id ?? '');
+        if (normalizedId === 'abstain' && state?.game?.rules?.vote?.abstentionAllowed) return '棄権';
+        if (!validIds.has(normalizedId)) return '';
+        return String((state?.players ?? []).find((player) => String(player?.id ?? '') === normalizedId)?.name ?? '').trim();
+      };
+      const rejectedActionAnswer = typeof evaluation?.candidateObject?.actionAnswer === 'string'
+        ? evaluation.candidateObject.actionAnswer.trim()
+        : '';
+      const intendedVoteName = nameForId(actor?.decisionState?.intendedVoteId);
+      const executionCandidateNames = [...new Set((actor?.decisionState?.executionCandidateIds ?? [])
+        .map(nameForId)
+        .filter((name) => name && validNames.has(name)))];
+      return { rejectedActionAnswer, intendedVoteName, executionCandidateNames };
+    }
+
+    function rejectedAttemptAudit(evaluation, attempt, candidatePhase) {
+      const issues = (evaluation?.issues ?? []).map((issue) => ({
+        code: String(issue?.code ?? 'VALIDATION_ERROR'),
+        category: String(issue?.category ?? 'validation'),
+        path: String(issue?.path ?? ''),
+      }));
+      return {
+        attempt: Math.max(1, Number(attempt ?? 1)),
+        phase: String(candidatePhase ?? 'normal'),
+        issueCodes: [...new Set(issues.map((issue) => issue.code))],
+        issues,
+      };
+    }
+
     async function refreshTaskArtifact({ forceFullHistory = false } = {}) {
       runControl.assertRunning(session);
       if (forceFullHistory) runtimeApi.scheduleFullPublicHistory?.([playerId]);
@@ -151,7 +188,6 @@ function createAutomaticAiExecutor(dependencies) {
     }) {
       let attemptCount = 0;
       let apiRetryIndex = 0;
-      let ollamaThinkingDisabledForRetry = false;
       const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, costUsd: 0 };
       const issues = [];
       let currentPrompt = prompt;
@@ -193,11 +229,7 @@ function createAutomaticAiExecutor(dependencies) {
             gameId: currentGameState()?.game?.id ?? '',
             retryIndex: attemptCount - 1,
             publicHistoryMode,
-            thinkingLevelOverride: taskType === 'vote'
-              && executorProfile.localServerPreset === 'ollama'
-              && ollamaThinkingDisabledForRetry
-              ? 'none'
-              : null,
+            thinkingLevelOverride: ollamaThinkingFallbackUsed ? 'none' : null,
             ...usageFlags,
           });
           runControl.assertRunning(session);
@@ -223,9 +255,9 @@ function createAutomaticAiExecutor(dependencies) {
           if (taskType === 'vote'
             && executorProfile.localServerPreset === 'ollama'
             && apiError.code === 'OLLAMA_THINKING_FINAL_RESPONSE_MISSING'
-            && !ollamaThinkingDisabledForRetry
+            && !ollamaThinkingFallbackUsed
             && attemptCount < callBudget) {
-            ollamaThinkingDisabledForRetry = true;
+            ollamaThinkingFallbackUsed = true;
             issues.push({ code: 'OLLAMA_VOTE_THINKING_DISABLED', message: '投票の再試行だけThinkingを無効化しました。' });
             continue;
           }
@@ -280,6 +312,7 @@ function createAutomaticAiExecutor(dependencies) {
       let totalAttempts = 0;
       const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, costUsd: 0 };
       const stageIssues = [];
+      const rejectedAttempts = [];
       while (totalAttempts < callBudget) {
         runControl.assertRunning(session);
         const initialCandidatePhase = phase === 'normal' || phase === initialPurpose;
@@ -315,13 +348,28 @@ function createAutomaticAiExecutor(dependencies) {
             ...(error?.issues ?? []),
             ...(error.evaluation?.issues ?? []),
           ];
+          error.rejectedAttempts = [...rejectedAttempts];
           throw error;
         }
         runControl.assertRunning(session);
         totalAttempts += result.attemptCount;
         addStageUsage(usage, result.usage);
         stageIssues.push(...result.issues);
-        const evaluation = runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: result.rawResponse });
+        let evaluation = runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: result.rawResponse });
+        const candidatePhase = phase === 'normal' || phase === initialPurpose ? 'normal' : phase;
+        if (taskType === 'vote' && candidatePhase === 'repair') {
+          const projectedCandidate = responseRetryPolicy.projectVoteRetryCandidate?.(evaluation.candidateObject);
+          if (projectedCandidate) {
+            const projectedRawResponse = JSON.stringify(projectedCandidate);
+            evaluation = runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: projectedRawResponse });
+            if (evaluation.ok) {
+              stageIssues.push({
+                code: 'VOTE_RETRY_RESPONSE_PROJECTED',
+                message: '投票形式修復ではactionAnswer以外のAI出力を採用しませんでした。',
+              });
+            }
+          }
+        }
         const repairIssues = (evaluation.autoRepair?.operations ?? []).map((item) => ({
           code: `AUTO_REPAIR_${String(item.code ?? 'APPLIED')}`,
           message: String(item.message ?? 'AI応答を決定的に自動補正しました。'),
@@ -335,8 +383,10 @@ function createAutomaticAiExecutor(dependencies) {
             attemptCount: totalAttempts,
             usage,
             issues: stageIssues,
+            rejectedAttempts,
           };
         }
+        rejectedAttempts.push(rejectedAttemptAudit(evaluation, totalAttempts, candidatePhase));
         const commitResult = {
           ok: false,
           message: evaluation.validation?.errors?.join('\n') ?? 'AI応答が不正です。',
@@ -348,6 +398,7 @@ function createAutomaticAiExecutor(dependencies) {
           commitResult,
           stateRefreshUsed,
           previousIssueSignature,
+          taskType,
         });
         if (decision.action === 'stop' || totalAttempts >= callBudget) {
           return {
@@ -358,6 +409,7 @@ function createAutomaticAiExecutor(dependencies) {
             attemptCount: totalAttempts,
             usage,
             issues: [...stageIssues, ...repairIssues, ...evaluation.issues],
+            rejectedAttempts,
           };
         }
         previousIssueSignature = decision.signature;
@@ -382,6 +434,7 @@ function createAutomaticAiExecutor(dependencies) {
             issues: validationIssues,
             taskType,
             validTargetNames: validVoteTargetNames(),
+            ...voteRetryContext(evaluation),
           });
         } else {
           phase = 'regenerate';
@@ -390,6 +443,7 @@ function createAutomaticAiExecutor(dependencies) {
             issues: validationIssues,
             taskType,
             validTargetNames: validVoteTargetNames(),
+            ...voteRetryContext(evaluation),
           });
         }
         runtimeApi.toast?.(`${playerName(playerId)}の${stage.stageId}候補を${responseRetryPolicy.phaseLabel(phase)}します。`, 'warning', {
@@ -399,7 +453,7 @@ function createAutomaticAiExecutor(dependencies) {
           source: 'ai-response-retry',
         });
       }
-      return { ok: false, rawResponse: failedResponse, attemptCount: totalAttempts, usage, issues: stageIssues };
+      return { ok: false, rawResponse: failedResponse, attemptCount: totalAttempts, usage, issues: stageIssues, rejectedAttempts };
     }
 
     async function requestFreeText({ stage, prompt, callBudget }) {

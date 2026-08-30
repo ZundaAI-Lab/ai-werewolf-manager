@@ -220,14 +220,14 @@ export function cloneGenerationRun(run, payload = {}) {
   if (!run) {
     const category = resolveAiTurnTaskCategory(payload.taskType);
     run = {
-      schemaVersion: 1, executionMode: 'manual', depth: 1, ownerProfileId: '', taskCategory: category,
+      schemaVersion: 2, executionMode: 'manual', depth: 1, ownerProfileId: '', taskCategory: category,
       normalCallCount: 1, totalCallCount: 0, finalStageId: 'direct',
-      stages: [{ stageId: 'direct', executorProfileId: '', status: 'accepted', attemptCount: 0, targetTextFields: [], skipReason: null, rawResponse: payload.rawResponse ?? '', fallbackUsed: false, issues: [], usage: {} }],
+      stages: [{ stageId: 'direct', executorProfileId: '', status: 'accepted', attemptCount: 0, targetTextFields: [], skipReason: null, rawResponse: payload.rawResponse ?? '', fallbackUsed: false, issues: [], rejectedAttempts: [], usage: {} }],
     };
   }
   const usageKeys = ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens'];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     executionMode: String(run.executionMode ?? 'automatic'),
     depth: Number(run.depth ?? 1),
     ownerProfileId: String(run.ownerProfileId ?? ''),
@@ -245,6 +245,16 @@ export function cloneGenerationRun(run, payload = {}) {
       rawResponse: String(stage.rawResponse ?? ''),
       fallbackUsed: Boolean(stage.fallbackUsed),
       issues: (stage.issues ?? []).map((item) => ({ code: String(item.code ?? ''), message: String(item.message ?? '') })),
+      rejectedAttempts: (stage.rejectedAttempts ?? []).map((attempt) => ({
+        attempt: Math.max(1, Math.trunc(Number(attempt?.attempt ?? 1))),
+        phase: String(attempt?.phase ?? 'normal'),
+        issueCodes: [...new Set((attempt?.issueCodes ?? []).map(String).filter(Boolean))],
+        issues: (attempt?.issues ?? []).map((issue) => ({
+          code: String(issue?.code ?? ''),
+          category: String(issue?.category ?? ''),
+          path: String(issue?.path ?? ''),
+        })),
+      })),
       usage: Object.fromEntries(usageKeys.map((key) => [key, Number(stage.usage?.[key] ?? 0)])),
     })),
   };

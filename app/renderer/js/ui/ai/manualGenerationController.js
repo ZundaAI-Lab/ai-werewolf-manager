@@ -1,6 +1,6 @@
 /**
  * 責務: 手動多段AI生成の計画解決、セッション署名、判断・客観分析・批判的検証・最終回答・発言化プロンプト、監査、回答検証から最終登録までの手動生成ワークフローを管理する。
- * 変更ルール: 中間処理でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ状態遷移を戻さない。analyze/critiqueは自由記述として扱い、後続参照と監査保存をそれぞれの安全上限へ制限して候補JSON検証へ流さない。renderは専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
+ * 変更ルール: 中間処理でゲーム状態を更新せず、最終候補だけをhostの正式登録境界へ渡す。AppUIへ状態遷移を戻さない。analyze/critiqueは自由記述として監査へ全文を保持し、後続参照だけ安全上限へ制限して候補JSON検証へ流さない。renderは専用anti-injection system指示を必ず付け、textPatchの受理条件はgenerationTextPatchServiceへ委譲して自動生成と一致させる。タスク署名変更時は旧セッションを再利用しない。
  */
 
 import { resolveGenerationPlan } from '../../services/generationDepthPolicy.js';
@@ -15,7 +15,7 @@ import {
 import { flattenGenerationStagePromptEnvelope, projectGenerationStagePromptEnvelope } from '../../prompts/stages/generationStageEnvelope.js';
 import { autoRepairIssues } from '../../prompts/response/responseAutoRepair.js';
 import { validateAndMergeGenerationTextPatch } from '../../services/generationTextPatchService.js';
-import { intermediateAuditTruncationIssue, intermediateReferenceTruncationIssue, limitGenerationIntermediateAudit, limitGenerationIntermediateReference } from '../../prompts/stages/generationIntermediateTextPolicy.js';
+import { intermediateReferenceTruncationIssue, limitGenerationIntermediateReference } from '../../prompts/stages/generationIntermediateTextPolicy.js';
 import { copyText, escapeHtml } from '../../shared/utils.js';
 import { composeManualAiPrompt } from '../../services/aiTaskService.js';
 
@@ -39,14 +39,7 @@ export function manualStageSystemInstruction(taskArtifact, stageId) {
 }
 export const ZERO_GENERATION_USAGE = Object.freeze({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 });
 export function manualStageAudit(stage, values = {}) {
-  const rawResponse = String(values.rawResponse ?? '');
-  const auditLimited = ['analyze', 'critique'].includes(stage.stageId)
-    ? limitGenerationIntermediateAudit(stage.stageId, rawResponse)
-    : { text: rawResponse, truncated: false };
-  const auditIssue = intermediateAuditTruncationIssue(stage.stageId, auditLimited);
-  const sourceIssues = Array.isArray(values.issues) ? values.issues : [];
-  const issues = [...sourceIssues, ...(auditIssue ? [auditIssue] : [])];
-  return { stageId: stage.stageId, executorProfileId: String(stage.executorProfileId ?? ''), status: String(values.status ?? ''), attemptCount: 0, targetTextFields: [...(values.targetTextFields ?? [])], skipReason: values.skipReason ?? null, rawResponse: auditLimited.text, fallbackUsed: Boolean(values.fallbackUsed), issues: issues.map((item) => ({ code: String(item?.code ?? 'MANUAL_STAGE_ERROR'), message: String(item?.message ?? item ?? '手動生成工程でエラーが発生しました。') })), usage: { ...ZERO_GENERATION_USAGE } };
+  return { stageId: stage.stageId, executorProfileId: String(stage.executorProfileId ?? ''), status: String(values.status ?? ''), attemptCount: 0, targetTextFields: [...(values.targetTextFields ?? [])], skipReason: values.skipReason ?? null, rawResponse: String(values.rawResponse ?? ''), fallbackUsed: Boolean(values.fallbackUsed), rejectedAttempts: [], issues: (values.issues ?? []).map((item) => ({ code: String(item?.code ?? 'MANUAL_STAGE_ERROR'), message: String(item?.message ?? item ?? '手動生成工程でエラーが発生しました。') })), usage: { ...ZERO_GENERATION_USAGE } };
 }
 
 export class ManualGenerationController {
@@ -73,7 +66,7 @@ export class ManualGenerationController {
     const plan = this.manualPlan(taskArtifact.playerId, taskArtifact.taskType);
     if (!plan || plan.depth !== 1 || plan.stages[0]?.stageId !== 'direct') return null;
     return {
-      schemaVersion: 1,
+      schemaVersion: 2,
       executionMode: 'manual',
       depth: 1,
       ownerProfileId: plan.ownerProfileId,
@@ -121,7 +114,7 @@ export class ManualGenerationController {
       evaluation: null,
       pendingFallback: null,
       generationRun: {
-        schemaVersion: 1,
+        schemaVersion: 2,
         executionMode: 'manual',
         depth: plan.depth,
         ownerProfileId: plan.ownerProfileId,

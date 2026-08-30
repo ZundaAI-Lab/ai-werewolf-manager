@@ -184,15 +184,18 @@ const GENERATION_RUN_KEYS = [
 ];
 const GENERATION_STAGE_KEYS = [
   'stageId', 'executorProfileId', 'status', 'attemptCount', 'targetTextFields',
-  'skipReason', 'rawResponse', 'fallbackUsed', 'issues', 'usage',
+  'skipReason', 'rawResponse', 'fallbackUsed', 'issues', 'rejectedAttempts', 'usage',
 ];
 const GENERATION_ISSUE_KEYS = ['code', 'message'];
+const GENERATION_REJECTED_ATTEMPT_KEYS = ['attempt', 'phase', 'issueCodes', 'issues'];
+const GENERATION_REJECTED_ISSUE_KEYS = ['code', 'category', 'path'];
+const GENERATION_RETRY_PHASES = new Set(['normal', 'repair', 'regenerate']);
 const GENERATION_USAGE_KEYS = ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens'];
 const GENERATION_SKIP_REASONS = new Set(['NO_APPLICABLE_TEXT_FIELD', 'ANALYSIS_UNAVAILABLE']);
 
 function validateGenerationRunShape(value, label, errors) {
   if (!exactKeys(value, GENERATION_RUN_KEYS, label, errors)) return;
-  if (value.schemaVersion !== 1) errors.push(`${label}.schemaVersionが不正です。`);
+  if (value.schemaVersion !== 2) errors.push(`${label}.schemaVersionが不正です。`);
   if (!['automatic', 'manual'].includes(value.executionMode)) errors.push(`${label}.executionModeが不正です。`);
   if (![1, 2, 3, 4].includes(value.depth)) errors.push(`${label}.depthが不正です。`);
   if (typeof value.ownerProfileId !== 'string') errors.push(`${label}.ownerProfileIdが文字列ではありません。`);
@@ -214,6 +217,20 @@ function validateGenerationRunShape(value, label, errors) {
     validateObjectArray(stage.issues, `${stageLabel}.issues`, stageErrors, (item, issueLabel, issueErrors) => {
       if (!exactKeys(item, GENERATION_ISSUE_KEYS, issueLabel, issueErrors)) return;
       if (typeof item.code !== 'string' || typeof item.message !== 'string') issueErrors.push(`${issueLabel}が文字列ではありません。`);
+    });
+    validateObjectArray(stage.rejectedAttempts, `${stageLabel}.rejectedAttempts`, stageErrors, (attempt, attemptLabel, attemptErrors) => {
+      if (!exactKeys(attempt, GENERATION_REJECTED_ATTEMPT_KEYS, attemptLabel, attemptErrors)) return;
+      if (!Number.isInteger(attempt.attempt) || attempt.attempt < 1) attemptErrors.push(`${attemptLabel}.attemptが1以上の整数ではありません。`);
+      if (!GENERATION_RETRY_PHASES.has(attempt.phase)) attemptErrors.push(`${attemptLabel}.phaseが不正です。`);
+      if (!Array.isArray(attempt.issueCodes) || attempt.issueCodes.some((code) => typeof code !== 'string' || !code)) {
+        attemptErrors.push(`${attemptLabel}.issueCodesが不正です。`);
+      }
+      validateObjectArray(attempt.issues, `${attemptLabel}.issues`, attemptErrors, (item, issueLabel, issueErrors) => {
+        if (!exactKeys(item, GENERATION_REJECTED_ISSUE_KEYS, issueLabel, issueErrors)) return;
+        if (typeof item.code !== 'string' || typeof item.category !== 'string' || typeof item.path !== 'string') {
+          issueErrors.push(`${issueLabel}が不正です。`);
+        }
+      });
     });
     if (exactKeys(stage.usage, GENERATION_USAGE_KEYS, `${stageLabel}.usage`, stageErrors)) {
       for (const key of GENERATION_USAGE_KEYS) {

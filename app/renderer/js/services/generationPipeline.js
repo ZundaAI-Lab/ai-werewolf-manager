@@ -1,11 +1,11 @@
 /**
  * 責務: 生成計画に従い、既存の直接生成、判断、客観分析、批判的検証、最終回答、キャラクター発言化を実行し、最終候補と工程監査情報を返す。
- * 変更ルール: ゲーム状態を直接更新せず、API通信は注入関数へ委譲する。decide/finalizeだけが完成候補JSONを生成し、analyze/critiqueは自由記述を一時参照情報として保持する。renderはgenerationTextPatchServiceを唯一の適用入口とし、確定済みのゲーム判断を変更しない。analyze/critique失敗は後続候補生成を妨げず監査へ記録し、analyze失敗時はcritiqueを省略する。自由記述はgenerationIntermediateTextPolicyの後続参照上限と監査保存上限を別々に適用し、外部LLM応答を状態へ無制限に保持しない。将来工程の最低1呼び出しを予約し、前段再試行が後段を枯渇させない。
+ * 変更ルール: ゲーム状態を直接更新せず、API通信は注入関数へ委譲する。decide/finalizeだけが完成候補JSONを生成し、analyze/critiqueは自由記述を一時参照情報として保持する。renderはgenerationTextPatchServiceを唯一の適用入口とし、確定済みのゲーム判断を変更しない。analyze/critique失敗は後続候補生成を妨げず監査へ記録し、analyze失敗時はcritiqueを省略する。完成候補の検証不合格は失敗生回答を複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけをrejectedAttemptsへ保持する。自由記述の元回答は監査へ保持し、後続参照だけgenerationIntermediateTextPolicyの安全上限へ制限する。将来工程の最低1呼び出しを予約し、前段再試行が後段を枯渇させない。
  */
 
 import { validateAndMergeGenerationTextPatch } from './generationTextPatchService.js';
 import { autoRepairIssues } from '../prompts/response/responseAutoRepair.js';
-import { intermediateAuditTruncationIssue, intermediateReferenceTruncationIssue, limitGenerationIntermediateAudit, limitGenerationIntermediateReference } from '../prompts/stages/generationIntermediateTextPolicy.js';
+import { intermediateReferenceTruncationIssue, limitGenerationIntermediateReference } from '../prompts/stages/generationIntermediateTextPolicy.js';
 
 const ZERO_USAGE = Object.freeze({ inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 });
 
@@ -23,13 +23,23 @@ function normalizeIssues(issues) {
   }));
 }
 
+function normalizeRejectedAttempts(attempts) {
+  return (Array.isArray(attempts) ? attempts : []).map((attempt) => {
+    const issues = (Array.isArray(attempt?.issues) ? attempt.issues : []).map((issue) => ({
+      code: String(issue?.code ?? 'VALIDATION_ERROR'),
+      category: String(issue?.category ?? 'validation'),
+      path: String(issue?.path ?? ''),
+    }));
+    return {
+      attempt: Math.max(1, Math.trunc(Number(attempt?.attempt ?? 1))),
+      phase: String(attempt?.phase ?? 'normal'),
+      issueCodes: [...new Set((attempt?.issueCodes ?? issues.map((issue) => issue.code)).map(String).filter(Boolean))],
+      issues,
+    };
+  });
+}
+
 function stageAudit(stage, values = {}) {
-  const rawResponse = String(values.rawResponse ?? '');
-  const auditLimited = ['analyze', 'critique'].includes(stage.stageId)
-    ? limitGenerationIntermediateAudit(stage.stageId, rawResponse)
-    : { text: rawResponse, truncated: false };
-  const auditIssue = intermediateAuditTruncationIssue(stage.stageId, auditLimited);
-  const sourceIssues = Array.isArray(values.issues) ? values.issues : [];
   return {
     stageId: stage.stageId,
     executorProfileId: String(stage.executorProfileId ?? ''),
@@ -37,9 +47,10 @@ function stageAudit(stage, values = {}) {
     attemptCount: Number(values.attemptCount ?? 0),
     targetTextFields: [...(values.targetTextFields ?? [])],
     skipReason: values.skipReason ?? null,
-    rawResponse: auditLimited.text,
+    rawResponse: String(values.rawResponse ?? ''),
     fallbackUsed: Boolean(values.fallbackUsed),
-    issues: normalizeIssues([...sourceIssues, ...(auditIssue ? [auditIssue] : [])]),
+    issues: normalizeIssues(values.issues),
+    rejectedAttempts: normalizeRejectedAttempts(values.rejectedAttempts),
     usage: normalizeUsage(values.usage),
   };
 }
@@ -53,7 +64,7 @@ function sumUsage(stages) {
 
 function generationRunSnapshot(plan, stages, totalCallCount, finalStageId) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     executionMode: 'automatic',
     depth: plan.depth,
     ownerProfileId: plan.ownerProfileId,
@@ -108,6 +119,7 @@ async function runDirectGeneration({
       rawResponse,
       fallbackUsed: true,
       issues: cause?.issues ?? [{ code: 'STAGE_API_ERROR', message: cause?.message ?? String(cause) }],
+      rejectedAttempts: cause?.rejectedAttempts,
       usage: cause?.usage,
     });
     const error = cause instanceof Error ? cause : new Error(String(cause ?? 'AI生成APIでエラーが発生しました。'));
@@ -128,6 +140,7 @@ async function runDirectGeneration({
       rawResponse: response?.sourceRawResponse ?? response?.rawResponse,
       fallbackUsed: true,
       issues: response?.issues ?? evaluation?.issues,
+      rejectedAttempts: response?.rejectedAttempts,
       usage: response?.usage,
     });
     const error = new Error(response?.message || evaluation?.issues?.map((item) => item.message).join('\n') || `${stage.stageId}工程で有効候補を取得できませんでした。`);
@@ -147,6 +160,7 @@ async function runDirectGeneration({
     attemptCount: response.attemptCount,
     rawResponse: response.sourceRawResponse ?? response.rawResponse,
     issues: [...(response.issues ?? []), ...autoRepairIssues(evaluation.autoRepair)],
+    rejectedAttempts: response.rejectedAttempts,
     usage: response.usage,
   }));
 
@@ -318,6 +332,7 @@ export async function runGenerationPipeline({
           rawResponse,
           fallbackUsed: true,
           issues: cause?.issues ?? [{ code: 'STAGE_API_ERROR', message: cause?.message ?? String(cause) }],
+          rejectedAttempts: cause?.rejectedAttempts,
           usage: cause?.usage,
         });
         const error = cause instanceof Error ? cause : new Error(String(cause ?? 'AI生成APIでエラーが発生しました。'));
@@ -338,6 +353,7 @@ export async function runGenerationPipeline({
           rawResponse: response?.sourceRawResponse ?? response?.rawResponse,
           fallbackUsed: true,
           issues: response?.issues ?? evaluation?.issues,
+          rejectedAttempts: response?.rejectedAttempts,
           usage: response?.usage,
         });
         const error = new Error(response?.message || evaluation?.issues?.map((item) => item.message).join('\n') || `${stage.stageId}で有効候補を取得できませんでした。`);
@@ -357,6 +373,7 @@ export async function runGenerationPipeline({
         attemptCount: response.attemptCount,
         rawResponse: response.sourceRawResponse ?? response.rawResponse,
         issues: [...(response.issues ?? []), ...autoRepairIssues(evaluation.autoRepair)],
+        rejectedAttempts: response.rejectedAttempts,
         usage: response.usage,
       }));
       continue;

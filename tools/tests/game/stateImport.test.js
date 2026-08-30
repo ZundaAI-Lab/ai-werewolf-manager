@@ -205,29 +205,32 @@ function zeroUsage() {
 
 function generationRunWithSkippedStages() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     executionMode: 'automatic',
     depth: 4,
     ownerProfileId: 'missing-owner-profile',
     taskCategory: 'speech',
     normalCallCount: 3,
-    totalCallCount: 2,
+    totalCallCount: 3,
     finalStageId: 'finalize',
     stages: [
       {
         stageId: 'analyze', executorProfileId: 'missing-draft-profile', status: 'accepted', attemptCount: 1,
         targetTextFields: [], skipReason: null, rawResponse: '監査対象の客観分析',
-        fallbackUsed: false, issues: [], usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 120 },
+        fallbackUsed: false, issues: [], rejectedAttempts: [], usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 120 },
       },
       {
         stageId: 'critique', executorProfileId: 'missing-proofread-profile', status: 'fallback', attemptCount: 0,
         targetTextFields: [], skipReason: null, rawResponse: '',
-        fallbackUsed: true, issues: [{ code: 'STAGE_API_ERROR', message: '監査用の検証失敗' }], usage: zeroUsage(),
+        fallbackUsed: true, issues: [{ code: 'STAGE_API_ERROR', message: '監査用の検証失敗' }], rejectedAttempts: [], usage: zeroUsage(),
       },
       {
-        stageId: 'finalize', executorProfileId: 'missing-render-profile', status: 'accepted', attemptCount: 1,
+        stageId: 'finalize', executorProfileId: 'missing-render-profile', status: 'accepted', attemptCount: 2,
         targetTextFields: [], skipReason: null, rawResponse: '{"publicSpeech":"監査対象"}',
-        fallbackUsed: false, issues: [], usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 120 },
+        fallbackUsed: false, issues: [], rejectedAttempts: [{
+          attempt: 1, phase: 'normal', issueCodes: ['JSON_UNTERMINATED_STRING'],
+          issues: [{ code: 'JSON_UNTERMINATED_STRING', category: 'syntax', path: '' }],
+        }], usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 120 },
       },
     ],
   };
@@ -260,7 +263,7 @@ test('客観分析を取得できない場合のcritique省略状態を保存・
   generationRun.stages[1] = {
     stageId: 'critique', executorProfileId: 'missing-proofread-profile', status: 'skipped', attemptCount: 0,
     targetTextFields: [], skipReason: 'ANALYSIS_UNAVAILABLE', rawResponse: '',
-    fallbackUsed: false, issues: [{ code: 'ANALYSIS_UNAVAILABLE', message: '客観分析を取得できなかったため、批判的検証を省略しました。' }], usage: zeroUsage(),
+    fallbackUsed: false, issues: [{ code: 'ANALYSIS_UNAVAILABLE', message: '客観分析を取得できなかったため、批判的検証を省略しました。' }], rejectedAttempts: [], usage: zeroUsage(),
   };
   const response = recordAiSpeech(raw, {
     playerId: raw.players[0].id,

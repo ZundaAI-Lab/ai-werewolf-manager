@@ -312,20 +312,20 @@ test('生成工程の中間回答はAIターン監査だけに保存し公開イ
     promptText: '元の本番プロンプト',
     rawResponse: '{"publicSpeech":"最終登録された公開本文です。"}',
     generationRun: {
-      schemaVersion: 1, executionMode: 'automatic', depth: 2, ownerProfileId: 'owner-profile',
+      schemaVersion: 2, executionMode: 'automatic', depth: 2, ownerProfileId: 'owner-profile',
       taskCategory: 'speech', normalCallCount: 2, totalCallCount: 2, finalStageId: 'render',
       stages: [
         {
           stageId: 'decide', executorProfileId: 'owner-profile', status: 'accepted', attemptCount: 1,
           targetTextFields: [], skipReason: null, rawResponse: `{"publicSpeech":"${intermediateSecret}"}`,
-          fallbackUsed: false, issues: [],
+          fallbackUsed: false, issues: [], rejectedAttempts: [],
           usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, totalTokens: 15 },
         },
         {
           stageId: 'render', executorProfileId: 'render-profile', status: 'applied', attemptCount: 1,
           targetTextFields: ['publicSpeech'], skipReason: null,
           rawResponse: '{"textPatch":{"publicSpeech":"最終登録された公開本文です。"}}',
-          fallbackUsed: false, issues: [],
+          fallbackUsed: false, issues: [], rejectedAttempts: [],
           usage: { inputTokens: 8, outputTokens: 4, cachedInputTokens: 0, totalTokens: 12 },
         },
       ],

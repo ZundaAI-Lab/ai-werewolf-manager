@@ -31,9 +31,9 @@ function parseJsonValueStrict(text, operations, { requireObject = false } = {}) 
   let index = 0;
   let depth = 0;
 
-  function fail(message) {
+  function fail(message, code = 'JSON_UNEXPECTED_TOKEN') {
     const error = new SyntaxError(`${message}（位置${index + 1}）`);
-    error.code = 'INVALID_JSON';
+    error.code = code;
     throw error;
   }
 
@@ -80,7 +80,7 @@ function parseJsonValueStrict(text, operations, { requireObject = false } = {}) 
       if (char < ' ') fail('文字列内に制御文字があります');
       index += 1;
     }
-    fail('文字列が閉じられていません');
+    fail('文字列が閉じられていません', 'JSON_UNTERMINATED_STRING');
   }
 
   function parseNumber() {
@@ -122,7 +122,7 @@ function parseJsonValueStrict(text, operations, { requireObject = false } = {}) 
         index += 1;
         skipWhitespace();
       }
-      fail('配列が閉じられていません');
+      fail('配列が閉じられていません', 'JSON_UNCLOSED_ARRAY');
     } finally {
       leaveNesting();
     }
@@ -142,7 +142,7 @@ function parseJsonValueStrict(text, operations, { requireObject = false } = {}) 
         skipWhitespace();
         const key = parseString();
         const keyPath = path ? `${path}.${key}` : key;
-        if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`);
+        if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`, 'INVALID_JSON');
         skipWhitespace();
         if (text[index] !== ':') fail('オブジェクトのキーと値の区切りがありません');
         index += 1;
@@ -170,7 +170,7 @@ function parseJsonValueStrict(text, operations, { requireObject = false } = {}) 
         if (text[index] !== ',') fail('オブジェクト項目の区切りがありません');
         index += 1;
       }
-      fail('オブジェクトが閉じられていません');
+      fail('オブジェクトが閉じられていません', 'JSON_UNCLOSED_OBJECT');
     } finally {
       leaveNesting();
     }
@@ -192,7 +192,7 @@ function parseJsonValueStrict(text, operations, { requireObject = false } = {}) 
   skipWhitespace();
   const value = parseValue('');
   skipWhitespace();
-  if (index !== text.length) fail('JSONオブジェクトの後ろに不要な文章があります');
+  if (index !== text.length) fail('JSONオブジェクトの後ろに不要な文章があります', 'JSON_TRAILING_CONTENT');
   if (requireObject && !isPlainObject(value)) {
     const error = new TypeError('AI応答がJSONオブジェクトではありません。');
     error.code = 'INVALID_JSON_OBJECT';

@@ -221,7 +221,7 @@ function createAiTurn({ id, playerId, promptText, rawResponse }) {
     playerId,
     timestamp: '2026-08-02T00:00:00.000Z',
     generationRun: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       executionMode: 'manual',
       depth: 1,
       ownerProfileId: '',
@@ -239,6 +239,7 @@ function createAiTurn({ id, playerId, promptText, rawResponse }) {
         rawResponse,
         fallbackUsed: false,
         issues: [],
+        rejectedAttempts: [],
         usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 },
       }],
     },

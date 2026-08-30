@@ -1,6 +1,6 @@
 /**
  * 責務: AI候補の検証、正常項目保持、必須項目代替、正式runtime登録を所有する。
- * 変更ルール: ゲーム規則を独自実装せず、store・AI入力キャッシュ・プロンプト状態・正式runtime実行等の必要依存だけを使用する。各runtime登録にはそのタスク契約が所有する項目だけを渡し、共通生成情報から無関係な項目を流入させない。通常発言は検証済みpublicSpeechを登録し、AI生成失敗時の自動代替だけを発言フォールバックとして扱う。投票・襲撃の対象代替は選択戦略と対象をoverride監査情報へ必ず記録する。AppUI全体へ依存せず、処理本体をFacadeへ戻さない。
+ * 変更ルール: ゲーム規則を独自実装せず、store・AI入力キャッシュ・プロンプト状態・正式runtime実行等の必要依存だけを使用する。各runtime登録にはそのタスク契約が所有する項目だけを渡し、共通生成情報から無関係な項目を流入させない。通常発言は検証済みpublicSpeechを登録し、AI生成失敗時の自動代替だけを発言フォールバックとして扱う。投票・襲撃の対象代替は選択戦略と対象をoverride監査情報へ必ず記録し、生成工程の不採用試行理由は失敗生回答なしでfallback監査へ引き継ぐ。AppUI全体へ依存せず、処理本体をFacadeへ戻さない。
  */
 
 // @ts-check
@@ -109,8 +109,18 @@ export function createAiTaskCommitController({
       const fallbackSummary = fallbackFields.length
         ? fallbackFields.map((item) => `${item.key}:${item.strategy}`).join(', ')
         : 'row-fallback';
+      const rejectedAttempts = sourceStages.flatMap((item) => item?.rejectedAttempts ?? []).map((attempt) => ({
+        attempt: Math.max(1, Math.trunc(Number(attempt?.attempt ?? 1))),
+        phase: String(attempt?.phase ?? 'normal'),
+        issueCodes: [...new Set((attempt?.issueCodes ?? []).map(String).filter(Boolean))],
+        issues: (attempt?.issues ?? []).map((issue) => ({
+          code: String(issue?.code ?? ''),
+          category: String(issue?.category ?? ''),
+          path: String(issue?.path ?? ''),
+        })),
+      }));
       return {
-        schemaVersion: 1,
+        schemaVersion: 2,
         executionMode: 'automatic',
         depth: plan?.depth ?? 1,
         ownerProfileId: String(plan?.ownerProfileId ?? ''),
@@ -131,6 +141,7 @@ export function createAiTaskCommitController({
             code: fallbackFields.length ? 'REQUIRED_FIELD_FALLBACK_APPLIED' : 'ROW_FALLBACK_APPLIED',
             message: `${String(reason ?? 'AI生成失敗')} / ${fallbackSummary}`,
           }],
+          rejectedAttempts,
           usage,
         }],
       };
@@ -152,7 +163,7 @@ export function createAiTaskCommitController({
       if (fallbackCandidate.ok) {
         const fallbackRun = _automaticFallbackGenerationRun(
           taskArtifact,
-          evaluation.originalRawResponse ?? rawResponse,
+          fallbackCandidate.rawResponse,
           reason,
           fallbackCandidate.fallbackFields,
           generationRun,
@@ -188,7 +199,7 @@ export function createAiTaskCommitController({
       const validation = evaluation?.validation ?? {};
       const fallbackRun = _automaticFallbackGenerationRun(
         taskArtifact,
-        evaluation?.originalRawResponse ?? rawResponse,
+        '',
         reason,
         [],
         generationRun,
@@ -196,7 +207,7 @@ export function createAiTaskCommitController({
       const fallbackWarning = `自動代替: ${String(reason ?? '').trim() || 'AI生成失敗'}`;
       const common = {
         playerId,
-        rawResponse: String(evaluation?.effectiveRawResponse ?? rawResponse ?? ''),
+        rawResponse: '',
         promptText: taskArtifact.text,
         promptFingerprint: taskArtifact.fingerprint,
         promptMode: taskArtifact.promptMode,

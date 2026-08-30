@@ -214,7 +214,10 @@ test('必須項目欠落・未知キー・重複キー・JSON外文章を拒否�
 
   const invalid = parseAiResponse('公開発言だけを返します。', 'public-only');
   assert.equal(invalid.diagnostics.errors.some((error) => error.includes('JSONとして解析できません')), true);
-  assert.equal(invalid.diagnostics.issues[0].code, 'INVALID_JSON');
+  assert.equal(invalid.diagnostics.issues[0].code, 'JSON_UNEXPECTED_TOKEN');
+  assert.equal(trailing.diagnostics.issues[0].code, 'JSON_TRAILING_CONTENT');
+  const unterminated = parseAiResponse('{"publicSpeech":"未完了}', 'public-only');
+  assert.equal(unterminated.diagnostics.issues[0].code, 'JSON_UNTERMINATED_STRING');
 
   for (const key of ['__proto__', 'constructor', 'prototype']) {
     const forbiddenKey = parseAiResponse(`{"publicSpeech":"本文","${key}":{"injected":true}}`, 'public-only');

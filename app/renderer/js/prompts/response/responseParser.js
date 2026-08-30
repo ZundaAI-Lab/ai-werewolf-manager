@@ -35,8 +35,10 @@ function parseStrictJson(text) {
   let depth = 0;
   const duplicateErrors = [];
 
-  function fail(message) {
-    throw new SyntaxError(`${message}（位置${index + 1}）`);
+  function fail(message, code = 'JSON_UNEXPECTED_TOKEN') {
+    const error = new SyntaxError(`${message}（位置${index + 1}）`);
+    error.code = code;
+    throw error;
   }
 
   function enterNesting() {
@@ -77,7 +79,7 @@ function parseStrictJson(text) {
       if (char < ' ') fail('文字列内に制御文字があります');
       index += 1;
     }
-    fail('文字列が閉じられていません');
+    fail('文字列が閉じられていません', 'JSON_UNTERMINATED_STRING');
   }
 
   function parseNumber() {
@@ -119,7 +121,7 @@ function parseStrictJson(text) {
         index += 1;
         skipWhitespace();
       }
-      fail('配列が閉じられていません');
+      fail('配列が閉じられていません', 'JSON_UNCLOSED_ARRAY');
     } finally {
       leaveNesting();
     }
@@ -140,7 +142,7 @@ function parseStrictJson(text) {
         skipWhitespace();
         const key = parseString();
         const keyPath = path ? `${path}.${key}` : key;
-        if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`);
+        if (FORBIDDEN_OBJECT_KEYS.has(key)) fail(`${keyPath}はオブジェクトキーに使用できません`, 'INVALID_JSON');
         if (seen.has(key)) duplicateErrors.push(`${keyPath}が重複しています。`);
         seen.add(key);
         skipWhitespace();
@@ -155,7 +157,7 @@ function parseStrictJson(text) {
         if (text[index] !== ',') fail('オブジェクト項目の区切りがありません');
         index += 1;
       }
-      fail('オブジェクトが閉じられていません');
+      fail('オブジェクトが閉じられていません', 'JSON_UNCLOSED_OBJECT');
     } finally {
       leaveNesting();
     }
@@ -177,7 +179,7 @@ function parseStrictJson(text) {
   skipWhitespace();
   const value = parseValue('');
   skipWhitespace();
-  if (index !== text.length) fail('JSONオブジェクトの後ろに不要な文章があります');
+  if (index !== text.length) fail('JSONオブジェクトの後ろに不要な文章があります', 'JSON_TRAILING_CONTENT');
   return { value, duplicateErrors };
 }
 
@@ -648,9 +650,7 @@ export function parseAiResponse(rawResponse, mode) {
     duplicateErrors = parsedJson.duplicateErrors;
   } catch (error) {
     const result = createParseResult(value, [`AI応答をJSONとして解析できません。${error.message}`]);
-    if (error?.code === 'JSON_TOO_DEEP' && result.diagnostics.issues[0]) {
-      result.diagnostics.issues[0].code = 'JSON_TOO_DEEP';
-    }
+    if (error?.code && result.diagnostics.issues[0]) result.diagnostics.issues[0].code = String(error.code);
     return result;
   }
   const errors = [...duplicateErrors];
