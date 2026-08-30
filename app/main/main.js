@@ -213,6 +213,8 @@ function registerIpc() {
   trustedIpc.handle('desktop:save-appearance', (_event, appearance) => appearanceStore.savePublicSettings(appearance));
   trustedIpc.handle('desktop:accept-external-data-notice', (_event, version) => privacyNoticeStore.accept(version));
   trustedIpc.handle('desktop:save-settings', (_event, settings) => settingsStore.savePublicSettings(settings));
+  trustedIpc.handle('desktop:save-settings-with-profile-deletion', (_event, settings, profileId) => settingsStore.savePublicSettings(settings, { allowedProfileDeletionIds: [String(profileId ?? '')] }));
+  trustedIpc.handle('desktop:save-assignments', (_event, assignments) => settingsStore.saveAssignments(assignments));
   trustedIpc.handle('desktop:get-usage-summary', () => settingsStore.getUsageSummary());
   trustedIpc.handle('desktop:reset-usage-summary', (_event, scope) => settingsStore.resetUsageSummary(scope));
   trustedIpc.handle('desktop:reset-profile-usage', (_event, profileId) => settingsStore.resetUsageSummary('profile', profileId));

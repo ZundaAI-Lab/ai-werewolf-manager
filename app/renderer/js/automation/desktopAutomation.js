@@ -99,6 +99,14 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
       fallbackState.settings = structuredClone(settings);
       return structuredClone(fallbackState.settings);
     },
+    saveSettingsWithProfileDeletion: async (settings, _profileId) => {
+      fallbackState.settings = structuredClone(settings);
+      return structuredClone(fallbackState.settings);
+    },
+    saveAssignments: async (assignments) => {
+      fallbackState.settings = { ...fallbackState.settings, assignments: structuredClone(assignments) };
+      return structuredClone(fallbackState.settings);
+    },
     getUsageSummary: async () => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }),
     resetUsageSummary: async () => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }),
     resetProfileUsage: async () => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }),
@@ -124,6 +132,7 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
 
   controller = {
     settings: defaultSettings(),
+    settingsLoadState: bridge.isDesktop ? 'pending' : 'loaded',
     running: false,
     stepping: false,
     runSession: null,
@@ -534,7 +543,20 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
       liveProgressController.refreshLiveView();
     });
 
-    controller.settings = await bridge.getSettings().catch(() => defaultSettings());
+    if (bridge.isDesktop) {
+      try {
+        controller.settings = await bridge.getSettings();
+        controller.settingsLoadState = 'loaded';
+      } catch (error) {
+        controller.settingsLoadState = 'failed';
+        const wrapped = new Error(`AI設定の読み込みに失敗したため、既定設定への置換保存を防ぐ目的でAI管理の初期化を停止しました: ${error?.message ?? error}`);
+        wrapped.code = 'SETTINGS_INITIAL_LOAD_FAILED';
+        throw wrapped;
+      }
+    } else {
+      controller.settings = await bridge.getSettings();
+      controller.settingsLoadState = 'loaded';
+    }
     const settingsStartupNotices = bridge.isDesktop && typeof bridge.getSettingsStartupNotices === 'function'
       ? await bridge.getSettingsStartupNotices().catch(() => [])
       : [];

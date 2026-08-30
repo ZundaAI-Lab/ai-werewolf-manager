@@ -1,6 +1,6 @@
 /**
- * 責務: 現行ゲームJSONのschema境界、現在仕様の構造・参照検証、イベント履歴を一次情報とする派生状態再構築を検証する。
- * 変更ルール: 旧schema救済、欠落項目補完、未知項目除去、壊れた履歴の黙示除外をテスト契約として固定しない。現行schema受入、未来/無版schema拒否、現在必要な構造の厳格検証、決定的な派生状態再構築だけを確認する。
+ * 責務: 現行ゲームJSONのschema境界、正式リリース済みゲームJSONの一方向移行、現在仕様の構造・参照検証、イベント履歴を一次情報とする派生状態再構築を検証する。
+ * 変更ルール: v1.0.3以降の正式保存ゲームをfixtureとして保持し、AI履歴・投票・内部判断・Undo/Redo/復元ポイントを失う変更を禁止する。現行schema受入、未来/無版schema拒否、現在必要な構造の厳格検証、決定的な派生状態再構築も継続する。
  */
 
 import test from 'node:test';
@@ -203,6 +203,37 @@ function zeroUsage() {
   return { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 };
 }
 
+
+function legacyGenerationRunV1() {
+  return {
+    schemaVersion: 1,
+    executionMode: 'automatic',
+    depth: 4,
+    ownerProfileId: 'legacy-owner-profile',
+    taskCategory: 'speech',
+    normalCallCount: 3,
+    totalCallCount: 3,
+    finalStageId: 'proofread',
+    stages: [
+      {
+        stageId: 'draft', executorProfileId: 'legacy-draft-profile', status: 'accepted', attemptCount: 1,
+        targetTextFields: [], skipReason: null, rawResponse: '{"publicSpeech":"下書き"}', fallbackUsed: false,
+        issues: [], usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 15 },
+      },
+      {
+        stageId: 'render', executorProfileId: 'legacy-render-profile', status: 'applied', attemptCount: 1,
+        targetTextFields: ['publicSpeech'], skipReason: null, rawResponse: '{"publicSpeech":"発言化"}', fallbackUsed: false,
+        issues: [], usage: { inputTokens: 8, outputTokens: 4, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 12 },
+      },
+      {
+        stageId: 'proofread', executorProfileId: 'legacy-proofread-profile', status: 'applied', attemptCount: 1,
+        targetTextFields: ['publicSpeech'], skipReason: null, rawResponse: '{"publicSpeech":"校正済み"}', fallbackUsed: false,
+        issues: [], usage: { inputTokens: 6, outputTokens: 3, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 9 },
+      },
+    ],
+  };
+}
+
 function generationRunWithSkippedStages() {
   return {
     schemaVersion: 2,
@@ -235,6 +266,62 @@ function generationRunWithSkippedStages() {
     ],
   };
 }
+
+
+test('v1.0.3ゲームJSONをgenerationRunと履歴を保持して現行schemaへ移行できる', () => {
+  const raw = runningDiscussionStateForGenerationAudit();
+  const currentRun = generationRunWithSkippedStages();
+  const response = recordAiSpeech(raw, {
+    playerId: raw.players[0].id,
+    content: '旧版ゲーム移行確認用の発言です。',
+    coOperation: { action: 'none', roleId: 'none' },
+    promptText: 'v1.0.3 prompt',
+    rawResponse: '{"publicSpeech":"旧版ゲーム移行確認用の発言です。"}',
+    generationRun: currentRun,
+  });
+  assert.equal(response.ok, true, response.message);
+  raw.aiTurns.at(-1).generationRun = legacyGenerationRunV1();
+  raw.schemaVersion = 1;
+  raw.runtime.schemaVersion = 1;
+  raw.appVersion = '1.0.3';
+  raw.runtime.appVersion = '1.0.3';
+  const historyState = structuredClone(raw);
+  historyState.undoStack = [];
+  historyState.redoStack = [];
+  historyState.restorePoints = [];
+  raw.undoStack = [createHistoryEntry('legacy-undo', historyState)];
+
+  const prepared = prepareImportedState(structuredClone(raw));
+  const checked = validateImportedState(prepared);
+  assert.equal(checked.ok, true, checked.errors.join('\n'));
+  assert.equal(prepared.schemaVersion, SCHEMA_VERSION);
+  assert.equal(prepared.aiTurns.at(-1).generationRun.schemaVersion, 2);
+  assert.deepEqual(prepared.aiTurns.at(-1).generationRun.stages.map((stage) => stage.stageId), ['decide', 'render', 'render']);
+  assert.equal(prepared.aiTurns.at(-1).generationRun.finalStageId, 'render');
+  assert.deepEqual(prepared.aiTurns.at(-1).generationRun.stages.map((stage) => stage.rejectedAttempts), [[], [], []]);
+  assert.equal(prepared.aiTurns.at(-1).generationRun.stages[2].rawResponse, '{"publicSpeech":"校正済み"}');
+  assert.equal(prepared.undoStack.length, 1);
+  assert.equal(prepared.undoStack[0].state.aiTurns.at(-1).generationRun.schemaVersion, 2);
+});
+
+test('公開済みv1.0.4のroot schema 1 + generationRun schema 2ゲームJSONもそのまま救済する', () => {
+  const raw = runningDiscussionStateForGenerationAudit();
+  const generationRun = generationRunWithSkippedStages();
+  const response = recordAiSpeech(raw, {
+    playerId: raw.players[0].id,
+    content: 'v1.0.4保存互換確認です。',
+    coOperation: { action: 'none', roleId: 'none' },
+    promptText: 'v1.0.4 prompt',
+    rawResponse: '{"publicSpeech":"v1.0.4保存互換確認です。"}',
+    generationRun,
+  });
+  assert.equal(response.ok, true, response.message);
+  raw.schemaVersion = 1;
+  raw.runtime.schemaVersion = 1;
+  const prepared = prepareImportedState(structuredClone(raw));
+  assert.equal(prepared.schemaVersion, SCHEMA_VERSION);
+  assert.deepEqual(prepared.aiTurns.at(-1).generationRun, generationRun);
+});
 
 test('generationRunをexact shapeのまま保存・再読込し現在存在しない工程担当IDも許可する', () => {
   const raw = runningDiscussionStateForGenerationAudit();

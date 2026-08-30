@@ -12,7 +12,7 @@
  * - migration前ファイルはpre-schemaバックアップを残す。
  * - 保存済みendpoint文字列の復元と現在の通信ポリシー適合判定を分離する。読込時は現行schemaのendpointを切り詰めず保持し、新規追加・provider変更・endpoint変更の保存境界では文字数上限を含めて拒否し、実通信直前はendpointPolicyで再検証する。
  * - Rendererからの現行入力は保存読込検証と分離してsanitizeする。
- * - 設定更新はtmp本体をfsyncしてrenameし、対応環境では親ディレクトリもfsyncする原子的保存の成功後だけメモリへ反映する。読込不能な既存設定は一意名へ退避してから既定値へ切り替え、退避自体に失敗した場合は元ファイル保護のため以後の設定保存を禁止する。起動時の退避・保存禁止・現行通信規則に適合しないendpointは永続schemaへ混ぜず一時通知としてRendererへ渡す。
+ * - 設定更新はtmp本体をfsyncしてrenameし、対応環境では親ディレクトリもfsyncする原子的保存の成功後だけメモリへ反映する。読込不能な既存設定は一意名へ退避し、復旧可能性が残る間は既定値を表示しても設定保存を禁止する。AIプロファイル削除は明示的な削除IPCからだけ許可し、削除前の完全設定を一意名バックアップへ保存する。削除前バックアップは最新3世代だけ保持し、読込不能退避やschema移行前バックアップとは別管理する。起動時の退避・保存禁止・現行通信規則に適合しないendpointは永続schemaへ混ぜず一時通知としてRendererへ渡す。
  * - 使用量集計は詳細ログ保存設定から独立させ、AIプロファイルIDを永続集計の正本として全用途のAPI要求を同じ累計へ加算し、API要求ごとのメモリ更新を短時間集約して最大待機時間または終了時flushで原子的保存する。
  * - ゲームIDやチャットセッションIDは詳細ログ用メタデータに留め、料金集計の階層キーにしない。
  * - プロファイル単位リセットは該当プロファイル累計だけを全体累計から差し引き、他プロファイル・詳細ログを変更しない。
@@ -30,6 +30,7 @@ const {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
   renameSync,
   statSync,
   unlinkSync,
@@ -37,7 +38,7 @@ const {
 } = require('node:fs');
 const { randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
-const { dirname, join } = require('node:path');
+const { basename, dirname, join } = require('node:path');
 const { atomicWriteJsonSync } = require('./atomicJsonFile.js');
 const { safeStorage } = require('electron');
 const {
@@ -77,6 +78,7 @@ const MAX_PROFILE_COUNT = 64;
 const MAX_ENDPOINT_LENGTH = 500;
 const REQUEST_LOG_MAX_BYTES = 10 * 1024 * 1024;
 const REQUEST_LOG_GENERATIONS = 5;
+const PROFILE_DELETE_BACKUP_GENERATIONS = 3;
 const USAGE_FLUSH_DELAY_MS = 1500;
 const USAGE_FLUSH_MAX_WAIT_MS = 5000;
 const USAGE_SUMMARY_SCHEMA_VERSION = getCurrentDataSchemaVersion(DATA_SCHEMA_KIND.USAGE_SUMMARY);
@@ -684,12 +686,72 @@ function assertStoredSettingsDocument(raw) {
   return normalized;
 }
 
+function quarantinedSettingsPaths(path) {
+  const directory = dirname(path);
+  if (!existsSync(directory)) return [];
+  const prefix = `${basename(path)}.unreadable-`;
+  return readdirSync(directory)
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.bak'))
+    .map((name) => join(directory, name))
+    .sort((left, right) => {
+      try { return statSync(right).mtimeMs - statSync(left).mtimeMs; }
+      catch { return 0; }
+    });
+}
+
+function recoverQuarantinedSettings(path) {
+  for (const backupPath of quarantinedSettingsPaths(path)) {
+    try {
+      const loaded = readJsonFileIfExists(backupPath);
+      if (!loaded.exists) continue;
+      const migration = migratePersistedDocument(loaded.value, {
+        kind: DATA_SCHEMA_KIND.DESKTOP_SETTINGS,
+        label: '退避済み保存AI設定',
+      });
+      if (!migration.migrated) continue;
+      const normalized = assertStoredSettingsDocument(migration.value);
+      atomicWriteJsonSync(path, normalized, { indent: 2 });
+      return { value: normalized, backupPath };
+    } catch {
+      // 破損バックアップや別原因の退避は候補から除外し、次の退避ファイルを確認する。
+    }
+  }
+  return null;
+}
+
+function recoveredSettingsNotice(backupPath) {
+  return Object.freeze({ code: 'SETTINGS_RECOVERED_QUARANTINE', backupPath: String(backupPath ?? '') });
+}
+
 function loadStoredSettings(path) {
   const defaults = createDefaultSettings();
   let loadedValue = null;
   try {
     const loaded = readJsonFileIfExists(path);
-    if (!loaded.exists) return { value: defaults, writable: true, startupNotices: [] };
+    if (!loaded.exists) {
+      const recovered = recoverQuarantinedSettings(path);
+      if (recovered) {
+        return {
+          value: recovered.value,
+          writable: true,
+          startupNotices: [recoveredSettingsNotice(recovered.backupPath), ...profileEndpointStartupNotices(recovered.value.profiles)],
+        };
+      }
+      const quarantined = quarantinedSettingsPaths(path);
+      if (quarantined.length) {
+        return {
+          value: defaults,
+          writable: false,
+          startupNotices: [Object.freeze({
+            code: 'SETTINGS_LOAD_FAILED_READ_ONLY',
+            sourceSchemaVersion: null,
+            currentSchemaVersion: SETTINGS_SCHEMA_VERSION,
+            backupPath: quarantined[0],
+          })],
+        };
+      }
+      return { value: defaults, writable: true, startupNotices: [] };
+    }
     loadedValue = loaded.value;
     const migration = migratePersistedDocument(loaded.value, {
       kind: DATA_SCHEMA_KIND.DESKTOP_SETTINGS,
@@ -698,6 +760,16 @@ function loadStoredSettings(path) {
     });
     const normalized = assertStoredSettingsDocument(migration.value);
     if (migration.migrated) atomicWriteJsonSync(path, normalized, { indent: 2 });
+    if (!migration.migrated && isDeepStrictEqual(serializableClone(normalized), serializableClone(defaults))) {
+      const recovered = recoverQuarantinedSettings(path);
+      if (recovered) {
+        return {
+          value: recovered.value,
+          writable: true,
+          startupNotices: [recoveredSettingsNotice(recovered.backupPath), ...profileEndpointStartupNotices(recovered.value.profiles)],
+        };
+      }
+    }
     return { value: normalized, writable: true, startupNotices: profileEndpointStartupNotices(normalized.profiles) };
   } catch (error) {
     try {
@@ -705,8 +777,8 @@ function loadStoredSettings(path) {
       console.warn(`保存AI設定を読み込めないため${backupPath ? `「${backupPath}」へ退避し、` : ''}既定値を使用します。`, error);
       return {
         value: defaults,
-        writable: true,
-        startupNotices: [settingsLoadFailureNotice(error, loadedValue, backupPath, true)],
+        writable: false,
+        startupNotices: [settingsLoadFailureNotice(error, loadedValue, backupPath, false)],
       };
     } catch (quarantineError) {
       console.error('保存AI設定を読み込めず、元ファイルの退避にも失敗したため設定保存を禁止します。', quarantineError, error);
@@ -719,12 +791,65 @@ function loadStoredSettings(path) {
   }
 }
 
+function deletedProfileIds(previousProfiles, nextProfiles) {
+  const nextIds = new Set((nextProfiles ?? []).map((profile) => String(profile.id)));
+  return (previousProfiles ?? []).map((profile) => String(profile.id)).filter((id) => !nextIds.has(id));
+}
+
+function destructiveSettingsBackupPath(path) {
+  return `${path}.before-profile-delete-${Date.now()}-${randomUUID()}.bak`;
+}
+
+function destructiveSettingsBackupPaths(path) {
+  const directory = dirname(path);
+  if (!existsSync(directory)) return [];
+  const prefix = `${basename(path)}.before-profile-delete-`;
+  return readdirSync(directory)
+    .filter((name) => name.startsWith(prefix) && name.endsWith('.bak'))
+    .map((name) => join(directory, name))
+    .sort((left, right) => {
+      try {
+        const delta = statSync(right).mtimeMs - statSync(left).mtimeMs;
+        if (delta !== 0) return delta;
+      } catch {
+        // 競合でstatできない場合は名前順で安定化し、個別削除時に再判定する。
+      }
+      return right.localeCompare(left);
+    });
+}
+
+function pruneDestructiveSettingsBackups(path, preservePath = '') {
+  try {
+    const backups = destructiveSettingsBackupPaths(path);
+    const preserved = String(preservePath ?? '');
+    const keep = new Set(backups.slice(0, PROFILE_DELETE_BACKUP_GENERATIONS));
+    if (preserved) keep.add(preserved);
+    if (keep.size > PROFILE_DELETE_BACKUP_GENERATIONS) {
+      const removableKept = [...keep].filter((backupPath) => backupPath !== preserved);
+      while (keep.size > PROFILE_DELETE_BACKUP_GENERATIONS && removableKept.length) {
+        keep.delete(removableKept.pop());
+      }
+    }
+    for (const backupPath of backups) {
+      if (keep.has(backupPath)) continue;
+      try {
+        unlinkSync(backupPath);
+      } catch (error) {
+        console.warn(`AIプロファイル削除前バックアップ「${backupPath}」の世代整理に失敗しました。`, error);
+      }
+    }
+  } catch (error) {
+    console.warn('AIプロファイル削除前バックアップの世代整理に失敗しました。', error);
+  }
+}
+
 class SettingsStore {
   constructor(userDataPath) {
     this.settingsPath = join(userDataPath, 'desktop-settings.json');
     this.requestLogPath = join(userDataPath, 'llm-request-log.jsonl');
     this.usageSummaryPath = join(userDataPath, 'llm-usage-summary.json');
     restrictRequestLogPermissions(this.requestLogPath);
+    pruneDestructiveSettingsBackups(this.settingsPath);
     const loadedSettings = loadStoredSettings(this.settingsPath);
     this.settings = loadedSettings.value;
     this.settingsWritable = loadedSettings.writable;
@@ -757,7 +882,7 @@ class SettingsStore {
     return notices;
   }
 
-  savePublicSettings(input) {
+  savePublicSettings(input, { allowedProfileDeletionIds = [] } = {}) {
     if (!this.settingsWritable) {
       const error = new Error('保存AI設定を保護しているため変更を保存できません。アプリを終了し、desktop-settings.jsonの読込状態を確認してください。');
       error.code = 'SETTINGS_READ_ONLY';
@@ -769,9 +894,22 @@ class SettingsStore {
     const previousById = new Map(this.settings.profiles.map((profile) => [profile.id, profile]));
     const rawProfiles = Array.isArray(input?.profiles) ? input.profiles : this.settings.profiles;
     const candidateProfiles = uniqueProfiles(rawProfiles, { requireValidEndpoint: false });
+    if (!candidateProfiles.length) throw new RangeError('AIプロファイルを0件として保存することはできません。');
+    const removedProfileIds = deletedProfileIds(this.settings.profiles, candidateProfiles);
+    const bootstrapDefaultReplacement = this.settings.profiles.length === 1
+      && this.settings.profiles[0]?.id === 'profile-demo'
+      && removedProfileIds.length === 1
+      && removedProfileIds[0] === 'profile-demo';
     validateChangedProfileEndpoints(this.settings.profiles, candidateProfiles);
     const incomingById = new Map(candidateProfiles.map((profile, index) => [profile.id, rawProfiles[index] ?? {}]));
     validateProfileDeletionAndAssignments(this.settings.profiles, candidateProfiles, input?.assignments ?? this.settings.assignments);
+    const allowedDeletionIds = new Set((Array.isArray(allowedProfileDeletionIds) ? allowedProfileDeletionIds : []).map((id) => String(id)));
+    const unauthorizedDeletionIds = removedProfileIds.filter((id) => !allowedDeletionIds.has(id));
+    if (removedProfileIds.length && !bootstrapDefaultReplacement && unauthorizedDeletionIds.length) {
+      const error = new Error(`AIプロファイル削除は明示的な削除操作からのみ保存できます: ${unauthorizedDeletionIds.join(', ')}`);
+      error.code = 'SETTINGS_PROFILE_DELETION_REQUIRES_EXPLICIT_ACTION';
+      throw error;
+    }
     validateGenerationReferences(candidateProfiles);
     const normalizedBase = normalizeCurrentSettingsInput({
       ...this.settings,
@@ -796,8 +934,28 @@ class SettingsStore {
 
     const profileIds = new Set(normalizedBase.profiles.map((profile) => profile.id));
     normalizedBase.assignments = normalizeAssignments(input?.assignments ?? this.settings.assignments, profileIds);
+    let profileDeletionBackupPath = '';
+    if (removedProfileIds.length && !bootstrapDefaultReplacement) {
+      profileDeletionBackupPath = destructiveSettingsBackupPath(this.settingsPath);
+      atomicWriteJsonSync(profileDeletionBackupPath, this.settings, { indent: 2 });
+    }
     atomicWriteJsonSync(this.settingsPath, normalizedBase, { indent: 2 });
     this.settings = normalizedBase;
+    if (profileDeletionBackupPath) pruneDestructiveSettingsBackups(this.settingsPath, profileDeletionBackupPath);
+    return this.publicSettings();
+  }
+
+  saveAssignments(rawAssignments) {
+    if (!this.settingsWritable) {
+      const error = new Error('保存AI設定を保護しているためAI割り当てを保存できません。アプリを終了し、desktop-settings.jsonの読込状態を確認してください。');
+      error.code = 'SETTINGS_READ_ONLY';
+      throw error;
+    }
+    const profileIds = new Set(this.settings.profiles.map((profile) => String(profile.id)));
+    const assignments = normalizeAssignments(rawAssignments, profileIds);
+    const nextSettings = { ...this.settings, assignments };
+    atomicWriteJsonSync(this.settingsPath, nextSettings, { indent: 2 });
+    this.settings = nextSettings;
     return this.publicSettings();
   }
 

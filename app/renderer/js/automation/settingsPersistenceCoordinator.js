@@ -1,6 +1,6 @@
 /**
  * 責務: AI設定保存、設定読込時のMain通知表示、参加者割り当て整合、プロファイル別使用量再読込、自動保存の遅延集約と終了前送信を所有する。
- * 変更ルール: ゲーム状態を直接変更せず、desktopAutomation.jsから渡された正式runtime・bridge・設定依存だけを使用する。設定読込通知はMainが返した構造化codeだけを表示へ変換し、永続設定へ混ぜない。自動保存はruntimeの専用スナップショットだけを取得し、通常時は短時間の変更を集約するが、最大待機時間と終了前flushを必ず設ける。処理本体をdesktopAutomation.jsへ戻さない。外部LLM確認は設定保存と分離し、実際に通信を開始する各ControllerとMain側Gateだけが担当する。
+ * 変更ルール: ゲーム状態を直接変更せず、desktopAutomation.jsから渡された正式runtime・bridge・設定依存だけを使用する。設定読込通知はMainが返した構造化codeだけを表示へ変換し、永続設定へ混ぜない。デスクトップ設定をMainから正常取得できる前は保存を禁止し、自動割り当て整合ではAIプロファイル本体を再送せず割り当て専用APIだけを使用する。自動保存はruntimeの専用スナップショットだけを取得し、通常時は短時間の変更を集約するが、最大待機時間と終了前flushを必ず設ける。処理本体をdesktopAutomation.jsへ戻さない。外部LLM確認は設定保存と分離し、実際に通信を開始する各ControllerとMain側Gateだけが担当する。
  */
 
 const AUTOSAVE_DEBOUNCE_MS = 750;
@@ -40,6 +40,15 @@ export function createSettingsPersistenceCoordinator(context) {
       for (const notice of Array.isArray(notices) ? notices : []) {
         const backupPath = String(notice?.backupPath ?? '').trim();
         const backupSuffix = backupPath ? ` バックアップ: ${backupPath}` : '';
+        if (notice?.code === 'SETTINGS_RECOVERED_QUARANTINE') {
+          runtime().toast(`旧schemaのAI設定を退避ファイルから復元しました。${backupSuffix}`, 'success', {
+            key: 'settings-recovered-quarantine',
+            durationMs: 0,
+            forceDisplay: true,
+            source: 'settings-startup',
+          });
+          continue;
+        }
         if (notice?.code === 'SETTINGS_PROFILE_ENDPOINT_UNAVAILABLE') {
           const label = String(notice.profileLabel ?? '').trim() || 'AIプロファイル';
           const reason = String(notice.reason ?? '').trim();
@@ -91,9 +100,21 @@ export function createSettingsPersistenceCoordinator(context) {
       }
     }
 
-  async function persistSettings(settings, { refresh = true, statusMessage = '' } = {}) {
+  function assertDesktopSettingsLoadedForWrite() {
+      if (bridge.isDesktop && controller.settingsLoadState !== 'loaded') {
+        const error = new Error('AI設定を正常に読み込めていないため設定保存を禁止しました。アプリを再起動し、desktop-settings.jsonを確認してください。');
+        error.code = 'SETTINGS_NOT_LOADED';
+        throw error;
+      }
+    }
+
+  async function persistSettings(settings, { refresh = true, statusMessage = '', profileDeletionId = '' } = {}) {
+      assertDesktopSettingsLoadedForWrite();
       const previousSettings = controller.settings;
-      const savedSettings = await bridge.saveSettings(settings);
+      const deletingProfile = Boolean(String(profileDeletionId ?? '').trim());
+      const save = deletingProfile ? bridge.saveSettingsWithProfileDeletion : bridge.saveSettings;
+      if (typeof save !== 'function') throw new Error('要求されたAI設定保存APIを利用できません。');
+      const savedSettings = deletingProfile ? await save(settings, profileDeletionId) : await save(settings);
       const previousById = new Map((previousSettings?.profiles ?? []).map((profile) => [profile.id, profile]));
       const invalidatedKeyProfiles = (savedSettings.profiles ?? []).filter((profile) => {
         const previous = previousById.get(profile.id);
@@ -128,7 +149,11 @@ export function createSettingsPersistenceCoordinator(context) {
         changed = true;
       });
       if (!changed) return;
-      await persistSettings({ ...controller.settings, assignments }, { refresh: true });
+      assertDesktopSettingsLoadedForWrite();
+      if (typeof bridge.saveAssignments !== 'function') throw new Error('AI割り当て専用保存APIを利用できません。');
+      controller.settings = await bridge.saveAssignments(assignments);
+      applyAiExecutionSettings();
+      refreshVisibleUi();
     }
 
   function setManagementDirty(dirty) {

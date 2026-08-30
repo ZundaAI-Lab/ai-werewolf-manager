@@ -1,6 +1,6 @@
 {
   "name": "ai-werewolf-control-room",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "description": "複数LLMを個別プレイヤーとして自動進行するAI人狼スタンドアロンツール",
   "main": "main/main.js",

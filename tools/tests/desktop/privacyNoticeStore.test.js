@@ -86,7 +86,7 @@ test('AI設定保存は外部LLM確認状態から独立して実行できる', 
   vm.runInContext(source, context, { filename: 'settingsPersistenceCoordinator.js' });
 
   let saveCalls = 0;
-  const controller = { settings: {}, persistedUsage: null };
+  const controller = { settings: {}, settingsLoadState: 'loaded', persistedUsage: null };
   const runtimeApi = {
     setPublicHistoryTransmissionMode() {},
     setAiExecutionSettings() {},

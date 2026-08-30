@@ -1,6 +1,6 @@
 /**
- * 責務: 現行AI設定、割り当て、使用量、詳細ログ権限、入力値正規化、秘密情報分離の保存契約を確認する。
- * 変更ルール: 旧形式移行や過去データ専用テストを追加せず、現在保存する設定・使用量・詳細ログの永続境界だけを検証する。
+ * 責務: 現行AI設定、正式リリース済み設定の一方向移行、退避済み設定の救済、割り当て、使用量、詳細ログ権限、入力値正規化、秘密情報分離の保存契約を確認する。
+ * 変更ルール: v1.0.3以降の正式保存データをfixtureとして保持し、AIプロファイル・暗号化APIキー・工程担当参照を失う変更を禁止する。AIプロファイル削除前バックアップは3世代保持し、読込不能退避・schema移行前バックアップとは別管理する。内部実装の旧仕様は本体へ戻さない。
  */
 
 'use strict';
@@ -33,6 +33,48 @@ function loadSettingsStore() {
   } finally {
     Module._load = originalLoad;
   }
+}
+
+
+function writeV103SettingsFixture(directory) {
+  const { SettingsStore, SETTINGS_SCHEMA_VERSION } = loadSettingsStore();
+  const store = new SettingsStore(directory);
+  store.savePublicSettings({
+    ...store.publicSettings(),
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    profiles: [
+      {
+        id: 'profile-main', label: '旧OpenAI', provider: 'openai', model: 'gpt-test', enabled: true,
+        apiKey: 'old-secret', generation: {
+          depth: 4,
+          reasoningProfileId: 'profile-helper', outputProfileId: 'profile-helper', critiqueProfileId: 'profile-helper',
+          taskOverrides: { speech: null, vote: 2, nightAction: null, privateConversation: null, resultImpression: null, memoConsolidate: null },
+        },
+      },
+      {
+        id: 'profile-helper', label: '旧補助AI', provider: 'demo', model: 'demo-balanced', enabled: true,
+      },
+    ],
+    assignments: { 'player-a': 'profile-main' },
+  });
+  const settingsPath = path.join(directory, 'desktop-settings.json');
+  const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  raw.schemaVersion = 1;
+  raw.profiles = raw.profiles.map((profile) => {
+    const generation = profile.generation;
+    return {
+      ...profile,
+      generation: {
+        depth: generation.depth,
+        draftProfileId: generation.reasoningProfileId,
+        renderProfileId: generation.outputProfileId,
+        proofreadProfileId: generation.critiqueProfileId,
+        taskOverrides: generation.taskOverrides,
+      },
+    };
+  });
+  fs.writeFileSync(settingsPath, JSON.stringify(raw, null, 2), 'utf8');
+  return { settingsPath, raw };
 }
 
 test('手動モードとプレイヤー単位割り当てを保存する', () => {
@@ -82,6 +124,60 @@ test('Mainは共有AI設定schemaVersionを正本にする', () => {
   const shared = require('../../../app/shared/settingsSchema.js');
   const main = loadSettingsStore();
   assert.equal(main.SETTINGS_SCHEMA_VERSION, shared.SETTINGS_SCHEMA_VERSION);
+});
+
+
+test('v1.0.3のAI設定を起動時にschema 2へ移行しプロファイル・暗号化APIキー・担当参照を保持する', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-v103-migration-'));
+  const { settingsPath } = writeV103SettingsFixture(directory);
+  const { SettingsStore, SETTINGS_SCHEMA_VERSION } = loadSettingsStore();
+  const store = new SettingsStore(directory);
+  const loaded = store.publicSettings();
+
+  assert.equal(loaded.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.deepEqual(loaded.profiles.map((profile) => profile.id), ['profile-main', 'profile-helper']);
+  assert.equal(loaded.assignments['player-a'], 'profile-main');
+  assert.equal(loaded.profiles[0].generation.reasoningProfileId, 'profile-helper');
+  assert.equal(loaded.profiles[0].generation.outputProfileId, 'profile-helper');
+  assert.equal(loaded.profiles[0].generation.critiqueProfileId, 'profile-helper');
+  assert.equal(store.decryptApiKey('profile-main'), 'old-secret');
+  const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  assert.equal(persisted.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.equal(Object.hasOwn(persisted.profiles[0].generation, 'draftProfileId'), false);
+  assert.equal(fs.existsSync(`${settingsPath}.pre-schema-1.json`), true);
+});
+
+test('v1.0.4で退避済みになったv1.0.3 AI設定をdesktop-settings不在時に自動復元する', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-v103-quarantine-recovery-'));
+  const { settingsPath, raw } = writeV103SettingsFixture(directory);
+  fs.unlinkSync(settingsPath);
+  const backupPath = `${settingsPath}.unreadable-1700000000000-test.bak`;
+  fs.writeFileSync(backupPath, JSON.stringify(raw, null, 2), 'utf8');
+
+  const { SettingsStore, SETTINGS_SCHEMA_VERSION } = loadSettingsStore();
+  const store = new SettingsStore(directory);
+  const loaded = store.publicSettings();
+  assert.equal(loaded.schemaVersion, SETTINGS_SCHEMA_VERSION);
+  assert.deepEqual(loaded.profiles.map((profile) => profile.id), ['profile-main', 'profile-helper']);
+  assert.equal(store.decryptApiKey('profile-main'), 'old-secret');
+  assert.equal(fs.existsSync(backupPath), true, '退避元を削除しない');
+  assert.equal(fs.existsSync(settingsPath), true, '現行設定を復元保存する');
+  assert.equal(store.consumeStartupNotices().some((notice) => notice.code === 'SETTINGS_RECOVERED_QUARANTINE'), true);
+});
+
+test('現行設定が既定値だけならv1.0.4で退避済みのv1.0.3 AI設定を優先復元する', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-v103-default-recovery-'));
+  const { settingsPath, raw } = writeV103SettingsFixture(directory);
+  const backupPath = `${settingsPath}.unreadable-1700000000001-test.bak`;
+  fs.writeFileSync(backupPath, JSON.stringify(raw, null, 2), 'utf8');
+
+  fs.unlinkSync(settingsPath);
+  const { SettingsStore } = loadSettingsStore();
+  const defaultStore = new SettingsStore(directory);
+  defaultStore.savePublicSettings(defaultStore.publicSettings());
+  const recoveredStore = new SettingsStore(directory);
+  assert.deepEqual(recoveredStore.publicSettings().profiles.map((profile) => profile.id), ['profile-main', 'profile-helper']);
+  assert.equal(recoveredStore.decryptApiKey('profile-main'), 'old-secret');
 });
 
 test('公開履歴の過去圧縮モードを保存・再読込する', () => {
@@ -266,9 +362,7 @@ test('生成工程の存在しない参照・無効参照・参照中削除をMa
     profiles: [store.publicSettings().profiles.find((profile) => profile.id === 'owner')],
   }), /参照しているAIプロファイルは削除できません/u);
 
-  const deletedTogether = store.savePublicSettings({ ...store.publicSettings(), profiles: [] });
-  assert.equal(deletedTogether.profiles.length >= 1, true);
-  assert.equal(deletedTogether.profiles.some((profile) => ['owner', 'proofreader'].includes(profile.id)), false);
+  assert.throws(() => store.savePublicSettings({ ...store.publicSettings(), profiles: [] }), /0件として保存することはできません/u);
 });
 
 test('重複プロファイルIDを拒否し既存APIキーを変更しない', () => {
@@ -393,9 +487,100 @@ test('破損したAI設定は退避してから既定値へ切り替え、以後
   assert.equal(fs.readFileSync(path.join(directory, backups[0]), 'utf8'), corruptText);
   assert.equal(fs.existsSync(settingsPath), false);
 
-  store.savePublicSettings({ ...store.publicSettings(), executionMode: 'manual' });
-  assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).executionMode, 'manual');
+  assert.throws(
+    () => store.savePublicSettings({ ...store.publicSettings(), executionMode: 'manual' }),
+    (error) => error?.code === 'SETTINGS_READ_ONLY',
+  );
+  assert.equal(fs.existsSync(settingsPath), false);
   assert.equal(fs.readFileSync(path.join(directory, backups[0]), 'utf8'), corruptText);
+});
+
+test('通常保存ではAIプロファイル削除を拒否し、明示削除だけバックアップ付きで許可する', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-profile-delete-guard-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [
+      { ...base.profiles[0], id: 'keep-profile', label: '保持' },
+      { ...base.profiles[0], id: 'delete-profile', label: '削除対象' },
+    ],
+  });
+  const beforeDelete = store.publicSettings();
+  const candidate = { ...beforeDelete, profiles: beforeDelete.profiles.filter((profile) => profile.id !== 'delete-profile') };
+  assert.throws(
+    () => store.savePublicSettings(candidate),
+    (error) => error?.code === 'SETTINGS_PROFILE_DELETION_REQUIRES_EXPLICIT_ACTION',
+  );
+  assert.equal(store.publicSettings().profiles.length, 2);
+
+  const saved = store.savePublicSettings(candidate, { allowedProfileDeletionIds: ['delete-profile'] });
+  assert.deepEqual(saved.profiles.map((profile) => profile.id), ['keep-profile']);
+  const backups = fs.readdirSync(directory).filter((name) => name.startsWith('desktop-settings.json.before-profile-delete-') && name.endsWith('.bak'));
+  assert.equal(backups.length, 1);
+  const backup = JSON.parse(fs.readFileSync(path.join(directory, backups[0]), 'utf8'));
+  assert.deepEqual(backup.profiles.map((profile) => profile.id), ['keep-profile', 'delete-profile']);
+});
+
+
+test('AIプロファイル削除前バックアップは最新3世代だけ保持し他種バックアップを削除しない', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-profile-delete-backup-retention-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [
+      { ...base.profiles[0], id: 'keep-profile', label: '保持' },
+      { ...base.profiles[0], id: 'delete-profile', label: '削除対象' },
+    ],
+  });
+
+  const oldBackupNames = [1, 2, 3].map((index) => `desktop-settings.json.before-profile-delete-${1000 + index}-old-${index}.bak`);
+  oldBackupNames.forEach((name, index) => {
+    const backupPath = path.join(directory, name);
+    fs.writeFileSync(backupPath, `old-${index + 1}`, 'utf8');
+    fs.utimesSync(backupPath, new Date(1000 + index), new Date(1000 + index));
+  });
+  const unreadableBackup = path.join(directory, 'desktop-settings.json.unreadable-test.bak');
+  const preSchemaBackup = path.join(directory, 'desktop-settings.json.pre-schema-1.json');
+  fs.writeFileSync(unreadableBackup, 'unreadable', 'utf8');
+  fs.writeFileSync(preSchemaBackup, 'pre-schema', 'utf8');
+
+  const beforeDelete = store.publicSettings();
+  store.savePublicSettings(
+    { ...beforeDelete, profiles: beforeDelete.profiles.filter((profile) => profile.id !== 'delete-profile') },
+    { allowedProfileDeletionIds: ['delete-profile'] },
+  );
+
+  const backups = fs.readdirSync(directory)
+    .filter((name) => name.startsWith('desktop-settings.json.before-profile-delete-') && name.endsWith('.bak'));
+  assert.equal(backups.length, 3);
+  const jsonBackups = backups
+    .map((name) => path.join(directory, name))
+    .filter((backupPath) => fs.readFileSync(backupPath, 'utf8').trimStart().startsWith('{'));
+  assert.equal(jsonBackups.length, 1);
+  const newestBackup = JSON.parse(fs.readFileSync(jsonBackups[0], 'utf8'));
+  assert.deepEqual(newestBackup.profiles.map((profile) => profile.id), ['keep-profile', 'delete-profile']);
+  assert.equal(fs.existsSync(unreadableBackup), true);
+  assert.equal(fs.existsSync(preSchemaBackup), true);
+});
+
+test('割り当て専用保存はAIプロファイル本体と暗号化APIキーを変更しない', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-assignment-only-save-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [{ ...base.profiles[0], id: 'profile-main', label: 'Main', provider: 'openai', model: 'gpt-test', apiKey: 'secret-key' }],
+  });
+  const before = store.publicSettings();
+  const saved = store.saveAssignments({ player01: 'profile-main' });
+  assert.deepEqual(saved.profiles, before.profiles);
+  assert.equal(store.decryptApiKey('profile-main'), 'secret-key');
+  assert.equal(saved.assignments.player01, 'profile-main');
 });
 
 test('カスタム接続先の表記差だけでは保存済みAPIキーを破棄しない', () => {

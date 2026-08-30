@@ -1,6 +1,6 @@
 /**
  * 責務: 製品版ユーザーデータJSONのschemaVersionを検査し、登録済みの一方向migrationを順番に適用して現行schemaへ変換する。
- * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。旧schemaは必要なN→N+1 Migrationが全段登録されている場合だけ順に変換し、1段でも欠ければ拒否する。変換前入力を破壊せず、各データの意味検証・sanitize・永続化は呼出元の責務とする。
+ * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。正式リリース済み旧schemaは必要なN→N+1 Migrationを全段登録して順に変換し、1段でも欠ければ拒否する。変換前入力を破壊せず、各データの意味検証・sanitize・永続化は呼出元の責務とする。
  */
 
 (function initializeDataMigration(root, factory) {
@@ -34,7 +34,7 @@
   function requireSchemaVersion(raw, label = 'データ') {
     if (!isDocument(raw)) throw new TypeError(`${label}はJSONオブジェクトで指定してください。`);
     if (!Number.isInteger(raw.schemaVersion) || raw.schemaVersion < 1) {
-      throw new RangeError(`${label}に有効なschemaVersionがありません。製品版1.0.0以降のデータを使用してください。`);
+      throw new RangeError(`${label}に有効なschemaVersionがありません。schemaVersionを持つ正式保存データを使用してください。`);
     }
     return raw.schemaVersion;
   }

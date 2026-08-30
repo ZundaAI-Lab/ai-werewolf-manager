@@ -41,7 +41,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 };
 /**
  * 責務: 製品版で永続化・入出力するユーザーデータJSONの現行schemaVersionを一元管理する。
- * 変更ルール: アプリの製品versionとは独立して増分する。保存項目の追加・削除・意味変更・必須条件変更時だけ対象schemaを+1する。後方互換を提供する変更だけmigrationRegistry.jsへ旧schema→次schemaの一方向migrationを追加し、互換不要の破壊変更では旧schemaを現行として読み替えない。製品版1.0.0の基準schemaはすべて1とする。
+ * 変更ルール: アプリの製品versionとは独立して増分する。保存項目の追加・削除・意味変更・必須条件変更時だけ対象schemaを+1し、正式リリース済みユーザーデータに対する旧schema→次schemaの一方向migrationをmigrationRegistry.jsへ同時追加する。内部実装の旧仕様は残さず、互換責務はdataCompatibility配下へ閉じ込める。初期schemaはすべて1とする。
  */
 (function initializeDataSchemaVersions(root, factory) {
     'use strict';
@@ -67,7 +67,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
         PRIVACY_NOTICE: 'privacy-notice',
     });
     const CURRENT_DATA_SCHEMA_VERSIONS = Object.freeze({
-        [DATA_SCHEMA_KIND.GAME_STATE]: 1,
+        [DATA_SCHEMA_KIND.GAME_STATE]: 2,
         [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 2,
         [DATA_SCHEMA_KIND.APPEARANCE]: 1,
         [DATA_SCHEMA_KIND.CHAT_ROOM]: 1,
@@ -87,7 +87,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 });
 /**
  * 責務: 製品版ユーザーデータの「schema N → N+1」migrationをデータ種別ごとに登録・解決する。
- * 変更ルール: migrationは後方互換を明示的に提供する場合だけ一方向で登録し、提供を継続するmigrationの意味を変更しない。旧実装を本体へ残さず、互換対応は本レジストリ配下だけに閉じ込める。互換不要の破壊変更ではmigrationを追加せず旧schemaを拒否し、migrationを追加する場合は専用関数とfixtureを用意して飛び級migrationを作らない。
+ * 変更ルール: 正式リリース済みユーザーデータの一方向migrationは削除・意味変更せず、本体へ旧schema分岐を持ち込まない。内部実装の後方互換は不要だが、製品版で保存・出力した設定・ゲーム・AIプロファイルは本レジストリ配下で現行schemaへ移行する。新schema追加時は専用migrationと実データ相当fixtureを追加し、飛び級migrationは作らない。
  */
 (function initializeMigrationRegistry(root, factory) {
     'use strict';
@@ -101,9 +101,95 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     }
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
     'use strict';
-    // 現在のschema更新は後方互換を提供しない破壊変更のためmigrationは空。
-    // 将来、互換を明示的に提供する場合だけ { 1: migrateV1ToV2 } の形で対象kindへ追加する。
-    const DATA_MIGRATIONS = Object.freeze({});
+    function isDocument(value) {
+        return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+    }
+    function renameGenerationProfileReferences(generation) {
+        if (!isDocument(generation))
+            return generation;
+        const { draftProfileId = null, renderProfileId = null, proofreadProfileId = null, ...rest } = generation;
+        return {
+            ...rest,
+            reasoningProfileId: draftProfileId,
+            outputProfileId: renderProfileId,
+            critiqueProfileId: proofreadProfileId,
+        };
+    }
+    function migrateProfileGenerations(documentValue) {
+        if (!Array.isArray(documentValue.profiles))
+            return documentValue;
+        return {
+            ...documentValue,
+            profiles: documentValue.profiles.map((profile) => (isDocument(profile)
+                ? { ...profile, generation: renameGenerationProfileReferences(profile.generation) }
+                : profile)),
+        };
+    }
+    function migrateDesktopSettingsV1ToV2(raw) {
+        const migrated = migrateProfileGenerations(raw);
+        return { ...migrated, schemaVersion: 2 };
+    }
+    function migrateAiProfilePackageV1ToV2(raw) {
+        const migrated = migrateProfileGenerations(raw);
+        return { ...migrated, schemaVersion: 2 };
+    }
+    const LEGACY_GENERATION_STAGE_MAP = Object.freeze({
+        direct: 'direct',
+        draft: 'decide',
+        render: 'render',
+        proofread: 'render',
+    });
+    function migrateGenerationRunV1ToV2(run) {
+        if (!isDocument(run) || run.schemaVersion !== 1)
+            return run;
+        const stages = Array.isArray(run.stages)
+            ? run.stages.map((stage) => {
+                if (!isDocument(stage))
+                    return stage;
+                return {
+                    ...stage,
+                    stageId: LEGACY_GENERATION_STAGE_MAP[stage.stageId] ?? stage.stageId,
+                    rejectedAttempts: [],
+                };
+            })
+            : run.stages;
+        return {
+            ...run,
+            schemaVersion: 2,
+            finalStageId: LEGACY_GENERATION_STAGE_MAP[run.finalStageId] ?? run.finalStageId,
+            stages,
+        };
+    }
+    const HISTORY_KEYS = Object.freeze(['undoStack', 'redoStack', 'restorePoints']);
+    function migrateGameSnapshotV1ToV2(snapshot) {
+        if (!isDocument(snapshot))
+            return snapshot;
+        const migrated = {
+            ...snapshot,
+            schemaVersion: 2,
+            aiTurns: Array.isArray(snapshot.aiTurns)
+                ? snapshot.aiTurns.map((turn) => (isDocument(turn)
+                    ? { ...turn, generationRun: migrateGenerationRunV1ToV2(turn.generationRun) }
+                    : turn))
+                : snapshot.aiTurns,
+        };
+        for (const key of HISTORY_KEYS) {
+            if (!Array.isArray(snapshot[key]))
+                continue;
+            migrated[key] = snapshot[key].map((entry) => (isDocument(entry) && isDocument(entry.state)
+                ? { ...entry, state: migrateGameSnapshotV1ToV2(entry.state) }
+                : entry));
+        }
+        return migrated;
+    }
+    function migrateGameStateV1ToV2(raw) {
+        return migrateGameSnapshotV1ToV2(raw);
+    }
+    const DATA_MIGRATIONS = Object.freeze({
+        'game-state': Object.freeze({ 1: migrateGameStateV1ToV2 }),
+        'desktop-settings': Object.freeze({ 1: migrateDesktopSettingsV1ToV2 }),
+        'ai-profile-package': Object.freeze({ 1: migrateAiProfilePackageV1ToV2 }),
+    });
     function migrationFor(kind, fromVersion, registry = DATA_MIGRATIONS) {
         return registry?.[kind]?.[fromVersion] ?? null;
     }
@@ -111,7 +197,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
 });
 /**
  * 責務: 製品版ユーザーデータJSONのschemaVersionを検査し、登録済みの一方向migrationを順番に適用して現行schemaへ変換する。
- * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。旧schemaは必要なN→N+1 Migrationが全段登録されている場合だけ順に変換し、1段でも欠ければ拒否する。変換前入力を破壊せず、各データの意味検証・sanitize・永続化は呼出元の責務とする。
+ * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。正式リリース済み旧schemaは必要なN→N+1 Migrationを全段登録して順に変換し、1段でも欠ければ拒否する。変換前入力を破壊せず、各データの意味検証・sanitize・永続化は呼出元の責務とする。
  */
 (function initializeDataMigration(root, factory) {
     'use strict';
@@ -144,7 +230,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
         if (!isDocument(raw))
             throw new TypeError(`${label}はJSONオブジェクトで指定してください。`);
         if (!Number.isInteger(raw.schemaVersion) || raw.schemaVersion < 1) {
-            throw new RangeError(`${label}に有効なschemaVersionがありません。製品版1.0.0以降のデータを使用してください。`);
+            throw new RangeError(`${label}に有効なschemaVersionがありません。schemaVersionを持つ正式保存データを使用してください。`);
         }
         return raw.schemaVersion;
     }
@@ -209,7 +295,7 @@ define("js/config/constants", ["require", "exports", "js/config/dataCompatibilit
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.TASK_LABELS = exports.AUDIENCE_LABELS = exports.EVENT_TYPE_LABELS = exports.DEFAULT_RULES = exports.DEFAULT_CHARACTER = exports.DEFAULT_REASONING_PROFILE = exports.REASONING_PROFILE_PROMPT_DESCRIPTIONS = exports.REASONING_PROFILE_OPTION_LABELS = exports.PRESET_NOTES = exports.PRESET_ROLES = exports.ROLE_IDS = exports.ROLE_DEFINITIONS = exports.TEAM_LABELS = exports.PHASE_LABELS = exports.PHASES = exports.VOTE_TIE_RESOLUTIONS = exports.SUPPORTED_PLAYER_COUNTS = exports.MAX_PLAYER_COUNT = exports.MIN_PLAYER_COUNT = exports.MAX_RESTORE_POINTS = exports.MAX_UNDO = exports.MAX_RESULT_IMPRESSION_LENGTH = exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = exports.PROMPT_SPEC_VERSION = exports.SCHEMA_VERSION = exports.APP_VERSION = void 0;
-    exports.APP_VERSION = '1.0.4';
+    exports.APP_VERSION = '1.0.5';
     // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
     // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。
     // 製品版1.0.0の基準schemaは1。項目追加・削除・意味変更・必須条件変更時だけ増やす。
@@ -606,8 +692,8 @@ define("generated/buildInfo", ["require", "exports"], function (require, exports
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BUNDLE_SHA256 = exports.BUILD_ID = void 0;
-    exports.BUILD_ID = 'c414f1e5fc61fc316716fee9979d5be2eab8e46ecab1b8d7c5b6742c83851e56';
-    exports.BUNDLE_SHA256 = '509b1f660bf0154d99c7421443a62c3be6e671944ffb2ac24d2cfc56333cd610';
+    exports.BUILD_ID = '507b9b4fa2d96f29bc179973466f3ba8367d885a25b6830a0eb95b86efcd0167';
+    exports.BUNDLE_SHA256 = 'f7eb66dcc4b62c65de77045f47e4f609821f0daf4ed904916cc9c2abaede68a8';
 });
 /**
  * 責務: 副作用の小さい汎用処理と、出力ファイル名部品のOS非依存な正規化を提供する。
@@ -44555,7 +44641,7 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
 });
 /**
  * 責務: AI設定保存、設定読込時のMain通知表示、参加者割り当て整合、プロファイル別使用量再読込、自動保存の遅延集約と終了前送信を所有する。
- * 変更ルール: ゲーム状態を直接変更せず、desktopAutomation.jsから渡された正式runtime・bridge・設定依存だけを使用する。設定読込通知はMainが返した構造化codeだけを表示へ変換し、永続設定へ混ぜない。自動保存はruntimeの専用スナップショットだけを取得し、通常時は短時間の変更を集約するが、最大待機時間と終了前flushを必ず設ける。処理本体をdesktopAutomation.jsへ戻さない。外部LLM確認は設定保存と分離し、実際に通信を開始する各ControllerとMain側Gateだけが担当する。
+ * 変更ルール: ゲーム状態を直接変更せず、desktopAutomation.jsから渡された正式runtime・bridge・設定依存だけを使用する。設定読込通知はMainが返した構造化codeだけを表示へ変換し、永続設定へ混ぜない。デスクトップ設定をMainから正常取得できる前は保存を禁止し、自動割り当て整合ではAIプロファイル本体を再送せず割り当て専用APIだけを使用する。自動保存はruntimeの専用スナップショットだけを取得し、通常時は短時間の変更を集約するが、最大待機時間と終了前flushを必ず設ける。処理本体をdesktopAutomation.jsへ戻さない。外部LLM確認は設定保存と分離し、実際に通信を開始する各ControllerとMain側Gateだけが担当する。
  */
 define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -44583,6 +44669,15 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
             for (const notice of Array.isArray(notices) ? notices : []) {
                 const backupPath = String(notice?.backupPath ?? '').trim();
                 const backupSuffix = backupPath ? ` バックアップ: ${backupPath}` : '';
+                if (notice?.code === 'SETTINGS_RECOVERED_QUARANTINE') {
+                    runtime().toast(`旧schemaのAI設定を退避ファイルから復元しました。${backupSuffix}`, 'success', {
+                        key: 'settings-recovered-quarantine',
+                        durationMs: 0,
+                        forceDisplay: true,
+                        source: 'settings-startup',
+                    });
+                    continue;
+                }
                 if (notice?.code === 'SETTINGS_PROFILE_ENDPOINT_UNAVAILABLE') {
                     const label = String(notice.profileLabel ?? '').trim() || 'AIプロファイル';
                     const reason = String(notice.reason ?? '').trim();
@@ -44633,9 +44728,21 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
                 }
             }
         }
-        async function persistSettings(settings, { refresh = true, statusMessage = '' } = {}) {
+        function assertDesktopSettingsLoadedForWrite() {
+            if (bridge.isDesktop && controller.settingsLoadState !== 'loaded') {
+                const error = new Error('AI設定を正常に読み込めていないため設定保存を禁止しました。アプリを再起動し、desktop-settings.jsonを確認してください。');
+                error.code = 'SETTINGS_NOT_LOADED';
+                throw error;
+            }
+        }
+        async function persistSettings(settings, { refresh = true, statusMessage = '', profileDeletionId = '' } = {}) {
+            assertDesktopSettingsLoadedForWrite();
             const previousSettings = controller.settings;
-            const savedSettings = await bridge.saveSettings(settings);
+            const deletingProfile = Boolean(String(profileDeletionId ?? '').trim());
+            const save = deletingProfile ? bridge.saveSettingsWithProfileDeletion : bridge.saveSettings;
+            if (typeof save !== 'function')
+                throw new Error('要求されたAI設定保存APIを利用できません。');
+            const savedSettings = deletingProfile ? await save(settings, profileDeletionId) : await save(settings);
             const previousById = new Map((previousSettings?.profiles ?? []).map((profile) => [profile.id, profile]));
             const invalidatedKeyProfiles = (savedSettings.profiles ?? []).filter((profile) => {
                 const previous = previousById.get(profile.id);
@@ -44674,7 +44781,12 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
             });
             if (!changed)
                 return;
-            await persistSettings({ ...controller.settings, assignments }, { refresh: true });
+            assertDesktopSettingsLoadedForWrite();
+            if (typeof bridge.saveAssignments !== 'function')
+                throw new Error('AI割り当て専用保存APIを利用できません。');
+            controller.settings = await bridge.saveAssignments(assignments);
+            applyAiExecutionSettings();
+            refreshVisibleUi();
         }
         function setManagementDirty(dirty) {
             const saveBar = document.querySelector('[data-ai-management-save]');
@@ -46000,7 +46112,7 @@ define("js/automation/aiManagementController", ["require", "exports"], function 
                 current.profiles = current.profiles.filter((item) => item.id !== profileId);
                 if (controller.selectedProfileId === profileId)
                     controller.selectedProfileId = current.profiles[0]?.id ?? null;
-                await persistSettings(current, { refresh: true, statusMessage: 'AIプロファイルを削除しました。' });
+                await persistSettings(current, { refresh: true, statusMessage: 'AIプロファイルを削除しました。', profileDeletionId: profileId });
                 setManagementDirty(false);
                 restoreManagementWindowFocus(controller.selectedProfileId ?? '');
                 return;
@@ -46730,6 +46842,14 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
                 fallbackState.settings = structuredClone(settings);
                 return structuredClone(fallbackState.settings);
             },
+            saveSettingsWithProfileDeletion: async (settings, _profileId) => {
+                fallbackState.settings = structuredClone(settings);
+                return structuredClone(fallbackState.settings);
+            },
+            saveAssignments: async (assignments) => {
+                fallbackState.settings = { ...fallbackState.settings, assignments: structuredClone(assignments) };
+                return structuredClone(fallbackState.settings);
+            },
             getUsageSummary: async () => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }),
             resetUsageSummary: async () => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }),
             resetProfileUsage: async () => ({ totals: emptyUsage(), totalCostUsd: 0, profiles: {} }),
@@ -46754,6 +46874,7 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
         });
         controller = {
             settings: defaultSettings(),
+            settingsLoadState: bridge.isDesktop ? 'pending' : 'loaded',
             running: false,
             stepping: false,
             runSession: null,
@@ -47095,7 +47216,22 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
                 controller.showConfidential = Boolean(event.detail?.visible);
                 liveProgressController.refreshLiveView();
             });
-            controller.settings = await bridge.getSettings().catch(() => defaultSettings());
+            if (bridge.isDesktop) {
+                try {
+                    controller.settings = await bridge.getSettings();
+                    controller.settingsLoadState = 'loaded';
+                }
+                catch (error) {
+                    controller.settingsLoadState = 'failed';
+                    const wrapped = new Error(`AI設定の読み込みに失敗したため、既定設定への置換保存を防ぐ目的でAI管理の初期化を停止しました: ${error?.message ?? error}`);
+                    wrapped.code = 'SETTINGS_INITIAL_LOAD_FAILED';
+                    throw wrapped;
+                }
+            }
+            else {
+                controller.settings = await bridge.getSettings();
+                controller.settingsLoadState = 'loaded';
+            }
             const settingsStartupNotices = bridge.isDesktop && typeof bridge.getSettingsStartupNotices === 'function'
                 ? await bridge.getSettingsStartupNotices().catch(() => [])
                 : [];

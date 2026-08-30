@@ -228,3 +228,18 @@ test('全自動でもAIプロファイル未設定を参加者別の手動生成
   assert.match(api.renderManagementPage(state), /API 0人 \/ 手動生成 3人/u);
   assert.match(api.renderManagementPage(state), /未設定の参加者だけ手動プロンプトで進めます/u);
 });
+
+
+test('デスクトップAI設定の初回読込失敗時は既定設定へフォールバックして保存処理を継続しない', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/desktopAutomation.js'), 'utf8');
+  assert.doesNotMatch(source, /bridge\.getSettings\(\)\.catch\(\(\) => defaultSettings\(\)\)/u);
+  assert.match(source, /settingsLoadState = 'failed'/u);
+  assert.match(source, /SETTINGS_INITIAL_LOAD_FAILED/u);
+});
+
+test('起動時割り当て整合はAI設定全体ではなく割り当て専用保存APIを使用する', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/settingsPersistenceCoordinator.js'), 'utf8');
+  assert.match(source, /bridge\.saveAssignments\(assignments\)/u);
+  assert.doesNotMatch(source, /persistSettings\(\{ \.\.\.controller\.settings, assignments \}, \{ refresh: true \}\)/u);
+  assert.match(source, /SETTINGS_NOT_LOADED/u);
+});

@@ -424,7 +424,7 @@ export function createAiManagementController(context) {
         if (document.activeElement === button) button.blur();
         current.profiles = current.profiles.filter((item) => item.id !== profileId);
         if (controller.selectedProfileId === profileId) controller.selectedProfileId = current.profiles[0]?.id ?? null;
-        await persistSettings(current, { refresh: true, statusMessage: 'AIプロファイルを削除しました。' });
+        await persistSettings(current, { refresh: true, statusMessage: 'AIプロファイルを削除しました。', profileDeletionId: profileId });
         setManagementDirty(false);
         restoreManagementWindowFocus(controller.selectedProfileId ?? '');
         return;
