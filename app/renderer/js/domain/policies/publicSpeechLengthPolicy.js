@@ -1,6 +1,6 @@
 /**
- * 責務: 人間向けの公開発言量区分を、AI公開発言の文字数目安と会話局面モードへ変換する。設定された発言量は維持しつつ、既出論点による文字数の水増しは要求しない。
- * 変更ルール: 区分名・文字数目安・deliveryModeの対応はこのファイルだけで管理する。人間向け区分名をAIプロンプト用ラベルとして再掲せず、実際のプロンプト文言はpromptTemplates.jsを正本とする。最初の会話開始と序盤反応は短くするが、同じ応答でCO・能力結果を公開する場合は通常の役職発言量を優先する。
+ * 責務: 人間向けの公開発言量区分を、AI公開発言の文字数目安・許容上限と会話局面モードへ変換する。設定された発言量は維持しつつ、既出論点による文字数の水増しは要求しない。
+ * 変更ルール: 区分名・文字数目安・目安に対する許容上限倍率・deliveryModeの対応はこのファイルだけで管理する。人間向け区分名をAIプロンプト用ラベルとして再掲せず、実際のプロンプト文言はpromptTemplates.jsを正本とする。最初の会話開始と序盤反応は短くするが、同じ応答でCO・能力結果を公開する場合は通常の役職発言量を優先する。
  */
 
 export const PUBLIC_SPEECH_LENGTH_OPTIONS = Object.freeze([
@@ -43,6 +43,19 @@ const PUBLIC_SPEECH_LENGTH_POLICIES = Object.freeze({
     deliveryMode: 'very-detailed',
   }),
 });
+
+
+export const PUBLIC_SPEECH_MAX_TARGET_MULTIPLIER = 1.5;
+
+export function resolvePublicSpeechPromptMaxChars(targetChars, { absoluteMaxChars = 450 } = {}) {
+  const target = Number(targetChars);
+  if (!Number.isFinite(target) || target <= 0) return 0;
+  const scaledMax = Math.ceil(target * PUBLIC_SPEECH_MAX_TARGET_MULTIPLIER);
+  const absoluteMax = Number(absoluteMaxChars);
+  return Number.isFinite(absoluteMax) && absoluteMax > 0
+    ? Math.min(scaledMax, Math.floor(absoluteMax))
+    : scaledMax;
+}
 
 export function isPublicSpeechLengthOption(value) {
   return Object.hasOwn(PUBLIC_SPEECH_LENGTH_POLICIES, value);

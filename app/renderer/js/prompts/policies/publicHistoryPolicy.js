@@ -1,6 +1,6 @@
 /**
  * 責務: AI本人の前回正常回答登録位置と現在タスクから公開履歴の提示範囲を決定し、本番プロンプトと生成工程で共用する履歴選択を提供する。
- * 変更ルール: 差分境界の正本は既存decisionDeltaだけとし、本モジュールで独自カーソルを作成・更新しない。既定はdeltaとし、前回正常回答登録後に増えた公開履歴だけを基本送信する。fullは明示選択時だけ全件・全文、compactは境界以前の公開発言だけを構造的に選別して境界後は全件・全文を維持する。今回の非公開参考視点が公開イベント番号を参照する場合は、その参照先だけをcompactの保持対象およびdeltaの追加同梱対象として扱い、参考視点だけが送信履歴からぶら下がる状態を作らない。通常の夜タスクでは当日最終巡の公開発言と投票・処刑・夜明けなどの確定履歴を渡し、それ以前の通常発言は重複送信しない。墓場会話だけは死亡時点で凍結済みの公開履歴全体を継続記憶として渡すためfullを使用する。
+ * 変更ルール: 差分境界の正本は既存decisionDeltaだけとし、本モジュールで独自カーソルを作成・更新しない。既定はdeltaとし、前回正常回答登録後に増えた公開履歴だけを基本送信する。Day 2以降の昼議論第1巡だけは、deltaで失われる前日の投票直前最終巡発言と前日投票結果を比較材料として補完し、第2巡以降へ持ち越さない。fullは明示選択時だけ全件・全文、compactは境界以前の公開発言だけを構造的に選別して境界後は全件・全文を維持する。今回の非公開参考視点が公開イベント番号を参照する場合は、その参照先だけをcompactの保持対象およびdeltaの追加同梱対象として扱い、参考視点だけが送信履歴からぶら下がる状態を作らない。通常の夜タスクでは当日最終巡の公開発言と投票・処刑・夜明けなどの確定履歴を渡し、それ以前の通常発言は重複送信しない。墓場会話だけは死亡時点で凍結済みの公開履歴全体を継続記憶として渡すためfullを使用する。
  */
 
 import { compactPriorPublicHistoryTimeline } from './priorPublicHistoryCompactor.js';
@@ -78,6 +78,40 @@ function selectNightHistory(timeline, currentDay) {
   };
 }
 
+function appendPreviousDayFirstRoundContext(selected, fullTimeline, context) {
+  const currentDay = Number(context?.game?.day);
+  const currentRound = Number(context?.game?.discussion?.round);
+  if (context?.game?.phase !== 'discussion' || currentDay <= 1 || currentRound !== 1) return;
+
+  const previousDay = currentDay - 1;
+  const previousVotes = [...(fullTimeline?.voteResults ?? [])]
+    .filter((event) => Number(event?.day) === previousDay)
+    .sort((left, right) => Number(left?.sequence ?? 0) - Number(right?.sequence ?? 0));
+  if (!previousVotes.length) return;
+
+  const firstVoteSequence = Number(previousVotes[0]?.sequence);
+  const speechesBeforeVote = [...(fullTimeline?.speeches ?? [])]
+    .filter((event) => Number(event?.day) === previousDay)
+    .filter((event) => !Number.isFinite(firstVoteSequence) || Number(event?.sequence) < firstVoteSequence);
+  const finalRoundSpeeches = selectFinalRoundSpeeches({ speeches: speechesBeforeVote }, previousDay);
+  const selectedSequences = new Set(Object.values(selected)
+    .flatMap((events) => Array.isArray(events) ? events : [])
+    .map((event) => Number(event?.sequence))
+    .filter(Number.isInteger));
+
+  [...finalRoundSpeeches, ...previousVotes]
+    .sort((left, right) => Number(left?.sequence ?? 0) - Number(right?.sequence ?? 0))
+    .forEach((event) => {
+      const sequence = Number(event?.sequence);
+      if (!Number.isInteger(sequence) || selectedSequences.has(sequence)) return;
+      classifyEvent(selected, event);
+      selectedSequences.add(sequence);
+    });
+  Object.values(selected).forEach((events) => {
+    if (Array.isArray(events)) events.sort((left, right) => Number(left?.sequence ?? 0) - Number(right?.sequence ?? 0));
+  });
+}
+
 export function preservedHistoricalSpeechSequences(context, preserveEventSequences = []) {
   const evidenceEventIds = new Set(context?.player?.decisionState?.keyPublicEvidenceEventIds ?? []);
   const preservedSequences = new Set(
@@ -139,7 +173,10 @@ export function selectPublicHistoryTimeline(context, decision, mode, {
   const selected = emptyTimeline();
   if (mode === 'delta' || mode === 'night-delta') {
     (decision?.decisionDelta?.newPublicEvents ?? []).forEach((event) => classifyEvent(selected, event));
-    if (mode === 'delta') appendPreservedPublicEvents(selected, fullTimeline, preserveEventSequences);
+    if (mode === 'delta') {
+      appendPreservedPublicEvents(selected, fullTimeline, preserveEventSequences);
+      appendPreviousDayFirstRoundContext(selected, fullTimeline, context);
+    }
     return NIGHT_HISTORY_MODES.has(mode) ? selectNightHistory(selected, context?.game?.day) : selected;
   }
   const currentDay = Number(context?.game?.day);

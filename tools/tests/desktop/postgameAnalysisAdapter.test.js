@@ -45,9 +45,9 @@ function sampleTurn(executionMode = 'automatic') {
       depth: 3,
       ownerProfileId: 'profile-original',
       taskCategory: 'speech',
-      finalStageId: 'proofread',
+      finalStageId: 'render',
       stages: [
-        { stageId: 'draft', executorProfileId: 'profile-original', status: 'accepted', targetTextFields: [], fallbackUsed: false, issues: [], rawResponse: 'DRAFT SAVED RESPONSE' },
+        { stageId: 'decide', executorProfileId: 'profile-original', status: 'accepted', targetTextFields: [], fallbackUsed: false, issues: [], rawResponse: 'DECIDE SAVED RESPONSE' },
         { stageId: 'render', executorProfileId: 'profile-render', status: 'applied', targetTextFields: ['publicSpeech'], fallbackUsed: false, issues: [], rawResponse: 'RENDER SAVED RESPONSE' },
       ],
     },
@@ -97,7 +97,7 @@ test('終了後AI分析は当時のownerプロファイルへ保存済みprompt�
   assert.equal(request.isTaskCall, false);
   assert.equal(request.taskStart, false);
   assert.match(request.promptEnvelope.dynamicTaskPrompt, /ORIGINAL SAVED PROMPT/u);
-  assert.match(request.promptEnvelope.dynamicTaskPrompt, /DRAFT SAVED RESPONSE/u);
+  assert.match(request.promptEnvelope.dynamicTaskPrompt, /DECIDE SAVED RESPONSE/u);
   assert.match(request.promptEnvelope.dynamicTaskPrompt, /RENDER SAVED RESPONSE/u);
   assert.match(request.promptEnvelope.dynamicTaskPrompt, /「村寄り」は何に引っ張られた？/u);
   assert.match(request.promptEnvelope.commonSystemInstruction, /Never claim access to hidden chain-of-thought/u);

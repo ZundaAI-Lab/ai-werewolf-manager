@@ -407,9 +407,9 @@ export function createAiManagementController(context) {
           if (sourceProfile.id === profileId) return [];
           const generation = normalizeGenerationSettings(sourceProfile.generation);
           return [
-            ['構造草案', generation.draftProfileId],
-            ['発言化', generation.renderProfileId],
-            ['校正', generation.proofreadProfileId],
+            ['第1工程（判断／客観分析）', generation.reasoningProfileId],
+            ['第2/最終工程（発言化／最終回答）', generation.outputProfileId],
+            ['批判的検証', generation.critiqueProfileId],
           ].filter(([, referenceId]) => referenceId === profileId).map(([stageLabel]) => `${sourceProfile.label}の${stageLabel}担当`);
         });
         if (generationReferences.length) return runtime().toast(`工程担当として参照中のため削除できません: ${generationReferences.join('、')}`, 'error');

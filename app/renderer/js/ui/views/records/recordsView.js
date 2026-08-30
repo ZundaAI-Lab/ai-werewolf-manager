@@ -80,9 +80,11 @@ function renderPostgameAnalysis(turn, analysis = null) {
 
 const GENERATION_STAGE_LABELS = Object.freeze({
   direct: '直接生成',
-  draft: '構造草案',
-  render: '発言化',
-  proofread: '校正',
+  decide: '判断',
+  analyze: '客観分析',
+  critique: '批判的検証',
+  finalize: '最終回答',
+  render: 'キャラ発言化',
 });
 
 export function formatGenerationRun(run, getAiProfileLabel = () => null) {

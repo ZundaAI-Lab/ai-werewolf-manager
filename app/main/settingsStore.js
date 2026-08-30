@@ -8,15 +8,16 @@
  * - キャッシュ設定はautoまたはoff、Anthropic TTLはauto・5m・1hだけを保存する。
  * - OllamaのThinking段階は共有定義のnone・low・medium・high・maxだけをAIプロファイル単位で保存し、noneはThinking無効、未設定または不正値はlowへ正規化する。
  * - 応答検証エラー時は停止・部分修復・部分修復後に元の応答形式で再生成のいずれかだけを保存し、API通信再試行と共通の呼び出し予算は実行層で固定する。
- * - 永続設定は製品schema互換層で旧schemaを現行へ一方向migrationした後に共有settingsSchema.jsの現行保存形を検証し、未来schemaは推測して読まない。
+ * - 永続設定は現行schema、または明示的なmigrationが登録された旧schemaだけを共有settingsSchema.jsの現行保存形として検証する。migrationのない旧schema・未来schemaは推測して読まない。
  * - migration前ファイルはpre-schemaバックアップを残す。
+ * - 保存済みendpoint文字列の復元と現在の通信ポリシー適合判定を分離する。読込時は現行schemaのendpointを切り詰めず保持し、新規追加・provider変更・endpoint変更の保存境界では文字数上限を含めて拒否し、実通信直前はendpointPolicyで再検証する。
  * - Rendererからの現行入力は保存読込検証と分離してsanitizeする。
- * - 設定更新はtmp本体をfsyncしてrenameし、対応環境では親ディレクトリもfsyncする原子的保存の成功後だけメモリへ反映する。
+ * - 設定更新はtmp本体をfsyncしてrenameし、対応環境では親ディレクトリもfsyncする原子的保存の成功後だけメモリへ反映する。読込不能な既存設定は一意名へ退避してから既定値へ切り替え、退避自体に失敗した場合は元ファイル保護のため以後の設定保存を禁止する。起動時の退避・保存禁止・現行通信規則に適合しないendpointは永続schemaへ混ぜず一時通知としてRendererへ渡す。
  * - 使用量集計は詳細ログ保存設定から独立させ、AIプロファイルIDを永続集計の正本として全用途のAPI要求を同じ累計へ加算し、API要求ごとのメモリ更新を短時間集約して最大待機時間または終了時flushで原子的保存する。
  * - ゲームIDやチャットセッションIDは詳細ログ用メタデータに留め、料金集計の階層キーにしない。
  * - プロファイル単位リセットは該当プロファイル累計だけを全体累計から差し引き、他プロファイル・詳細ログを変更しない。
  * - 詳細ログは保存直前に認証ヘッダー・APIキー形式をマスクし、POSIXでは現行ログとローテーション世代を0600へ制限する。
- * - ゲームID・AIプロファイルID・割り当てプレイヤーIDはMain境界で再検証し、AIプロファイルIDの重複はランダム修復せず拒否する。APIキーは配列位置ではなくIDで追跡し、カスタム接続先ではproviderと正規化済みendpointの両方が一致する場合だけ引き継ぐ。
+ * - ゲームID・AIプロファイルID・割り当てプレイヤーIDはMain境界で再検証し、AIプロファイルIDの重複・件数上限超過は切り捨てやランダム修復をせず拒否する。APIキーは配列位置ではなくIDで追跡し、カスタム接続先ではproviderと正規化済みendpointの両方が一致する場合だけ引き継ぐ。ただし現行通信規則で無効な保存済みendpointは、providerとendpoint文字列を変更していない場合に限って暗号化キーを保持する。
  * - プロファイル別集計と参加者割り当ての動的キーはnull prototypeオブジェクトで保持する。
  */
 
@@ -26,7 +27,6 @@ const {
   chmodSync,
   closeSync,
   existsSync,
-  fsyncSync,
   mkdirSync,
   openSync,
   readFileSync,
@@ -38,6 +38,7 @@ const {
 const { randomUUID } = require('node:crypto');
 const { isDeepStrictEqual } = require('node:util');
 const { dirname, join } = require('node:path');
+const { atomicWriteJsonSync } = require('./atomicJsonFile.js');
 const { safeStorage } = require('electron');
 const {
   CHAT_TOKEN_LIMIT_FIELDS,
@@ -53,9 +54,10 @@ const {
   isLocalProvider,
 } = require('./providerClients.js');
 const { isValidEntityId, requireEntityId } = require('../shared/entityIdPolicy.js');
+const { validateEndpoint } = require('../shared/endpointPolicy.js');
 const { sanitizeRequestLogEntry } = require('./requestLogSanitizer.js');
 const { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } = require('../shared/dataCompatibility/schemaVersions.js');
-const { migratePersistedDocument } = require('./dataCompatibilityPersistence.js');
+const { migratePersistedDocument, quarantineUnreadableJsonSync } = require('./dataCompatibilityPersistence.js');
 const {
   DEFAULT_OLLAMA_THINKING_LEVEL,
   LOCAL_SERVER_PRESETS,
@@ -72,6 +74,7 @@ const {
   TASK_OVERRIDE_KEYS,
 } = require('../shared/settingsSchema.js');
 const MAX_PROFILE_COUNT = 64;
+const MAX_ENDPOINT_LENGTH = 500;
 const REQUEST_LOG_MAX_BYTES = 10 * 1024 * 1024;
 const REQUEST_LOG_GENERATIONS = 5;
 const USAGE_FLUSH_DELAY_MS = 1500;
@@ -80,14 +83,14 @@ const USAGE_SUMMARY_SCHEMA_VERSION = getCurrentDataSchemaVersion(DATA_SCHEMA_KIN
 const MONEY_SCALE = 1_000_000_000;
 const RESPONSE_RECOVERY_MODES = Object.freeze(['stop', 'repair', 'repair-regenerate']);
 const GENERATION_DEPTHS = Object.freeze([1, 2, 3, 4]);
-const GENERATION_REFERENCE_KEYS = Object.freeze(['draftProfileId', 'renderProfileId', 'proofreadProfileId']);
+const GENERATION_REFERENCE_KEYS = Object.freeze(['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']);
 
 function defaultGenerationSettings() {
   return {
     depth: 1,
-    draftProfileId: null,
-    renderProfileId: null,
-    proofreadProfileId: null,
+    reasoningProfileId: null,
+    outputProfileId: null,
+    critiqueProfileId: null,
     taskOverrides: Object.fromEntries(TASK_OVERRIDE_KEYS.map((key) => [key, null])),
   };
 }
@@ -255,53 +258,45 @@ function createDefaultSettings() {
   };
 }
 
-function fsyncDirectoryBestEffort(directoryPath) {
-  let descriptor = null;
+function readJsonFileIfExists(path) {
   try {
-    descriptor = openSync(directoryPath, 'r');
-    fsyncSync(descriptor);
+    return { exists: true, value: JSON.parse(readFileSync(path, 'utf8')) };
   } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR'].includes(error?.code)) throw error;
-  } finally {
-    if (descriptor !== null) closeSync(descriptor);
-  }
-}
-
-function atomicWriteJson(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  let descriptor = null;
-  try {
-    descriptor = openSync(temporary, 'w', 0o600);
-    writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = null;
-    renameSync(temporary, path);
-    fsyncDirectoryBestEffort(dirname(path));
-  } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
-    try { unlinkSync(temporary); } catch {}
+    if (error?.code === 'ENOENT') return { exists: false, value: null };
     throw error;
   }
 }
 
-function parseJsonFile(path) {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, 'utf8'));
-  } catch {
-    return null;
+function validateConfiguredEndpoint(endpoint, provider) {
+  const candidate = String(endpoint ?? '').trim();
+  if (candidate.length > MAX_ENDPOINT_LENGTH) {
+    return {
+      ok: false,
+      normalizedEndpoint: '',
+      message: `APIエンドポイントが長すぎます（上限${MAX_ENDPOINT_LENGTH}文字 / 指定${candidate.length}文字）。`,
+    };
   }
+  return validateEndpoint(candidate, { requireLoopback: isLocalProvider(provider) });
 }
 
-function normalizedEndpoint(raw, provider, defaults) {
+function normalizedEndpoint(raw, provider, defaults, { requireValidEndpoint = true } = {}) {
   if (provider === 'demo') return '';
   if (OFFICIAL_PROVIDERS.has(provider)) return defaults.endpoint;
-  return endpointForProfileInput(raw, provider, defaults).trim().slice(0, 500);
+  const candidate = endpointForProfileInput(raw, provider, defaults).trim();
+  const validation = validateConfiguredEndpoint(candidate, provider);
+  if (!validation.ok && requireValidEndpoint) {
+    throw new RangeError(`APIエンドポイントが不正です: ${validation.message}`);
+  }
+  // 読込時は既存文字列を切り詰めて別URLへ変換しない。送信先同一性の比較だけvalidationの正規化値を使う。
+  return candidate;
 }
 
-function sanitizeProfile(raw, index = 0) {
+function endpointIdentity(profile) {
+  const validation = validateConfiguredEndpoint(profile?.endpoint, profile?.provider);
+  return validation.ok ? validation.normalizedEndpoint : null;
+}
+
+function sanitizeProfile(raw, index = 0, { requireValidEndpoint = true } = {}) {
   const provider = normalizeProfileProvider(raw);
   const defaults = PROVIDER_DEFAULTS[provider] ?? PROVIDER_DEFAULTS.demo;
   const fallbackId = index === 0 ? 'profile-demo' : createProfileId();
@@ -311,7 +306,7 @@ function sanitizeProfile(raw, index = 0) {
     label: String(raw?.label ?? `AIプロファイル ${index + 1}`).trim().slice(0, 80) || `AIプロファイル ${index + 1}`,
     provider,
     model: String(raw?.model ?? defaults.model ?? '').trim().slice(0, 160),
-    endpoint: normalizedEndpoint(raw, provider, defaults),
+    endpoint: normalizedEndpoint(raw, provider, defaults, { requireValidEndpoint }),
     enabled: raw?.enabled !== false,
     hasApiKey: Boolean(raw?.apiKeyEncrypted),
     apiKeyEncrypted: typeof raw?.apiKeyEncrypted === 'string' ? raw.apiKeyEncrypted : '',
@@ -339,14 +334,21 @@ function sanitizeProfile(raw, index = 0) {
 function canReuseEncryptedApiKey(previous, profile) {
   if (!previous || previous.provider !== profile.provider) return false;
   if (!CUSTOM_ENDPOINT_PROVIDERS.has(profile.provider)) return true;
-  return previous.endpoint === profile.endpoint;
+  const previousIdentity = endpointIdentity(previous);
+  const nextIdentity = endpointIdentity(profile);
+  if (previousIdentity && nextIdentity) return previousIdentity === nextIdentity;
+  // 現行通信規則では使用不能でも、保存済みendpointを変更していない限り暗号化キーを失わせない。
+  return String(previous.endpoint ?? '') === String(profile.endpoint ?? '');
 }
 
-function uniqueProfiles(rawProfiles) {
-  const source = Array.isArray(rawProfiles) ? rawProfiles.slice(0, MAX_PROFILE_COUNT) : [];
+function uniqueProfiles(rawProfiles, { requireValidEndpoint = true } = {}) {
+  const source = Array.isArray(rawProfiles) ? rawProfiles : [];
+  if (source.length > MAX_PROFILE_COUNT) {
+    throw new RangeError(`AIプロファイルは最大${MAX_PROFILE_COUNT}件までです（指定: ${source.length}件）。不要なプロファイルを削除してから保存してください。`);
+  }
   const seen = new Set();
   return source.map((raw, index) => {
-    const profile = sanitizeProfile(raw, index);
+    const profile = sanitizeProfile(raw, index, { requireValidEndpoint });
     if (seen.has(profile.id)) throw new RangeError(`AIプロファイルIDが重複しています: ${profile.id}`);
     seen.add(profile.id);
     return profile;
@@ -505,16 +507,23 @@ function normalizeCurrentUsageSummary(raw) {
 }
 
 function loadUsageSummary(path) {
-  if (!existsSync(path)) return emptyUsageSummary();
-  const raw = parseJsonFile(path);
+  const fallback = emptyUsageSummary();
   try {
-    const migration = migratePersistedDocument(raw, { kind: DATA_SCHEMA_KIND.USAGE_SUMMARY, label: 'API使用量集計', path });
+    const loaded = readJsonFileIfExists(path);
+    if (!loaded.exists) return { value: fallback, writable: true };
+    const migration = migratePersistedDocument(loaded.value, { kind: DATA_SCHEMA_KIND.USAGE_SUMMARY, label: 'API使用量集計', path });
     const normalized = normalizeCurrentUsageSummary(migration.value);
-    if (migration.migrated) atomicWriteJson(path, normalized);
-    return normalized;
+    if (migration.migrated) atomicWriteJsonSync(path, normalized, { indent: 2 });
+    return { value: normalized, writable: true };
   } catch (error) {
-    console.warn('API使用量集計を読み込めないため空の集計を使用します。元ファイルは変更しません。', error);
-    return emptyUsageSummary();
+    try {
+      const backupPath = quarantineUnreadableJsonSync(path);
+      console.warn(`API使用量集計を読み込めないため${backupPath ? `「${backupPath}」へ退避し、` : ''}空の集計を使用します。`, error);
+      return { value: fallback, writable: true };
+    } catch (quarantineError) {
+      console.error('API使用量集計を読み込めず、元ファイルの退避にも失敗したため保存を禁止します。', quarantineError, error);
+      return { value: fallback, writable: false };
+    }
   }
 }
 
@@ -581,9 +590,53 @@ function validateProfileDeletionAndAssignments(previousProfiles, nextProfiles, a
   }
 }
 
-function normalizeCurrentSettingsInput(raw) {
+function validateChangedProfileEndpoints(previousProfiles, nextProfiles) {
+  const previousById = new Map((previousProfiles ?? []).map((profile) => [String(profile.id), profile]));
+  for (const profile of nextProfiles ?? []) {
+    if (profile.provider === 'demo' || OFFICIAL_PROVIDERS.has(profile.provider)) continue;
+    const validation = validateConfiguredEndpoint(profile.endpoint, profile.provider);
+    if (validation.ok) continue;
+    const previous = previousById.get(String(profile.id));
+    const unchangedPersistedEndpoint = previous
+      && previous.provider === profile.provider
+      && String(previous.endpoint ?? '') === String(profile.endpoint ?? '');
+    if (unchangedPersistedEndpoint) continue;
+    throw new RangeError(`APIエンドポイントが不正です: ${validation.message}`);
+  }
+}
+
+function profileEndpointStartupNotices(profiles) {
+  const notices = [];
+  for (const profile of profiles ?? []) {
+    if (profile.provider === 'demo' || OFFICIAL_PROVIDERS.has(profile.provider)) continue;
+    const validation = validateConfiguredEndpoint(profile.endpoint, profile.provider);
+    if (validation.ok) continue;
+    notices.push(Object.freeze({
+      code: 'SETTINGS_PROFILE_ENDPOINT_UNAVAILABLE',
+      profileId: String(profile.id ?? ''),
+      profileLabel: String(profile.label ?? ''),
+      reason: String(validation.message ?? ''),
+    }));
+  }
+  return notices;
+}
+
+function settingsLoadFailureNotice(error, raw, backupPath = '', writable = true) {
+  const sourceSchemaVersion = Number.isInteger(raw?.schemaVersion) ? raw.schemaVersion : null;
+  const schemaMismatch = sourceSchemaVersion !== null && sourceSchemaVersion !== SETTINGS_SCHEMA_VERSION;
+  return Object.freeze({
+    code: writable
+      ? (schemaMismatch ? 'SETTINGS_UNSUPPORTED_SCHEMA' : error instanceof SyntaxError ? 'SETTINGS_INVALID_JSON' : 'SETTINGS_UNREADABLE')
+      : 'SETTINGS_LOAD_FAILED_READ_ONLY',
+    sourceSchemaVersion,
+    currentSchemaVersion: SETTINGS_SCHEMA_VERSION,
+    backupPath: String(backupPath ?? ''),
+  });
+}
+
+function normalizeCurrentSettingsInput(raw, { requireValidEndpoint = true } = {}) {
   const defaults = createDefaultSettings();
-  const profiles = uniqueProfiles(raw?.profiles);
+  const profiles = uniqueProfiles(raw?.profiles, { requireValidEndpoint });
   const normalizedProfiles = profiles.length ? profiles : defaults.profiles;
   const profileIds = new Set(normalizedProfiles.map((profile) => profile.id));
   validateGenerationReferences(normalizedProfiles);
@@ -624,7 +677,7 @@ function assertStoredSettingsDocument(raw) {
   });
   if (!plainObject(raw.assignments)) throw new TypeError('保存AI設定.assignmentsはオブジェクトで指定してください。');
 
-  const normalized = normalizeCurrentSettingsInput(raw);
+  const normalized = normalizeCurrentSettingsInput(raw, { requireValidEndpoint: false });
   if (!isDeepStrictEqual(serializableClone(normalized), serializableClone(raw))) {
     throw new RangeError('保存AI設定が現行schemaの正規形と一致しません。');
   }
@@ -633,20 +686,36 @@ function assertStoredSettingsDocument(raw) {
 
 function loadStoredSettings(path) {
   const defaults = createDefaultSettings();
-  if (!existsSync(path)) return defaults;
-  const raw = parseJsonFile(path);
+  let loadedValue = null;
   try {
-    const migration = migratePersistedDocument(raw, {
+    const loaded = readJsonFileIfExists(path);
+    if (!loaded.exists) return { value: defaults, writable: true, startupNotices: [] };
+    loadedValue = loaded.value;
+    const migration = migratePersistedDocument(loaded.value, {
       kind: DATA_SCHEMA_KIND.DESKTOP_SETTINGS,
       label: '保存AI設定',
       path,
     });
     const normalized = assertStoredSettingsDocument(migration.value);
-    if (migration.migrated) atomicWriteJson(path, normalized);
-    return normalized;
+    if (migration.migrated) atomicWriteJsonSync(path, normalized, { indent: 2 });
+    return { value: normalized, writable: true, startupNotices: profileEndpointStartupNotices(normalized.profiles) };
   } catch (error) {
-    console.warn('保存AI設定を読み込めないため既定値を使用します。元ファイルは変更しません。', error);
-    return defaults;
+    try {
+      const backupPath = quarantineUnreadableJsonSync(path);
+      console.warn(`保存AI設定を読み込めないため${backupPath ? `「${backupPath}」へ退避し、` : ''}既定値を使用します。`, error);
+      return {
+        value: defaults,
+        writable: true,
+        startupNotices: [settingsLoadFailureNotice(error, loadedValue, backupPath, true)],
+      };
+    } catch (quarantineError) {
+      console.error('保存AI設定を読み込めず、元ファイルの退避にも失敗したため設定保存を禁止します。', quarantineError, error);
+      return {
+        value: defaults,
+        writable: false,
+        startupNotices: [settingsLoadFailureNotice(error, loadedValue, '', false)],
+      };
+    }
   }
 }
 
@@ -656,8 +725,13 @@ class SettingsStore {
     this.requestLogPath = join(userDataPath, 'llm-request-log.jsonl');
     this.usageSummaryPath = join(userDataPath, 'llm-usage-summary.json');
     restrictRequestLogPermissions(this.requestLogPath);
-    this.settings = loadStoredSettings(this.settingsPath);
-    this.usageSummary = loadUsageSummary(this.usageSummaryPath);
+    const loadedSettings = loadStoredSettings(this.settingsPath);
+    this.settings = loadedSettings.value;
+    this.settingsWritable = loadedSettings.writable;
+    this.startupNotices = Array.isArray(loadedSettings.startupNotices) ? loadedSettings.startupNotices.map((notice) => ({ ...notice })) : [];
+    const loadedUsageSummary = loadUsageSummary(this.usageSummaryPath);
+    this.usageSummary = loadedUsageSummary.value;
+    this.usageSummaryWritable = loadedUsageSummary.writable;
     this.usageSummaryDirty = false;
     this.usageFlushTimer = null;
     this.usageMaxFlushTimer = null;
@@ -677,13 +751,25 @@ class SettingsStore {
     };
   }
 
+  consumeStartupNotices() {
+    const notices = this.startupNotices.map((notice) => ({ ...notice }));
+    this.startupNotices = [];
+    return notices;
+  }
+
   savePublicSettings(input) {
+    if (!this.settingsWritable) {
+      const error = new Error('保存AI設定を保護しているため変更を保存できません。アプリを終了し、desktop-settings.jsonの読込状態を確認してください。');
+      error.code = 'SETTINGS_READ_ONLY';
+      throw error;
+    }
     if (input?.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
       throw new RangeError(`AI設定のschemaVersionが現行形式ではありません: ${input?.schemaVersion ?? '未指定'}`);
     }
     const previousById = new Map(this.settings.profiles.map((profile) => [profile.id, profile]));
     const rawProfiles = Array.isArray(input?.profiles) ? input.profiles : this.settings.profiles;
-    const candidateProfiles = uniqueProfiles(rawProfiles);
+    const candidateProfiles = uniqueProfiles(rawProfiles, { requireValidEndpoint: false });
+    validateChangedProfileEndpoints(this.settings.profiles, candidateProfiles);
     const incomingById = new Map(candidateProfiles.map((profile, index) => [profile.id, rawProfiles[index] ?? {}]));
     validateProfileDeletionAndAssignments(this.settings.profiles, candidateProfiles, input?.assignments ?? this.settings.assignments);
     validateGenerationReferences(candidateProfiles);
@@ -692,7 +778,7 @@ class SettingsStore {
       ...input,
       profiles: candidateProfiles,
       assignments: input?.assignments ?? this.settings.assignments,
-    });
+    }, { requireValidEndpoint: false });
 
     normalizedBase.profiles = normalizedBase.profiles.map((profile) => {
       const incoming = incomingById.get(profile.id) ?? {};
@@ -710,7 +796,7 @@ class SettingsStore {
 
     const profileIds = new Set(normalizedBase.profiles.map((profile) => profile.id));
     normalizedBase.assignments = normalizeAssignments(input?.assignments ?? this.settings.assignments, profileIds);
-    atomicWriteJson(this.settingsPath, normalizedBase);
+    atomicWriteJsonSync(this.settingsPath, normalizedBase, { indent: 2 });
     this.settings = normalizedBase;
     return this.publicSettings();
   }
@@ -732,6 +818,7 @@ class SettingsStore {
 
   scheduleUsageSummaryFlush() {
     this.usageSummaryDirty = true;
+    if (!this.usageSummaryWritable) return;
     if (this.usageFlushTimer) clearTimeout(this.usageFlushTimer);
     this.usageFlushTimer = setTimeout(() => this.flushUsageSummarySafely(), USAGE_FLUSH_DELAY_MS);
     this.usageFlushTimer.unref?.();
@@ -752,12 +839,18 @@ class SettingsStore {
   }
 
   flushUsageSummary({ force = false } = {}) {
+    if (!this.usageSummaryWritable) {
+      if (!this.usageSummaryDirty && !force) return false;
+      const error = new Error('API使用量集計ファイルを保護しているため保存できません。');
+      error.code = 'USAGE_SUMMARY_READ_ONLY';
+      throw error;
+    }
     if (this.usageFlushTimer) clearTimeout(this.usageFlushTimer);
     if (this.usageMaxFlushTimer) clearTimeout(this.usageMaxFlushTimer);
     this.usageFlushTimer = null;
     this.usageMaxFlushTimer = null;
     if (!this.usageSummaryDirty && !force) return false;
-    atomicWriteJson(this.usageSummaryPath, this.usageSummary);
+    atomicWriteJsonSync(this.usageSummaryPath, this.usageSummary, { indent: 2 });
     this.usageSummaryDirty = false;
     return true;
   }
@@ -829,6 +922,7 @@ class SettingsStore {
 }
 
 module.exports = {
+  MAX_ENDPOINT_LENGTH,
   MAX_PROFILE_COUNT,
   REQUEST_LOG_GENERATIONS,
   REQUEST_LOG_MAX_BYTES,

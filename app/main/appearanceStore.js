@@ -1,22 +1,13 @@
 /**
  * 責務: ツール本体と、任意の配色同期・独立した表示/演出設定を持つ公開表示の外観設定だけをuserData内の専用JSONへ永続化する。
- * 変更ルール: AI設定・ゲーム状態・画面描画を扱わない。製品schema互換層で旧schemaを現行へ一方向migrationした後に共有appearanceSchema.jsの現行保存形を検証し、未来schemaは推測して読まない。migration前ファイルはpre-schemaバックアップを残す。Renderer入力は未知項目を拒否し、原子的保存の成功後だけメモリへ反映する。
+ * 変更ルール: AI設定・ゲーム状態・画面描画を扱わない。製品schema管理層で対応Migrationがある旧schemaだけを現行へ一方向migrationした後に共有appearanceSchema.jsの現行保存形を検証し、Migrationのない旧schema・未来schemaは推測して読まない。migration前ファイルはpre-schemaバックアップを残す。Renderer入力は未知項目を拒否し、原子的保存の成功後だけメモリへ反映する。
  */
 
 'use strict';
 
-const {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} = require('node:fs');
-const { dirname, join } = require('node:path');
+const { existsSync, readFileSync } = require('node:fs');
+const { join } = require('node:path');
+const { atomicWriteJsonSync } = require('./atomicJsonFile.js');
 const { DATA_SCHEMA_KIND } = require('../shared/dataCompatibility/schemaVersions.js');
 const { migratePersistedDocument } = require('./dataCompatibilityPersistence.js');
 const {
@@ -80,37 +71,6 @@ function normalizeAppearanceSettings(raw) {
   };
 }
 
-function fsyncDirectoryBestEffort(directoryPath) {
-  let descriptor = null;
-  try {
-    descriptor = openSync(directoryPath, 'r');
-    fsyncSync(descriptor);
-  } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR'].includes(error?.code)) throw error;
-  } finally {
-    if (descriptor !== null) closeSync(descriptor);
-  }
-}
-
-function atomicWriteJson(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
-  let descriptor = null;
-  try {
-    descriptor = openSync(temporary, 'w', 0o600);
-    writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = null;
-    renameSync(temporary, path);
-    fsyncDirectoryBestEffort(dirname(path));
-  } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
-    try { if (existsSync(temporary)) unlinkSync(temporary); } catch {}
-    throw error;
-  }
-}
-
 class AppearanceStore {
   constructor(userDataPath) {
     this.path = join(userDataPath, 'appearance.json');
@@ -122,7 +82,7 @@ class AppearanceStore {
     try {
       const migration = migratePersistedDocument(JSON.parse(readFileSync(this.path, 'utf8')), { kind: DATA_SCHEMA_KIND.APPEARANCE, label: '外観設定', path: this.path });
       const normalized = normalizeAppearanceSettings(migration.value);
-      if (migration.migrated) atomicWriteJson(this.path, normalized);
+      if (migration.migrated) atomicWriteJsonSync(this.path, normalized, { indent: 2 });
       return normalized;
     } catch (error) {
       console.warn('外観設定を読み込めないため既定値を使用します。元ファイルは変更しません。', error);
@@ -136,7 +96,7 @@ class AppearanceStore {
 
   savePublicSettings(raw) {
     const next = normalizeAppearanceSettings(raw);
-    atomicWriteJson(this.path, next);
+    atomicWriteJsonSync(this.path, next, { indent: 2 });
     this.settings = next;
     return this.publicSettings();
   }

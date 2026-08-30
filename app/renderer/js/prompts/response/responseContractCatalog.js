@@ -1,6 +1,6 @@
 /**
  * 責務: 応答契約の静的網羅性検査用参照と、各API呼び出しへ必ず渡す短い共通システム契約を提供する。
- * 変更ルール: 網羅性検査用参照は本番プロンプトへ掲載せず、機械契約とのキー整合性検査だけに使用する。共通システム契約には全項目一覧やタスク固有候補を持たせず、現在タスク本文の必須出力・原則出力・条件付き出力を正本とし、原則出力の欠落だけを回答エラーへ昇格させない。
+ * 変更ルール: 網羅性検査用参照は本番プロンプトへ掲載せず、機械契約とのキー整合性検査だけに使用する。処刑比較項目の説明はresponseContract.jsと同じ第一処刑候補基準を維持する。共通システム契約には全項目一覧やタスク固有候補を持たせず、現在タスク本文の必須出力・原則出力・条件付き出力を正本とし、原則出力の欠落だけを回答エラーへ昇格させない。
  */
 
 import { getFactionStrategyFields } from '../../domain/game/factionStrategyState.js';
@@ -34,9 +34,9 @@ const COMPLETE_RESPONSE_REFERENCE = Object.freeze({
     executionCandidates: ['処刑候補の正式表示名'],
     intendedVote: '投票予定先の正式表示名',
     assessmentLevel: 'moderate',
-    leaveAliveBenefit: '対象を残すことで自陣営が得る利益',
-    misexecutionCost: 'その処刑が自陣営に不利だった場合の主要損失',
-    selectionDifference: '最有力の別候補との今日の処刑価値の差',
+    leaveAliveBenefit: '第一処刑候補を残すことで自陣営が得る利益',
+    misexecutionCost: '第一処刑候補を誤処刑した場合の主要損失',
+    selectionDifference: '第一処刑候補と最有力の別候補との今日の処刑価値の差',
     uncertainty: '残っている不確実性',
     nextDiscriminatingInformation: '次に判断を分ける情報',
     unresolvedPoint: '現在まだ解けていない確認点',

@@ -1,9 +1,9 @@
 /**
  * 責務: buildPromptContext()の構造化結果とタスク固有決定値から、工程プロンプト投影専用のstageSourceと、AIへ送信しない文章境界検査参照を決定的に構築する。
  * 変更ルール:
- * - 通常昼発言の構造草案へ、直接生成と同じ解決済み非公開参考視点を引き継ぐ。参考視点の再選択・再解釈は行わず、そのanchorEventSequencesが参照する公開イベントも本番と同じ履歴選択へ必ず残す。
+ * - 深度2のdecideへ、直接生成と同じ人物プロフィール・推理傾向・議論行動・解決済み非公開参考視点を引き継ぐ。ただし一人称・口調・語尾・口調例・呼称はrenderだけへ投影する。深度3/4のanalyze/critiqueへ人物設定を渡さず、finalizeで判断傾向と表現設定を戻す。
  * - Day 2以降の通常昼議論第1巡では、直接生成と同じ初期公開役職構成由来の夜明け状況ガイドを草案工程へ引き継ぎ、現在の生存・死亡・CO等で候補を絞らない。
- * - 元プロンプト文字列を解析せず、API通信、DOM、ゲーム状態更新を行わない。公開履歴は本番プロンプトと同じ履歴ポリシーとpublicHistorySection.jsの射影を正本とし、draftへ生イベントを渡さない。未登録キーをstageSourceへ通さず、内部UUIDは工程プロンプトへ直接掲載しない。保存済みheartVoiceは生成・監査用状態に残してもstageSourceへ再投影しない。公開発言の文字数目安・上限は工程プロンプト末尾の最終確認だけで使える構造値として保持し、人間向け発言量ラベルや不透明な長さ区分を中間コンテキストへ投影しない。会話開始・序盤反応の意味がある追加指示はroleTaskData.promptGuidanceを正本とする。characterExpressionには工程で実際に使用する口調・呼称だけを投影する。safetyReferencesとrecentPublicTimelineはローカル検査・参照変換専用とし、draftへ直接投影しない。
+ * - 元プロンプト文字列を解析せず、API通信、DOM、ゲーム状態更新を行わない。公開履歴は本番プロンプトと同じ履歴ポリシーとpublicHistorySection.jsの射影を正本とし、中間候補工程へ生イベントを渡さない。未登録キーをstageSourceへ通さず、内部UUIDは工程プロンプトへ直接掲載しない。公開配役は工程側の役職存在判定にも使うためpromptPolicies.roleCompositionを正本として保持し、工程入力本文へ重複表示しない。本人の保存済み陣営戦略は本人限定の判断材料としてprivateStateへ射影し、更新時刻や生成元ターンIDなどの管理情報は渡さない。保存済みheartVoiceは生成・監査用状態に残してもstageSourceへ再投影しない。公開発言の文字数目安・上限は工程プロンプト末尾の最終確認だけで使える構造値として保持する。characterReasoningはdecide/finalizeの判断用、characterExpressionはrender/finalizeの表現用とする。safetyReferencesとrecentPublicTimelineはローカル検査・参照変換専用とする。
  */
 
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
@@ -16,6 +16,7 @@ import {
 } from '../policies/publicHistoryPolicy.js';
 import { resolvePublicSpeechLengthPolicy } from '../../domain/policies/publicSpeechLengthPolicy.js';
 import { MAX_FREEZE_ACTION_RATIONALE_LENGTH, MAX_NIGHT_ACTION_RATIONALE_LENGTH } from '../../config/constants.js';
+import { getFactionStrategyFields } from '../../domain/game/factionStrategyState.js';
 import { publicHistoryData, selfPublicContinuityData } from '../sections/publicHistorySection.js';
 import { buildRoleCompositionSituationGuide } from '../sections/roleCompositionSituationSection.js';
 
@@ -93,6 +94,19 @@ function privateTeamStrategy(context) {
   };
 }
 
+function ownFactionStrategy(context) {
+  const state = context?.player?.factionStrategyState ?? null;
+  if (!state?.updatedAt) return null;
+  const profile = String(context?.player?.strategyProfile ?? state?.profile ?? '');
+  const fields = getFactionStrategyFields(profile);
+  if (!profile || !fields.length) return null;
+  const values = Object.fromEntries(fields
+    .map((key) => [key, String(state?.[key] ?? '').trim()])
+    .filter(([, value]) => value));
+  if (!Object.keys(values).length) return null;
+  return { profile, ...values };
+}
+
 function otherPublicSpeechReferences(recentPublicTimeline, playerId) {
   const actorId = String(playerId ?? '');
   return (recentPublicTimeline ?? [])
@@ -156,6 +170,7 @@ export function buildGenerationStageSource({
     selectedPublicTimeline,
   );
   const teamStrategy = privateTeamStrategy(context);
+  const factionStrategy = ownFactionStrategy(context);
   return {
     currentMoment: {
       day: Number(context?.game?.day ?? 0),
@@ -185,6 +200,7 @@ export function buildGenerationStageSource({
         roleState: clone(player.roleState, null),
       },
       ownAbilityResults: clone(context?.private?.abilityResults, []),
+      ...(factionStrategy ? { ownFactionStrategy: factionStrategy } : {}),
       teammates: {
         knownWolfIds: clone(player?.knowledge?.knownWolfIds, []),
         knownMadmanIds: clone(player?.knowledge?.knownMadmanIds, []),
@@ -208,6 +224,7 @@ export function buildGenerationStageSource({
       promptGuidance: clone(generationGuidance, {}),
     },
     characterReasoning: {
+      profile: String(player?.character?.profile ?? ''),
       reasoningProfile: clone(player?.character?.reasoningProfile, {}),
       discussionBehavior: String(player?.character?.discussionBehavior ?? ''),
     },
@@ -215,14 +232,17 @@ export function buildGenerationStageSource({
       ? clone(internalReasoningDirective, null)
       : null,
     characterExpression: {
+      profile: String(player?.character?.profile ?? ''),
       firstPerson: String(player?.character?.firstPerson ?? ''),
       genericSecondPerson: String(player?.character?.genericSecondPerson ?? ''),
       speakingStyle: String(player?.character?.speakingStyle ?? ''),
       defaultEndings: String(player?.character?.defaultEndings ?? ''),
       avoidedExpressions: String(player?.character?.avoidedExpressions ?? ''),
+      speechExamples: String(player?.character?.speechExamples ?? ''),
       callNames: clone(context?.callNames?.rows, []),
     },
     promptPolicies: {
+      roleComposition: clone(context?.game?.roleComposition, {}),
       publicSpeechLengthPolicy: speechPolicy ? {
         targetChars: Number(speechPolicy.targetChars ?? 0),
         claimOverride: speechPolicy.claimOverride ? {

@@ -19,6 +19,7 @@ import { resolveAutomaticAction } from '../../../app/renderer/js/domain/game/aut
 import { evaluateAiTaskCandidate, prepareAiTask } from '../../../app/renderer/js/services/aiTaskService.js';
 import { resolveGenerationPlan } from '../../../app/renderer/js/services/generationDepthPolicy.js';
 import { getResponseTopLevelKeys } from '../../../app/renderer/js/prompts/response/responseContract.js';
+import { inspectPromptDataBlocks } from '../../../app/renderer/js/prompts/serialization/promptDataSerializer.js';
 
 function prepareDiscussion(mode, { playerCount = 4, speechCountPerDay = 2 } = {}) {
   const state = createInitialState(playerCount);
@@ -58,6 +59,33 @@ test('順番制は既存speech契約とプロンプトを維持し専用議論�
     nextSpeakerPreference: state.players[3].id,
   }).ok, false);
   assert.equal(state.discussion.queue[1], state.players[1].id);
+});
+
+test('昼プロンプトはgame-state.aliveを発言順へ射影しday-conversation-statusへorderを重複出力しない', () => {
+  const state = prepareDiscussion('designated');
+  const [a, b, c, d] = state.players;
+  const originalAliveOrder = state.players.filter((player) => player.alive).map((player) => player.name);
+
+  assert.equal(recordHumanSpeech(state, {
+    playerId: a.id,
+    content: 'Dさんから聞きたい。',
+    nextSpeakerPreference: d.id,
+  }).ok, true);
+  assert.deepEqual(state.discussion.queue, [a.id, d.id, b.id, c.id]);
+
+  const artifact = prepareAiTask(state, { playerId: d.id, taskType: 'speech-designated' });
+  const inspected = inspectPromptDataBlocks(fullPrompt(artifact));
+  assert.equal(inspected.ok, true);
+  const gameState = inspected.blocks.find((block) => block.name === 'game-state')?.value;
+  const conversation = inspected.blocks.find((block) => block.name === 'day-conversation-status')?.value;
+
+  assert.deepEqual(gameState?.alive, [a.name, d.name, b.name, c.name]);
+  assert.equal(Object.hasOwn(conversation ?? {}, 'order'), false);
+  assert.deepEqual(
+    state.players.filter((player) => player.alive).map((player) => player.name),
+    originalAliveOrder,
+    '内部の生存者順は変更しない',
+  );
 });
 
 test('指名制は各巡で全員一回を保証し未発言者への指名だけを直後へ前倒しする', () => {

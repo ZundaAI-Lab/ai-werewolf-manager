@@ -1,5 +1,5 @@
 /**
- * 責務: 発言化・校正工程のtextPatch JSONを解析し、対象キー完全一致と元文章からの機械的な乖離上限を検証して、今回指定された文章フィールドだけを検証済み候補へ決定的にマージする。
+ * 責務: キャラクター発言化工程のtextPatch JSONを解析し、対象キー完全一致と元文章からの機械的な乖離上限を検証して、今回指定された文章フィールドだけを検証済み候補へ決定的にマージする。
  * 変更ルール: ゲーム上の意味、人物、役職、CO、能力結果を解釈せず、文字列類似度とJSON形状だけを扱う。非文章フィールドと今回対象外フィールドを変更しない。元文章が連続性検査対象の長さに達した場合は、置換後だけを短文化して検査を回避することを許可しない。構造不正または過大乖離時は呼び出し元へ失敗を返し、AI再生成を要求しない。
  */
 
@@ -89,7 +89,7 @@ export function validateTextPatchForStage({ stageId, targetTextFields, textPatch
 
 export function validateTextPatchContinuity({ stageId, candidateObject, targetTextFields, textPatch }) {
   const issues = [];
-  const minimumSimilarity = stageId === 'proofread' ? 0.45 : 0.18;
+  const minimumSimilarity = 0.18;
   for (const fieldName of targetTextFields ?? []) {
     const before = normalizeContinuityText(candidateObject?.[fieldName]);
     const after = normalizeContinuityText(textPatch?.[fieldName]);

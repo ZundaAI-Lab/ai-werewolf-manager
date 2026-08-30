@@ -1,8 +1,7 @@
 /**
  * 責務: 自動実行の一時状態、全画面共通ステータス表示、実行中の競合操作ロック状態を所有する。
- * 変更ルール: 表示中タブと自動実行状態を結合しない。自動API実行方式が選択されている間はidleを含め共通ヘッダーステータスを常時表示し、idle時はそこから全自動開始できる導線を提供する。人間操作待ちはエラーと区別した介入待ち表示として、対象プレイヤー・操作種別・入力導線をヘッダーへ明示し、待機へ遷移した瞬間だけ注意喚起アニメーションを行う。手動プロンプト方式のidle時だけ非表示にする。ゲーム状態を直接変更せず、running / waiting-human / waiting-manual-ai の間だけ競合する設定・復元操作をロックする。AI生成リソースを使う診断操作はrunning中だけロックし、一時停止・各待機・エラー停止では再び許可する。
+ * 変更ルール: 表示中タブと自動実行状態を結合しない。自動API実行方式が選択されている間はidleを含め共通ヘッダーステータスを常時表示し、idle時はそこから全自動開始できる導線を提供する。人間操作待ちはエラーと区別した介入待ち表示として、対象プレイヤー・操作種別・入力導線をヘッダーへ明示し、待機へ遷移した瞬間だけ注意喚起アニメーションを行う。エラー停止はerror状態を保持したまま、自動API実行方式では既存の開始経路から再開できる導線を提供する。手動プロンプト方式のidle時だけ非表示にする。ゲーム状態を直接変更せず、running / waiting-human / waiting-manual-ai の間だけ競合する設定・復元操作をロックする。AI生成リソースを使う診断操作はrunning中だけロックし、一時停止・各待機・エラー停止では再び許可する。
  */
-
 const AUTOMATION_MODES = Object.freeze(['idle', 'running', 'paused', 'waiting-human', 'waiting-manual-ai', 'error']);
 const LOCKED_MODES = new Set(['running', 'waiting-human', 'waiting-manual-ai']);
 const HUMAN_TASK_LABELS = Object.freeze({
@@ -27,7 +26,6 @@ const HUMAN_TASK_LABELS = Object.freeze({
   freeze: '凍結対象選択',
   'choose-owner': '家主選択',
 });
-
 export function createAutomationStatusController(context) {
   const {
     controller,
@@ -47,7 +45,6 @@ export function createAutomationStatusController(context) {
   function isAutomationAiRequestLocked() {
     return controller.automationMode === 'running';
   }
-
   function maskAutomaticNightActorNames(message, state = currentGameState(), active = controller.settings.executionMode === 'automatic' && (controller.running || controller.stepping || controller.automationMode === 'running')) {
     const text = String(message ?? '');
     if (!active || state?.game?.phase !== 'night') return text;
@@ -57,7 +54,6 @@ export function createAutomationStatusController(context) {
       .sort((left, right) => right.length - left.length)
       .reduce((masked, name) => masked.split(name).join('夜行動担当'), text);
   }
-
   function humanWaitingDetail() {
     const pending = controller.pendingHumanTask ?? controller.automationDetail ?? {};
     const playerId = String(pending.playerId ?? '');
@@ -68,7 +64,6 @@ export function createAutomationStatusController(context) {
     const taskLabel = HUMAN_TASK_LABELS[taskType] ?? (pending.kind === 'human-public' ? '公開入力' : '操作');
     return `${playerLabel} の${taskLabel}待ち`;
   }
-
   function headerPresentation() {
     const mode = controller.automationMode;
     const definitions = {
@@ -77,12 +72,11 @@ export function createAutomationStatusController(context) {
       paused: { label: '一時停止中', status: 'idle', primary: ['resume-automatic', '再開'] },
       'waiting-human': { label: '人間操作が必要です', detail: humanWaitingDetail(), status: 'attention', primary: ['open-pending-task', '入力する'] },
       'waiting-manual-ai': { label: '手動AI生成待ち', status: 'idle', primary: ['open-pending-task', '進行卓へ'] },
-      error: { label: 'エラー停止', status: 'error', primary: ['open-management', 'AI管理へ'] },
+      error: { label: 'エラー停止', status: 'error', primary: controller.settings.executionMode === 'automatic' ? ['toggle-run', '再開'] : null },
     };
     if (mode === 'idle' && controller.settings.executionMode !== 'automatic') return null;
     return definitions[mode] ?? null;
   }
-
   function configureHeaderButton(button, spec) {
     if (!button) return;
     if (!spec) {
@@ -95,7 +89,6 @@ export function createAutomationStatusController(context) {
     button.dataset.aiAction = action;
     button.textContent = label;
   }
-
   function refreshAutomationStatus() {
     const mode = normalizeMode(controller.automationMode);
     controller.automationMode = mode;
@@ -119,7 +112,6 @@ export function createAutomationStatusController(context) {
       mutationLocked: isAutomationMutationLocked(),
     });
   }
-
   function setAutomationMode(mode, detail = null) {
     const previousMode = controller.automationMode;
     controller.automationMode = normalizeMode(mode);
@@ -135,7 +127,6 @@ export function createAutomationStatusController(context) {
       }
     }
   }
-
   function setStatus(message, type = 'idle') {
     controller.statusMessage = maskAutomaticNightActorNames(message);
     controller.statusType = type;
@@ -149,7 +140,6 @@ export function createAutomationStatusController(context) {
     refreshAutomationStatus();
     refreshLiveView();
   }
-
   return Object.freeze({
     isAutomationAiRequestLocked,
     isAutomationMutationLocked,

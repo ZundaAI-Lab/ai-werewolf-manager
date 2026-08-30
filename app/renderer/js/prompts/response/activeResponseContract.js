@@ -2,7 +2,8 @@
  * 責務: 現在フェーズだけで完結するAI向けの必須出力・原則出力・条件付き出力とJSON例を、回答検証上の必須性とは独立して描画する。
  * 変更ルール:
  * - 回答検証契約の許可・必須キーを独自定義せずresponseContract.jsから取得するが、プロンプト掲載集合をrequiredTopLevelKeysと一致させない。
- * - voteのdecisionPatch具体化ガイダンスはvoteResponseGuidancePolicy.jsを正本とし、構造草案側と同じ文言・優先項目を使用する。
+ * - voteのdecisionPatch具体化ガイダンスはvoteResponseGuidancePolicy.jsを正本とし、多段候補工程側と同じ文言・優先項目を使用する。
+ * - vote以外の処刑比較ではexecutionCandidatesの先頭を第一処刑候補として、比較項目の対象を単一候補へ固定する。
  * - requiredTopLevelKeysは欠落時に進行を止める境界であり、検証上任意でもAIに生成してほしいrationale / decisionPatch / heartVoice / memoAdd等は原則出力の説明と主JSON例へ掲載する。
  * - 『プロンプトに掲載する』ことを理由に回答検証必須へ昇格してはならず、『検証上任意』を理由にプロンプトやJSON例から削除してはならない。
  * - decisionPatchの子項目はJSON例への掲載有無だけで思考観点を誘導し、掲載された子項目もすべて回答任意とする。推理モード・人物傾向・処刑判断局面による掲載選択はdecisionPromptFieldPolicy.jsを正本とする。
@@ -10,7 +11,7 @@
  * - 許可キーは本人役職へ適合済みの集合だけを表示する。
  * - 通常発言はpublicSpeechをAI向け必須出力とし、各モードの説明と今回のJSON例は最終確認用として一箇所から生成する。
  * - assessmentLevelの列挙値はdecisionState.js、partnerDispositionの列挙値はwolfPartnerDispositionPolicy.js由来の動的ポリシーを使用する。
- * - CO・能力結果・質問回答は実際に行う場合だけ条件付き形式を示し、空配列だけの項目を主形式へ掲載しない。能力結果を公開する場合はabilityClaimsを状態更新の正本としつつ、同じ公開主張の役職・対象・結果をpublicSpeechにも必ず含める。
+ * - CO・能力結果・質問回答は実際に行う場合だけ条件付き形式を示し、空配列だけの項目を主形式へ掲載しない。能力結果公開時のpublicSpeechとabilityClaimsの一致規則はtaskInstructionPolicy.jsを正本とし、本モジュールではabilityClaimsの構造と状態更新上の役割だけを説明する。
  * - 外部JSONキーと内部保存キーを混在させず、speechInteractionは外部契約のquestionTargets / answerToRefsだけを明示する。
  * - 投票はactionAnswerをAI向け必須出力、rationale / decisionPatchを原則出力として主JSON例へ必ず掲載するが、後二者の欠落をエラーにしない。
  * - 夜行動理由、襲撃評価、雪女推定、初夜共有戦略、失効判断などの動的なAI向け必須性も本モジュールだけで決め、responseContract.jsの回答検証必須性へ逆流させない。
@@ -132,7 +133,7 @@ function coAndAbilityRules(claimRolePolicy, references) {
     const truthfulExample = buildAbilityClaimsConditionalExample(claimRolePolicy, normalizedReferences);
     const deceptionExample = buildDeceptionAbilityClaimsConditionalExample(claimRolePolicy, normalizedReferences);
     const hasTruthfulSource = Boolean(normalizedReferences.truthfulAbilitySourceRefs.length);
-    rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。そのうえで、公開する能力結果の役職・対象・結果はpublicSpeechにも自然な発言として必ず含めてください。abilityClaimsは状態更新の正本、publicSpeechはプレイヤーが実際に口にする本文です。truthful / deceptionのどちらでも両者で同じ公開主張にしてください。');
+    rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。abilityClaimsは公開する能力結果を構造化して記録します。');
     if (hasTruthfulSource && truthfulExample) rows.push(`truthful形式: ${JSON.stringify({ abilityClaims: truthfulExample })}`);
     const resultValuesByRole = claimRolePolicy.abilityClaimRoleIds
       .map((roleId) => `${roleId}=${(getPublicAbilityClaimDefinition(roleId)?.results ?? []).join(' / ')}`)
@@ -218,6 +219,9 @@ function decisionPatchRules(mode, decisionPatchRequired, decisionPromptKeys = []
   ].filter(Boolean);
   if (decisionPatchRequired) {
     rows.push('前回判断が現在の候補構造では利用できないため、今回はdecisionPatch自体を出力してください。ただしJSON例内の個々の子項目は必要なものだけ使用し、未回答の子項目を埋めるために内容を作りません。');
+  }
+  if (shownKeys.some((key) => ['leaveAliveBenefit', 'misexecutionCost', 'selectionDifference'].includes(key))) {
+    rows.push('処刑比較ではexecutionCandidatesの先頭を第一処刑候補とし、leaveAliveBenefit / misexecutionCost / selectionDifferenceはその第一候補だけを基準に記録します。intendedVoteを設定する場合は同じ対象を第一処刑候補にしてください。');
   }
   if (shownKeys.includes('correctedSpeechRefs') || shownKeys.includes('evidenceRefs')) {
     rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
@@ -319,7 +323,7 @@ function prohibitionRules(mode, allowedKeys) {
     rows.push('公開本文へ他者の未公開情報・秘密会話・内部メモを漏らしません。自分についての戦術的な役職・陣営主張は許可されたCOとして扱えます。');
   }
   if ([...SPEECH_MODES, 'priority-answer', 'testament'].includes(mode)) {
-    rows.push('未発言者の反応や、記録にない質問・回答・CO・能力結果を作りません。');
+    rows.push('記録にない質問・回答・CO・能力結果を作りません。');
   }
   if (mode === 'graveyard') rows.push('死亡後の昼議論・投票・夜結果を観戦者視点で補完しません。新規死亡者が墓場で話していない情報は知りません。');
   return rows;

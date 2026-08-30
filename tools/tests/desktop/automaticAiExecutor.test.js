@@ -35,13 +35,17 @@ function createHarness({
   generationFailureRequiresStop = () => false,
   taskType = 'speech',
   ownerProfileOverrides = {},
+  additionalProfiles = [],
+  generationPlan = null,
+  runGenerationPipelineOverride = null,
 } = {}) {
   const modules = loadAutomationModules();
   const state = { revision: 0, game: { id: 'game::A' }, players: [{ id: 'player-B', name: 'AIプレイヤー' }] };
   const ownerProfile = { id: 'profile-C', enabled: true, ...ownerProfileOverrides };
+  const profiles = [ownerProfile, ...additionalProfiles];
   const controller = {
     settings: {
-      profiles: [ownerProfile],
+      profiles,
       aiOptions: { publicHistoryMode: 'delta', responseRecoveryMode: 'repair-regenerate', apiErrorAction: 'retry' },
       autoRun: { autoConfirmWarnings: true },
     },
@@ -80,23 +84,36 @@ function createHarness({
   const runtimeApi = {
     prepareAiTask(options = {}) { return taskArtifact(Boolean(options.forceFullPublicHistory)); },
     resolveGenerationPlan() {
+      if (generationPlan) return structuredClone(generationPlan);
       return {
-        depth: initialStage === 'draft' ? 3 : 1,
+        depth: initialStage === 'draft' ? 2 : initialStage === 'reason' ? 3 : 1,
         ownerProfileId: ownerProfile.id,
         taskCategory: taskType, normalCallCount: 1, maximumCallBudget: 4, coreCallBudget: 4,
         stages: [{ stageId: initialStage, executorProfileId: ownerProfile.id }],
       };
     },
     resolveGenerationStagePromptPolicy() { return { applicable: true }; },
-    buildDraftStagePrompt({ taskArtifact: artifact }) { return `DRAFT:${artifact.text}`; },
+    buildDecideStagePrompt({ taskArtifact: artifact }) { return `DECIDE:${artifact.text}`; },
+    buildAnalyzeStagePrompt({ taskArtifact: artifact }) { return `ANALYZE:${artifact.text}`; },
+    buildCritiqueStagePrompt() { return 'CRITIQUE'; },
+    buildFinalizeStagePrompt({ taskArtifact: artifact }) { return `FINALIZE:${artifact.text}`; },
     buildRenderStagePrompt() { return 'RENDER'; },
-    buildProofreadStagePrompt() { return 'PROOFREAD'; },
+    projectGenerationStagePromptEnvelope({ baseEnvelope, stageId, prompt }) {
+      return {
+        ...baseEnvelope,
+        stablePlayerContext: stageId === 'direct' ? baseEnvelope.stablePlayerContext : '',
+        dynamicTaskPrompt: prompt,
+      };
+    },
     evaluateAiTaskCandidate({ rawResponse }) { return evaluate(rawResponse); },
     async runGenerationPipeline(args) {
+      if (runGenerationPipelineOverride) return runGenerationPipelineOverride(args);
       const stage = { stageId: initialStage, executorProfileId: ownerProfile.id };
       const prompt = initialStage === 'draft'
         ? args.buildDraftPrompt({ taskArtifact: args.taskArtifact, policy: {} })
-        : args.taskArtifact.promptEnvelope.dynamicTaskPrompt;
+        : initialStage === 'reason'
+          ? args.buildReasonPrompt({ taskArtifact: args.taskArtifact, policy: {} })
+          : args.taskArtifact.promptEnvelope.dynamicTaskPrompt;
       const result = await args.requestFullCandidate({ stage, prompt, taskArtifact: args.taskArtifact, callBudget: 4 });
       const evaluation = result.evaluation ?? evaluate(result.rawResponse);
       if (!result.ok || !evaluation.ok) {
@@ -133,7 +150,7 @@ function createHarness({
   const executor = modules.executorApi.createAutomaticAiExecutor({
     apiRetryPolicy: { apiErrorMessage: (error) => error?.message ?? 'api error', decideApiRetry: apiDecision },
     responseRetryPolicy, runControl: modules.runControl, controller, bridge, runtime: () => runtimeApi,
-    currentGameState: () => state, profileForPlayer: () => ownerProfile, profileById: () => ownerProfile,
+    currentGameState: () => state, profileForPlayer: () => ownerProfile, profileById: (profileId) => profiles.find((profile) => profile.id === profileId) ?? null,
     playerName: () => 'AIプレイヤー', addUsage, refreshUsageSummary: async () => {}, setStatus() {},
     waitFor: async (predicate, { message }) => { const result = predicate(); if (!result) throw new Error(message); return result; },
     structuredApiError: (error) => error?.apiError ?? { code: 'IPC_ERROR', message: error?.message ?? String(error), retryable: false, deliveryUnknown: false, retryAfterMs: null },
@@ -225,3 +242,52 @@ test('Ollama投票でThinking最終応答欠落時だけ同一タスクをThinki
   assert.equal(harness.controller.settings.profiles[0].thinkingLevel, 'low');
 });
 
+
+
+test('Ollama投票のThinking無効化は同じ工程API要求だけに限定し後続の別プロファイルへ漏らさない', async () => {
+  const ollamaProfile = { id: 'ollama-stage', enabled: true, provider: 'local-openai-compatible', localServerPreset: 'ollama', thinkingLevel: 'low' };
+  const openAiProfile = { id: 'openai-stage', enabled: true, provider: 'openai', localServerPreset: '', thinkingLevel: 'none' };
+  const generationPlan = {
+    depth: 2,
+    ownerProfileId: 'profile-C',
+    taskCategory: 'vote',
+    normalCallCount: 2,
+    maximumCallBudget: 5,
+    coreCallBudget: 5,
+    stages: [
+      { stageId: 'decide', executorProfileId: ollamaProfile.id },
+      { stageId: 'finalize', executorProfileId: openAiProfile.id },
+    ],
+  };
+  let ollamaCalls = 0;
+  const harness = createHarness({
+    taskType: 'vote',
+    additionalProfiles: [ollamaProfile, openAiProfile],
+    generationPlan,
+    bridgeGenerate: async (request) => {
+      if (request.profileId === ollamaProfile.id) {
+        ollamaCalls += 1;
+        if (ollamaCalls === 1) {
+          return { ok: false, error: { code: 'OLLAMA_THINKING_FINAL_RESPONSE_MISSING', message: 'Thinkingだけが返されました。', retryable: false, deliveryUnknown: false } };
+        }
+        return { ok: true, text: 'VALID', usage: {} };
+      }
+      return { ok: true, text: 'VALID', usage: {} };
+    },
+    runGenerationPipelineOverride: async (args) => {
+      const first = await args.requestFullCandidate({ stage: generationPlan.stages[0], prompt: 'DECIDE', callBudget: 2 });
+      assert.equal(first.ok, true);
+      const second = await args.requestFullCandidate({ stage: generationPlan.stages[1], prompt: 'FINALIZE', callBudget: 1 });
+      assert.equal(second.ok, true);
+      return { rawResponse: 'VALID', evaluation: second.evaluation, generationRun: { stages: [] } };
+    },
+  });
+
+  await harness.executor(harness.taskRequest, harness.runControl.createRunSession());
+
+  assert.deepEqual(harness.counters.bridgeRequests.map((request) => [request.profileId, request.thinkingLevelOverride]), [
+    [ollamaProfile.id, null],
+    [ollamaProfile.id, 'none'],
+    [openAiProfile.id, null],
+  ]);
+});

@@ -7,6 +7,7 @@ import './testEnvironment.js';
 import './appearanceSettings.test.js';
 import './playerCountPolicy.test.js';
 import './productionPlaythrough.test.js';
+import './fullGameRunner.test.js';
 import './priorityAnswer.test.js';
 import './publicQuestionResolution.test.js';
 import './largePlayerGame.test.js';

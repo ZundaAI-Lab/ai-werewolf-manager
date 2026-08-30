@@ -7,6 +7,7 @@
  * - 汎用パーサー向けのタスク別許可キーと、本人役職に適合する実行時許可キーを分離し、役職適合判定はfactionStrategyState.jsを正本とする。
  * - 通常発言はpublicSpeechを回答検証必須とする。
  * - 投票理由はrationaleを正本とし、投票のdecisionPatchは比較・不確実性・公開根拠参照だけを扱う。
+ * - 処刑比較のleaveAliveBenefit / misexecutionCost / selectionDifferenceはexecutionCandidatesの先頭を第一処刑候補として単一対象基準で記述し、voteではactionAnswerの投票対象を基準にする。
  * - 構文キーを追加・変更する場合はresponseParser.js、responseAutoRepair.js、responseContractCatalog.js、activeResponseContract.jsを同時に変更する。
  * - 通常の完全例と、実行時だけ追加できる条件付き例を分離して生成工程・自動検査へ渡す。
  * - フェーズプロンプトへ掲載する項目の選択はactiveResponseContract.jsへ委譲し、回答検証契約との集合一致を要求しない。
@@ -337,9 +338,9 @@ export function buildDecisionPatchExample(mode, exampleReferences = null, { keys
     executionCandidates: ['処刑候補の正式表示名'],
     intendedVote: '現時点の投票予定先の正式表示名。解除する場合はnull',
     assessmentLevel: 'moderate',
-    leaveAliveBenefit: '対象を残すことで自陣営が得る利益',
-    misexecutionCost: 'その処刑が自陣営に不利だった場合の主要損失',
-    selectionDifference: '最有力の別候補との今日の処刑価値の差',
+    leaveAliveBenefit: '第一処刑候補を残すことで自陣営が得る利益',
+    misexecutionCost: '第一処刑候補を誤処刑した場合の主要損失',
+    selectionDifference: '第一処刑候補と最有力の別候補との今日の処刑価値の差',
     uncertainty: '現在の判断に残る不確実性',
     nextDiscriminatingInformation: '次に判断を分ける情報',
     unresolvedPoint: '現在まだ解けていない確認点',

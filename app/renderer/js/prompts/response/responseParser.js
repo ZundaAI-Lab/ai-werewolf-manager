@@ -1,6 +1,6 @@
 /**
  * 責務: AI応答の単一JSONオブジェクトを、公開発言・CO操作・能力結果主張・判断差分・判断根拠参照・陣営戦略差分・秘密会話・襲撃判断・雪女の推定候補・夜行動理由・心の声・内部メモへ厳密に構文分解する。
- * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、再帰解析によるRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。推理モード固有のdecisionPatch項目は解析済みターン内の思考整理情報として受理し、永続判断状態へ保存するかどうかはresponseValidator.js側の状態責務へ委譲する。
+ * 変更ルール: 公開発言の自然文からCOや判断状態を推測しない。応答キーと判断参照キーはresponseContract.js、assessmentLevelの列挙値はdecisionState.jsを正本とし、判断変更原因を生成せず、ゲーム状態との整合性判定や状態更新を行わない。ゲーム進行に不要な理由・比較・戦略・内面・監査項目は未入力・空値・子キー欠落を省略扱いとし、実値が出力されたキーだけを厳密に構文検証する。任意項目の欠落診断を追加しない。診断は表示用errorsと再試行判断用issuesへ同時に集約し、未知キーは自動補正しない。外部AI応答のJSONネストは固定上限で拒否し、未知キーの補正候補探索も許容距離から外れる長さ差を事前除外してRenderer占有を許可しない。外部応答キーはresponseContract.jsを正本とし、外部キーから内部保存表現への変換は本モジュールで明示する。推理モード固有のdecisionPatch項目は解析済みターン内の思考整理情報として受理し、永続判断状態へ保存するかどうかはresponseValidator.js側の状態責務へ委譲する。
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
@@ -11,6 +11,7 @@ const ASSESSMENT_LEVELS = new Set(DECISION_ASSESSMENT_LEVELS);
 const CO_ACTIONS = new Set(['declare', 'change', 'withdraw']);
 const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_JSON_NESTING_DEPTH = 64;
+const MAX_KEY_SUGGESTION_DISTANCE = 2;
 const FACTION_STRATEGY_KEYS = new Set([
   'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
   'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
@@ -203,10 +204,13 @@ function damerauLevenshteinDistance(left, right) {
 }
 
 function closestKey(rawKey, allowedKeys) {
+  const submitted = String(rawKey ?? '');
   const candidates = [...allowedKeys]
-    .map((key) => ({ key, distance: damerauLevenshteinDistance(rawKey, key) }))
+    // 距離上限を超える長さ差は補正候補になり得ないため、外部入力で距離行列を作る前に除外する。
+    .filter((key) => Math.abs(key.length - submitted.length) <= MAX_KEY_SUGGESTION_DISTANCE)
+    .map((key) => ({ key, distance: damerauLevenshteinDistance(submitted, key) }))
     .sort((left, right) => left.distance - right.distance || left.key.localeCompare(right.key));
-  if (!candidates.length || candidates[0].distance > 2) return null;
+  if (!candidates.length || candidates[0].distance > MAX_KEY_SUGGESTION_DISTANCE) return null;
   if (candidates[1]?.distance === candidates[0].distance) return null;
   return candidates[0].key;
 }

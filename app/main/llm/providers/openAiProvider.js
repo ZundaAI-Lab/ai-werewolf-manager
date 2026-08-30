@@ -48,7 +48,7 @@ async function generateOpenAi(profile, promptEnvelope, apiKey, signal, requestPu
     store: false,
     max_output_tokens: normalizeMaxOutputTokens(profile),
   };
-  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope);
+  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope, requestPurpose);
   if (structuredOutputMode === 'json-schema') {
     requestBody.text = {
       format: {

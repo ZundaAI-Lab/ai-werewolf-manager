@@ -1,5 +1,5 @@
 /**
- * 責務: 現行保存状態で許可されるオブジェクトキーを一元定義し、未知項目・欠落項目を検出する。正規化前に限りgame.rules全体の欠落を許可し、正式な補完はgameRulePolicy.jsへ委譲する。再開始用の開始前プレイヤー別配役、役職欠け使用時の公開用配役構成、AI行代替の公開スキップ印、GM限定解決元、日終了プレイヤー相関スナップショットも現行形状として定義する。
+ * 責務: 現行保存状態で許可されるオブジェクトキーを一元定義し、未知項目・欠落項目を検出する。正規化前に限りgame.rules全体の欠落を許可し、正式な補完はgameRulePolicy.jsへ委譲する。再開始用の開始前プレイヤー別配役、役職欠け使用時の公開用配役構成、AI行代替の公開スキップ印、生成工程監査のskip理由、GM限定解決元、日終了プレイヤー相関スナップショットも現行形状として定義する。
  * 変更ルール: 値の意味・参照整合性はstateValidator.jsへ委譲する。状態項目を追加・削除した場合は生成元と同時にこの定義を更新し、旧キーを残さない。
  */
 
@@ -188,6 +188,7 @@ const GENERATION_STAGE_KEYS = [
 ];
 const GENERATION_ISSUE_KEYS = ['code', 'message'];
 const GENERATION_USAGE_KEYS = ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens'];
+const GENERATION_SKIP_REASONS = new Set(['NO_APPLICABLE_TEXT_FIELD', 'ANALYSIS_UNAVAILABLE']);
 
 function validateGenerationRunShape(value, label, errors) {
   if (!exactKeys(value, GENERATION_RUN_KEYS, label, errors)) return;
@@ -199,15 +200,15 @@ function validateGenerationRunShape(value, label, errors) {
   for (const key of ['normalCallCount', 'totalCallCount']) {
     if (!Number.isInteger(value[key]) || value[key] < 0) errors.push(`${label}.${key}が0以上の整数ではありません。`);
   }
-  if (!['direct', 'draft', 'render', 'proofread'].includes(value.finalStageId)) errors.push(`${label}.finalStageIdが不正です。`);
+  if (!['direct', 'decide', 'finalize', 'render'].includes(value.finalStageId)) errors.push(`${label}.finalStageIdが不正です。`);
   validateObjectArray(value.stages, `${label}.stages`, errors, (stage, stageLabel, stageErrors) => {
     if (!exactKeys(stage, GENERATION_STAGE_KEYS, stageLabel, stageErrors)) return;
-    if (!['direct', 'draft', 'render', 'proofread'].includes(stage.stageId)) stageErrors.push(`${stageLabel}.stageIdが不正です。`);
+    if (!['direct', 'decide', 'analyze', 'critique', 'finalize', 'render'].includes(stage.stageId)) stageErrors.push(`${stageLabel}.stageIdが不正です。`);
     if (typeof stage.executorProfileId !== 'string') stageErrors.push(`${stageLabel}.executorProfileIdが文字列ではありません。`);
     if (!['accepted', 'applied', 'skipped', 'fallback'].includes(stage.status)) stageErrors.push(`${stageLabel}.statusが不正です。`);
     if (!Number.isInteger(stage.attemptCount) || stage.attemptCount < 0) stageErrors.push(`${stageLabel}.attemptCountが0以上の整数ではありません。`);
     if (!Array.isArray(stage.targetTextFields) || stage.targetTextFields.some((field) => typeof field !== 'string')) stageErrors.push(`${stageLabel}.targetTextFieldsが不正です。`);
-    if (!(stage.skipReason === null || stage.skipReason === 'NO_APPLICABLE_TEXT_FIELD')) stageErrors.push(`${stageLabel}.skipReasonが不正です。`);
+    if (!(stage.skipReason === null || GENERATION_SKIP_REASONS.has(stage.skipReason))) stageErrors.push(`${stageLabel}.skipReasonが不正です。`);
     if (typeof stage.rawResponse !== 'string') stageErrors.push(`${stageLabel}.rawResponseが文字列ではありません。`);
     if (typeof stage.fallbackUsed !== 'boolean') stageErrors.push(`${stageLabel}.fallbackUsedが真偽値ではありません。`);
     validateObjectArray(stage.issues, `${stageLabel}.issues`, stageErrors, (item, issueLabel, issueErrors) => {
@@ -219,11 +220,16 @@ function validateGenerationRunShape(value, label, errors) {
         if (!Number.isFinite(stage.usage[key]) || stage.usage[key] < 0) stageErrors.push(`${stageLabel}.usage.${key}が0以上の数値ではありません。`);
       }
     }
-    if (['direct', 'draft'].includes(stage.stageId) && stage.targetTextFields.length) stageErrors.push(`${stageLabel}.targetTextFieldsは空配列でなければなりません。`);
-    if (stage.status === 'accepted' && !['direct', 'draft'].includes(stage.stageId)) stageErrors.push(`${stageLabel}.acceptedはdirectまたはdraftだけで使用できます。`);
-    if (stage.status === 'applied' && !['render', 'proofread'].includes(stage.stageId)) stageErrors.push(`${stageLabel}.appliedはrenderまたはproofreadだけで使用できます。`);
+    if (stage.stageId !== 'render' && stage.targetTextFields.length) stageErrors.push(`${stageLabel}.targetTextFieldsは空配列でなければなりません。`);
+    if (stage.status === 'accepted' && stage.stageId === 'render') stageErrors.push(`${stageLabel}.acceptedはrenderでは使用できません。`);
+    if (stage.status === 'applied' && stage.stageId !== 'render') stageErrors.push(`${stageLabel}.appliedはrenderだけで使用できます。`);
     if (stage.status === 'skipped') {
-      if (stage.attemptCount !== 0 || stage.targetTextFields.length || stage.skipReason !== 'NO_APPLICABLE_TEXT_FIELD' || stage.rawResponse !== '' || stage.fallbackUsed || stage.issues.length) {
+      const validNoTextSkip = stage.skipReason === 'NO_APPLICABLE_TEXT_FIELD' && stage.issues.length === 0;
+      const validAnalysisUnavailableSkip = stage.stageId === 'critique'
+        && stage.skipReason === 'ANALYSIS_UNAVAILABLE'
+        && stage.issues.length === 1
+        && stage.issues[0]?.code === 'ANALYSIS_UNAVAILABLE';
+      if (stage.attemptCount !== 0 || stage.targetTextFields.length || !(validNoTextSkip || validAnalysisUnavailableSkip) || stage.rawResponse !== '' || stage.fallbackUsed) {
         stageErrors.push(`${stageLabel}.skipped工程の形状が不正です。`);
       }
       if (GENERATION_USAGE_KEYS.some((key) => stage.usage?.[key] !== 0)) stageErrors.push(`${stageLabel}.skipped工程のusageは全項目0でなければなりません。`);

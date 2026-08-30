@@ -1,6 +1,6 @@
 /**
  * 責務: 公開履歴のfull・compact・deltaが同じ正常回答境界を使用し、既定差分・無圧縮・過去選別・差分送信・参考視点anchor保持・夜の当日最終巡保持契約を維持することを検証する。
- * 変更ルール: Day境界や文字数切断を圧縮条件にせず、保存済み構造情報・判断根拠・参加者ごとの直近発言と今回の参考視点が参照する公開イベントだけを重要履歴として扱う。
+ * 変更ルール: Day境界や文字数切断を圧縮条件にせず、保存済み構造情報・判断根拠・参加者ごとの直近発言と今回の参考視点が参照する公開イベントだけを重要履歴として扱う。deltaのDay 2以降第1巡だけは、前日の投票直前最終巡発言と投票結果を比較材料として補完する。
  */
 
 import test from 'node:test';
@@ -97,13 +97,55 @@ test('compactは同じDayの途中にある正常回答境界以前だけを選�
   );
 });
 
-test('deltaは既存どおり正常回答境界後のnewPublicEventsだけを分類する', () => {
+test('deltaは前日補完条件外では正常回答境界後のnewPublicEventsだけを分類する', () => {
   const { context, decision } = contextAndDecision();
   const timeline = selectPublicHistoryTimeline(context, decision, 'delta');
   assert.deepEqual(timeline.speeches.map((event) => event.sequence), [7, 8]);
   assert.deepEqual(timeline.voteResults.map((event) => event.sequence), [9]);
 });
 
+
+test('deltaはDay 2以降の昼議論第1巡だけ前日の投票直前最終巡発言と投票結果を補完する', () => {
+  const previousEarlySpeech = speech({ id: 'd1-early', actorId: 'p1', sequence: 1, day: 1, round: 1, text: '前日序盤の発言' });
+  const previousFinalA = speech({ id: 'd1-final-a', actorId: 'p1', sequence: 2, day: 1, round: 2, text: '前日最終巡のp1発言' });
+  const previousFinalB = speech({ id: 'd1-final-b', actorId: 'p2', sequence: 3, day: 1, round: 2, text: '前日最終巡のp2発言' });
+  const firstVote = { id: 'd1-vote-1', type: 'vote-finalized', sequence: 4, day: 1, payload: { ballots: [] } };
+  const runoffVote = { id: 'd1-vote-2', type: 'vote-finalized', sequence: 5, day: 1, payload: { ballots: [] } };
+  const testament = speech({ id: 'd1-testament', actorId: 'p3', sequence: 6, day: 1, round: 2, text: '投票後の遺言' });
+  const dawn = { id: 'd2-dawn', type: 'dawn', sequence: 7, day: 2, payload: { text: '夜が明けました。' } };
+  const currentSpeech = speech({ id: 'd2-current', actorId: 'p2', sequence: 8, day: 2, round: 1, text: '当日第1巡の発言' });
+  const context = {
+    game: { day: 2, phase: 'discussion', discussion: { round: 1 } },
+    player: { id: 'p1', decisionState: { keyPublicEvidenceEventIds: [] } },
+    board: {
+      publicTimeline: {
+        speeches: [previousEarlySpeech, previousFinalA, previousFinalB, testament, currentSpeech],
+        voteResults: [firstVote, runoffVote],
+        executions: [], dawns: [dawn], corrections: [], gameResults: [], other: [],
+      },
+    },
+  };
+  const decision = { decisionDelta: { sourceSequence: 6, newPublicEvents: [dawn, currentSpeech] } };
+
+  const firstRound = selectPublicHistoryTimeline(context, decision, 'delta');
+  assert.deepEqual(firstRound.speeches.map((event) => event.sequence), [2, 3, 8]);
+  assert.deepEqual(firstRound.voteResults.map((event) => event.sequence), [4, 5]);
+  assert.deepEqual(firstRound.dawns.map((event) => event.sequence), [7]);
+  assert.equal(firstRound.speeches.some((event) => event.sequence === 1), false, '前日最終巡より前の通常発言は補完しない');
+  assert.equal(firstRound.speeches.some((event) => event.sequence === 6), false, '投票後の遺言は前日最終巡として補完しない');
+  assert.equal(selectLatestOwnSpeechBeforeDelta(context, decision, 'delta', firstRound), null, '補完済みの本人最終発言を別枠で重複送信しない');
+
+  context.game.discussion.round = 2;
+  const secondRound = selectPublicHistoryTimeline(context, decision, 'delta');
+  assert.deepEqual(secondRound.speeches.map((event) => event.sequence), [8]);
+  assert.deepEqual(secondRound.voteResults, []);
+
+  context.game.day = 1;
+  context.game.discussion.round = 1;
+  const firstDay = selectPublicHistoryTimeline(context, decision, 'delta');
+  assert.deepEqual(firstDay.speeches.map((event) => event.sequence), [8]);
+  assert.deepEqual(firstDay.voteResults, []);
+});
 
 test('deltaは参考視点が参照する境界以前の公開発言と投票だけを追加同梱する', () => {
   const priorReferencedSpeech = speech({ id: 'prior-ref', actorId: 'p1', sequence: 1, day: 1, text: '参照対象の前日発言' });

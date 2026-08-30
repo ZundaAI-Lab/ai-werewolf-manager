@@ -535,6 +535,10 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
     });
 
     controller.settings = await bridge.getSettings().catch(() => defaultSettings());
+    const settingsStartupNotices = bridge.isDesktop && typeof bridge.getSettingsStartupNotices === 'function'
+      ? await bridge.getSettingsStartupNotices().catch(() => [])
+      : [];
+    settingsPersistenceCoordinator.reportStartupSettingsNotices(settingsStartupNotices);
     liveProgressController.syncExecutionModeWorkbenchView({ refresh: false });
     settingsPersistenceCoordinator.applyPromptHistorySetting();
     settingsPersistenceCoordinator.applyAiExecutionSettings();

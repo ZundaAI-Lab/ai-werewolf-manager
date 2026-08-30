@@ -1,6 +1,6 @@
 /**
  * 責務: 夜行動スロット、夜開始時生存者、能力実行、襲撃・護衛・凍結・死亡解決の保存値整合を検査する。
- * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。後追い期待値は夜開始時生存者だけを対象とする。
+ * 変更ルール: 秘密会話本文・昼投票・処刑解決を扱わず、夜フェーズの確定事実を再計算保存せず検証だけ行う。後追い期待値は夜開始時生存者だけを対象とし、凍結appliedとfrozenPlayerIdの対応など解決結果の不変条件は実装分岐の単純コピーではなく独立して検証する。
  */
 
 import { countsAsWolf, isActualFox, isBadChild, isNightActionActor } from '../../domain/roles/roleAttributes.js';
@@ -174,8 +174,8 @@ export function validateNightState(context) {
         checkIds(execution.fearfulActorIds, '夜行動の恐怖状態構成員');
         checkIds(execution.consumedFearPlayerIds, '夜行動で解除する恐怖対象');
         if (!['wolf-attack', 'freeze'].includes(execution.actionType)) errors.push(`${label}: 夜行動制御のactionTypeが不正です。`);
-        if (!['not-required', 'executed', 'blocked'].includes(execution.executionState)) errors.push(`${label}: 夜行動制御のexecutionStateが不正です。`);
-        if (![null, 'fear'].includes(execution.blockReason)) errors.push(`${label}: 夜行動制御のblockReasonが不正です。`);
+        if (!['not-required', 'unavailable', 'executed', 'blocked'].includes(execution.executionState)) errors.push(`${label}: 夜行動制御のexecutionStateが不正です。`);
+        if (![null, 'fear', 'no-eligible-actor'].includes(execution.blockReason)) errors.push(`${label}: 夜行動制御のblockReasonが不正です。`);
       });
       const deaths = Array.isArray(resolution.deaths) ? resolution.deaths : [];
       const deathById = new Map();
@@ -214,28 +214,33 @@ export function validateNightState(context) {
         .filter((player) => countsAsWolf(raw, player) && aliveAtStart.has(player.id))
         .map((player) => player.id);
       const expectedWolfFearIds = aliveWolfIdsAtStart.filter((id) => fearAtActionIds.has(id));
+      const attackUnavailable = Boolean(plannedAttackTargetId) && aliveWolfIdsAtStart.length === 0;
       const attackBlockedByFear = Boolean(plannedAttackTargetId)
-        && aliveWolfIdsAtStart.length > 0
+        && !attackUnavailable
         && expectedWolfFearIds.length === aliveWolfIdsAtStart.length;
       const expectedAttackExecution = {
         actionType: 'wolf-attack',
-        actorIds: plannedAttackTargetId ? aliveWolfIdsAtStart : [],
-        fearfulActorIds: plannedAttackTargetId ? expectedWolfFearIds : [],
-        executionState: !plannedAttackTargetId ? 'not-required' : attackBlockedByFear ? 'blocked' : 'executed',
-        blockReason: attackBlockedByFear ? 'fear' : null,
+        actorIds: plannedAttackTargetId && !attackUnavailable ? aliveWolfIdsAtStart : [],
+        fearfulActorIds: plannedAttackTargetId && !attackUnavailable ? expectedWolfFearIds : [],
+        executionState: !plannedAttackTargetId ? 'not-required' : attackUnavailable ? 'unavailable' : attackBlockedByFear ? 'blocked' : 'executed',
+        blockReason: attackUnavailable ? 'no-eligible-actor' : attackBlockedByFear ? 'fear' : null,
         consumedFearPlayerIds: attackBlockedByFear ? expectedWolfFearIds : [],
       };
 
       const freezeSlot = submittedFreezeSlots[0] ?? null;
-      const freezeActorIds = freezeSlot ? [freezeSlot.actorId] : [];
+      const freezeActor = freezeSlot ? raw.players.find((player) => player.id === freezeSlot.actorId) ?? null : null;
+      const freezeActorIds = freezeSlot && freezeActor && aliveAtStart.has(freezeSlot.actorId) && isNightActionActor(raw, freezeActor, 'freeze')
+        ? [freezeSlot.actorId]
+        : [];
+      const freezeUnavailable = Boolean(freezeSlot) && freezeActorIds.length === 0;
       const expectedFreezeFearIds = freezeActorIds.filter((id) => fearAtActionIds.has(id));
-      const freezeBlockedByFear = Boolean(freezeSlot) && expectedFreezeFearIds.length === freezeActorIds.length;
+      const freezeBlockedByFear = Boolean(freezeSlot) && !freezeUnavailable && expectedFreezeFearIds.length === freezeActorIds.length;
       const expectedFreezeExecution = {
         actionType: 'freeze',
         actorIds: freezeActorIds,
         fearfulActorIds: expectedFreezeFearIds,
-        executionState: !freezeSlot ? 'not-required' : freezeBlockedByFear ? 'blocked' : 'executed',
-        blockReason: freezeBlockedByFear ? 'fear' : null,
+        executionState: !freezeSlot ? 'not-required' : freezeUnavailable ? 'unavailable' : freezeBlockedByFear ? 'blocked' : 'executed',
+        blockReason: freezeUnavailable ? 'no-eligible-actor' : freezeBlockedByFear ? 'fear' : null,
         consumedFearPlayerIds: freezeBlockedByFear ? expectedFreezeFearIds : [],
       };
       const expectedActionExecutions = [expectedAttackExecution, expectedFreezeExecution];
@@ -247,7 +252,7 @@ export function validateNightState(context) {
       const attackedPlayer = raw.players.find((player) => player.id === expectedAttacked) ?? null;
       const expectedAttackOutcome = !plannedAttackTargetId
         ? 'not-required'
-        : attackBlockedByFear
+        : (attackUnavailable || attackBlockedByFear)
           ? 'not-executed'
           : isActualFox(raw, attackedPlayer)
             ? 'fox-immune'
@@ -298,7 +303,7 @@ export function validateNightState(context) {
       let expectedFreezeOutcome = 'not-required';
       let expectedFrozenPlayerId = null;
       if (freezeSlot) {
-        if (freezeBlockedByFear) expectedFreezeOutcome = 'not-executed';
+        if (freezeUnavailable || freezeBlockedByFear || !expectedFreezeTargetId) expectedFreezeOutcome = 'not-executed';
         else if (deathById.has(freezeSlot.actorId)) expectedFreezeOutcome = 'actor-dead';
         else if (expectedGuarded.includes(expectedFreezeTargetId)) expectedFreezeOutcome = 'guarded';
         else if (deathById.has(expectedFreezeTargetId)) expectedFreezeOutcome = 'target-dead';
@@ -311,6 +316,10 @@ export function validateNightState(context) {
       if ((resolution.freezeTargetId ?? null) !== expectedFreezeTargetId) errors.push(`${label}: 夜解決の実行済み凍結対象が行動開始判定と一致しません。`);
       if (resolution.freezeOutcome !== expectedFreezeOutcome) errors.push(`${label}: 凍結結果が行動開始判定・護衛・死亡状態と一致しません。`);
       if ((resolution.frozenPlayerId ?? null) !== expectedFrozenPlayerId) errors.push(`${label}: 翌昼の凍結者が凍結結果と一致しません。`);
+      const freezeApplied = resolution.freezeOutcome === 'applied';
+      const hasFrozenPlayer = (resolution.frozenPlayerId ?? null) !== null;
+      if (freezeApplied !== hasFrozenPlayer) errors.push(`${label}: 凍結結果appliedと翌昼の凍結者の有無が矛盾しています。`);
+      if (freezeApplied && resolution.frozenPlayerId !== resolution.freezeTargetId) errors.push(`${label}: 翌昼の凍結者が実行済み凍結対象と一致しません。`);
       const privateInspectKeys = new Set((resolution.privateResults ?? []).filter((entry) => entry.actionType === 'inspect').map((entry) => `${entry.actorId}:${entry.targetId}`));
       submittedInspectSlots.forEach((slot) => {
         if (!privateInspectKeys.has(`${slot.actorId}:${slot.targetId}`)) errors.push(`${label}: 提出済み占いに対応する私的結果がありません。`);

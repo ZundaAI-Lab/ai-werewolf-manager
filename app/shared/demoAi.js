@@ -1,6 +1,6 @@
 /**
  * 責務: 外部APIキーなしでゲーム自動進行とチャットルームを検証できる、タスク種別ごとのデモAI応答を生成する。
- * 変更ルール: ゲーム状態を変更しない。ゲーム進行ではマーク付きの今回JSON例と表示名ベースのdraft-task-dataを使用し、チャットルームではJSON例へ依存せず専用の固定台詞を構造化応答として返す。チャットの質問専用回答IDと本人の既存内部メモだけはPrompt内の専用data blockから引き継ぐ。発言化はfield-jobs、昼議論校正はproofread-inputだけを読み、内部IDへ依存せず、実戦用AIの代替として評価結果へ混在させない。
+ * 変更ルール: ゲーム状態を変更しない。ゲーム進行ではマーク付きの今回JSON例と表示名ベースのdecide/analyze/critique/finalize用データを使用し、チャットルームではJSON例へ依存せず専用の固定台詞を構造化応答として返す。チャットの質問専用回答IDと本人の既存内部メモだけはPrompt内の専用data blockから引き継ぐ。最終キャラ発言化はfield-jobsだけを読み、内部IDへ依存せず、実戦用AIの代替として評価結果へ混在させない。
  */
 
 (function exposeDemoAi(root, factory) {
@@ -127,17 +127,6 @@
     }).join('');
   }
 
-  function demoProofreadText(input) {
-    const sourceText = String(input?.sourceText ?? '');
-    const deadNames = Array.isArray(input?.publicSituation?.deadNames)
-      ? input.publicSituation.deadNames.map(String).filter(Boolean)
-      : [];
-    const containsInvalidLifeState = sourceText.includes('今も生きています');
-    const containsInvalidAttackActor = sourceText.includes('狂人に襲撃されました');
-    if ((!containsInvalidLifeState && !containsInvalidAttackActor) || !deadNames.length) return sourceText;
-    return deadNames.map((name) => `${name}さんはすでに死亡しています。`).join('');
-  }
-
   function generate({ prompt, taskType = '', playerName = '', requestPurpose = 'normal' } = {}) {
     if (taskType === 'chat-room') {
       return JSON.stringify(generateChatRoomResponse(prompt));
@@ -147,32 +136,40 @@
       const textPatch = Object.fromEntries(jobs.map((job) => [String(job.field), demoStageText(job)]));
       return JSON.stringify({ textPatch });
     }
-    if (requestPurpose === 'generation-proofread') {
-      const input = parseDataBlock(prompt, 'proofread-input') ?? {};
-      return JSON.stringify({ textPatch: { publicSpeech: demoProofreadText(input) } });
+    if (requestPurpose === 'generation-analyze') {
+      const input = parseDataBlock(prompt, 'analysis-input') ?? {};
+      const alive = input?.publicState?.alivePlayers ?? [];
+      return `確定情報と公開発言を分けて確認します。生存者は${alive.length || '複数'}名です。各候補の根拠と反証、情報取得価値を比較し、多数意見そのものは根拠にしません。`;
     }
-    const draftTaskData = requestPurpose === 'generation-draft'
-      ? parseDataBlock(prompt, 'draft-task-data') ?? {}
+    if (requestPurpose === 'generation-critique') {
+      return '分析内容をゲーム情報と照合しました。人物・能力対象・白黒判定の取り違えに注意し、妥当な部分は維持しつつ別仮説の見落としがないか確認します。';
+    }
+    const candidateDataBlock = ({
+      'generation-decide': 'decision-input',
+      'generation-finalize': 'finalize-input',
+    })[requestPurpose] ?? '';
+    const candidateTaskData = candidateDataBlock
+      ? parseDataBlock(prompt, candidateDataBlock) ?? {}
       : null;
     const stageContract = parseDataBlock(prompt, 'response-contract');
     const example = stageContract?.completeExample ?? parseResponseExample(prompt);
-    const player = parseDataBlock(prompt, 'player') ?? draftTaskData?.currentMoment ?? {};
-    const privateInformation = parseDataBlock(prompt, 'private-information') ?? draftTaskData?.privateState ?? {};
+    const player = parseDataBlock(prompt, 'player') ?? candidateTaskData?.currentMoment ?? {};
+    const privateInformation = parseDataBlock(prompt, 'private-information') ?? candidateTaskData?.privateState ?? {};
     const publicPlayers = [
-      ...(draftTaskData?.publicState?.alivePlayers ?? []),
-      ...(draftTaskData?.publicState?.deadPlayers ?? []),
+      ...(candidateTaskData?.publicState?.alivePlayers ?? []),
+      ...(candidateTaskData?.publicState?.deadPlayers ?? []),
     ].map((item) => typeof item === 'string'
       ? { id: item, name: item }
       : { id: String(item?.id ?? item?.playerId ?? item?.name ?? ''), name: String(item?.name ?? item?.playerName ?? item?.id ?? '') })
       .filter((item) => item.id && item.name);
-    const draftTargetSource = draftTaskData?.roleTaskData?.validTargetPlayers
-      ?? draftTaskData?.roleTaskData?.validTargets
-      ?? draftTaskData?.roleTaskData?.validTargetIds
+    const candidateTargetSource = candidateTaskData?.roleTaskData?.validTargetPlayers
+      ?? candidateTaskData?.roleTaskData?.validTargets
+      ?? candidateTaskData?.roleTaskData?.validTargetIds
       ?? [];
-    const draftTargets = targetRows({ validTargets: draftTargetSource });
+    const candidateTargets = targetRows({ validTargets: candidateTargetSource });
     const currentTask = parseDataBlock(prompt, 'current-task') ?? {
-      validTargets: draftTargets,
-      alivePlayers: draftTaskData?.publicState?.alivePlayers ?? [],
+      validTargets: candidateTargets,
+      alivePlayers: candidateTaskData?.publicState?.alivePlayers ?? [],
     };
     const actorName = String(playerName || player.name || player.playerName || 'AIプレイヤー');
     const targets = targetRows(currentTask);

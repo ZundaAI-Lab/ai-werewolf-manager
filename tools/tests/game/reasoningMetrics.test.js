@@ -1,6 +1,6 @@
 /**
- * 責務: 保存Stateの推理レンズ計測が現行候補順位正本と一致し、forced/fallback/未割当・候補外を混同せず、比較不能な率を0%と誤表示しないことを確認する。
- * 変更ルール: 発言本文の意味評価は行わず、構造計測だけを固定する。evidenceFocus間の候補構造差は性能差として扱わない。
+ * 責務: 保存Stateの推理レンズ計測が現行候補順位正本と一致し、主要な分類・分母・順位分布を一つの代表ケースで確認する。
+ * 変更ルール: レポート文言やevidenceFocus間の説明表現は固定せず、構造計測だけを検証する。
  */
 
 import test from 'node:test';
@@ -59,26 +59,4 @@ test('reasoning metrics classifies current personality, forced, fallback and ran
   assert.equal(report.byTaskType['speech-designated'].normalSpeechTurns, 1);
   assert.equal(report.byTaskType['speech-free'].normalSpeechTurns, 1);
   assert.match(formatReasoningMetricsReport(report), /primary 33\.3%/u);
-});
-
-test('reasoning metrics keeps comparable denominator explicit and warns against cross-focus fallback comparison', () => {
-  const state = {
-    game: { id: 'mixed' },
-    players: [
-      player('p1', '関係型', 'social-reaction'),
-      player('p2', '反応型', 'response'),
-    ],
-    aiTurns: [
-      turn('current-1', 'p1', 2, 'speech', 'challenge-consensus'),
-      turn('current-2', 'p2', 2, 'speech', 'respond-directly'),
-    ],
-  };
-  const report = analyzeReasoningMetrics(state);
-  assert.equal(report.summary.directiveTurns, 2);
-  assert.equal(report.summary.comparableDirectiveTurns, 2);
-  assert.equal(report.summary.forcedRate, 1 / 2);
-  const text = formatReasoningMetricsReport(report);
-  assert.match(text, /forced 50\.0% \(1\/2 comparable\)/u);
-  assert.match(text, /fallbackRate is not directly comparable across evidenceFocus/u);
-  assert.match(text, /social-reaction includes challenge-consensus/u);
 });

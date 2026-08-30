@@ -16,7 +16,7 @@ const PROFILE_KEYS = Object.freeze([
   'jsonRequestMode', 'jsonResponseMode', 'thinkingLevel', 'localServerPreset', 'billing', 'generation',
 ]);
 const BILLING_KEYS = Object.freeze(['inputUsdPerMillion', 'cachedInputUsdPerMillion', 'cacheWriteUsdPerMillion', 'outputUsdPerMillion', 'profileBudgetUsd']);
-const GENERATION_KEYS = Object.freeze(['depth', 'draftProfileId', 'renderProfileId', 'proofreadProfileId', 'taskOverrides']);
+const GENERATION_KEYS = Object.freeze(['depth', 'reasoningProfileId', 'outputProfileId', 'critiqueProfileId', 'taskOverrides']);
 const TASK_OVERRIDE_KEYS = Object.freeze(['speech', 'vote', 'nightAction', 'privateConversation', 'resultImpression', 'memoConsolidate']);
 
 function plainObject(value) {
@@ -79,7 +79,7 @@ function validatePackage(raw) {
   });
   if (!ids.has(raw.rootProfileId)) throw new RangeError('AIプロファイルJSON.rootProfileIdがprofiles内に存在しません。');
   raw.profiles.forEach((profile, index) => {
-    for (const key of ['draftProfileId', 'renderProfileId', 'proofreadProfileId']) {
+    for (const key of ['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']) {
       assertNullableProfileId(profile.generation[key], `AIプロファイルJSON.profiles[${index}].generation.${key}`, ids);
     }
   });
@@ -129,7 +129,7 @@ function dependencyProfiles(rootProfileId, profiles, normalizeGenerationSettings
     visited.add(id);
     selected.push(profile);
     const generation = normalizeGenerationSettings(profile.generation);
-    for (const key of ['draftProfileId', 'renderProfileId', 'proofreadProfileId']) {
+    for (const key of ['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']) {
       if (generation[key] && !visited.has(generation[key])) queue.push(generation[key]);
     }
   }
@@ -186,7 +186,7 @@ export function createAiProfileTransferController(context) {
     const idMap = new Map(packageValue.profiles.map((profile) => [profile.id, createProfileId()]));
     const imported = packageValue.profiles.map((profile) => {
       const generation = structuredClone(profile.generation);
-      for (const key of ['draftProfileId', 'renderProfileId', 'proofreadProfileId']) {
+      for (const key of ['reasoningProfileId', 'outputProfileId', 'critiqueProfileId']) {
         generation[key] = generation[key] === null ? null : idMap.get(generation[key]) ?? null;
       }
       return {

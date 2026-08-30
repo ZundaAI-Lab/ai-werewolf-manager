@@ -1,6 +1,6 @@
 /**
  * 責務: 公開判断状態の列挙値、初期形、AI差分更新の適用、前回状態との決定的比較、変更メタデータ生成を一元管理する。
- * 変更ルール: assessmentLevelの許可値は本ファイルを正本とし、プロンプト・応答解析・状態検証で共用する。人物名解決や公開イベント参照の検証を行わない。回答時点の日付はsourceDayへ保存し、死亡・日付変更による現在盤面への射影はdecisionTargetPolicy.jsへ委譲する。応答パーサーは構文だけ、responseValidator.jsは対象・根拠整合だけを担当する。
+ * 変更ルール: assessmentLevelの許可値は本ファイルを正本とし、プロンプト・応答解析・状態検証で共用する。executionCandidateIdsは先頭を第一処刑候補として回答順を保持し、順序変更も判断変更として扱う。人物名解決や公開イベント参照の検証を行わない。回答時点の日付はsourceDayへ保存し、死亡・日付変更による現在盤面への射影はdecisionTargetPolicy.jsへ委譲する。応答パーサーは構文だけ、responseValidator.jsは対象・根拠整合だけを担当する。
  */
 
 export const DECISION_ASSESSMENT_LEVELS = Object.freeze([
@@ -38,12 +38,20 @@ const DECISION_GROUNDING_CAUSES = Object.freeze([
   'vote-pressure',
 ]);
 
-function normalizeCandidateIds(ids) {
+function normalizeCandidateSetIds(ids) {
   return [...new Set((ids ?? []).filter(Boolean).map(String))].sort();
 }
 
+function normalizeOrderedCandidateIds(ids) {
+  return [...new Set((ids ?? []).filter(Boolean).map(String))];
+}
+
 function sameCandidateSet(left, right) {
-  return JSON.stringify(normalizeCandidateIds(left)) === JSON.stringify(normalizeCandidateIds(right));
+  return JSON.stringify(normalizeCandidateSetIds(left)) === JSON.stringify(normalizeCandidateSetIds(right));
+}
+
+function sameCandidateOrder(left, right) {
+  return JSON.stringify(normalizeOrderedCandidateIds(left)) === JSON.stringify(normalizeOrderedCandidateIds(right));
 }
 
 export function createEmptyDecisionState() {
@@ -86,7 +94,7 @@ export function compareDecisionStates(previous = {}, next = {}) {
   if (!sameCandidateSet(before.suspicionCandidateIds, after.suspicionCandidateIds)) {
     changedFields.push('suspicionCandidateIds');
   }
-  if (!sameCandidateSet(before.executionCandidateIds, after.executionCandidateIds)) {
+  if (!sameCandidateOrder(before.executionCandidateIds, after.executionCandidateIds)) {
     changedFields.push('executionCandidateIds');
   }
   if ((before.intendedVoteId ?? null) !== (after.intendedVoteId ?? null)) {
@@ -113,8 +121,12 @@ export function applyDecisionPatch(previousState, patch) {
   const next = { ...base };
   Object.entries(sourceChanges).forEach(([key, value]) => {
     if (!DECISION_PATCH_FIELDS.includes(key)) return;
-    if (key === 'suspicionCandidateIds' || key === 'executionCandidateIds') {
-      next[key] = normalizeCandidateIds(value);
+    if (key === 'suspicionCandidateIds') {
+      next[key] = normalizeCandidateSetIds(value);
+      return;
+    }
+    if (key === 'executionCandidateIds') {
+      next[key] = normalizeOrderedCandidateIds(value);
       return;
     }
     if (key === 'intendedVoteId') {

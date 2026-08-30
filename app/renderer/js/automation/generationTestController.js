@@ -41,10 +41,10 @@ export function createGenerationTestController(context) {
           let candidateObject = null;
           let previousAnswerText = '';
           return (pipeline?.generationRun?.stages ?? []).map((stage) => {
-            if ((stage.stageId === 'direct' || stage.stageId === 'draft') && stage.status === 'accepted') {
+            if (['direct', 'decide', 'finalize'].includes(stage.stageId) && stage.status === 'accepted') {
               const evaluation = evaluateCandidate(stage.rawResponse);
               if (evaluation?.candidateObject) candidateObject = evaluation.candidateObject;
-            } else if ((stage.stageId === 'render' || stage.stageId === 'proofread') && stage.status === 'applied' && candidateObject) {
+            } else if (stage.stageId === 'render' && stage.status === 'applied' && candidateObject) {
               const parsed = runtimeApi.parseTextPatchResponse(stage.rawResponse);
               if (parsed?.ok) {
                 const merged = runtimeApi.mergeTextPatch(candidateObject, parsed.textPatch, stage.targetTextFields);
@@ -52,7 +52,10 @@ export function createGenerationTestController(context) {
                 if (evaluation?.candidateObject) candidateObject = evaluation.candidateObject;
               }
             }
-            const answer = generationCandidateAnswer(candidateObject, stage.rawResponse);
+            const freeTextStage = ['analyze', 'critique'].includes(stage.stageId);
+            const answer = freeTextStage
+              ? { label: stage.stageId === 'analyze' ? '分析' : '検証', text: String(stage.rawResponse ?? '').trim() }
+              : generationCandidateAnswer(candidateObject, stage.rawResponse);
             const answerText = answer.text;
             const changed = previousAnswerText !== '' && answerText !== previousAnswerText;
             if (answerText) previousAnswerText = answerText;
@@ -106,22 +109,12 @@ export function createGenerationTestController(context) {
             let actualCalls = 0;
             async function callStage({ stage, prompt, requestPurpose }) {
               actualCalls += 1;
-              const textPatchStage = stage.stageId === 'render' || stage.stageId === 'proofread';
-              const baseEnvelope = taskArtifact.promptEnvelope ?? {};
-              const promptEnvelope = {
-                schemaVersion: 5,
-                commonSystemInstruction: textPatchStage ? '' : String(baseEnvelope.commonSystemInstruction ?? taskArtifact.systemInstruction ?? ''),
-                commonGameContext: textPatchStage ? '' : String(baseEnvelope.commonGameContext ?? ''),
-                taskInvariantContext: textPatchStage ? '' : String(baseEnvelope.taskInvariantContext ?? ''),
-                taskVariableContext: textPatchStage ? '' : String(baseEnvelope.taskVariableContext ?? ''),
-                stablePlayerContext: textPatchStage ? '' : String(baseEnvelope.stablePlayerContext ?? ''),
-                dynamicTaskPrompt: String(prompt ?? ''),
-                structuredOutput: textPatchStage ? null : (baseEnvelope.structuredOutput ? structuredClone(baseEnvelope.structuredOutput) : null),
-                cacheIdentity: {
-                  ...(baseEnvelope.cacheIdentity ?? {}),
-                  promptFamily: textPatchStage ? 'generation-text-patch' : String(baseEnvelope.cacheIdentity?.promptFamily ?? 'generation-candidate'),
-                },
-              };
+              const promptEnvelope = runtimeApi.projectGenerationStagePromptEnvelope({
+                baseEnvelope: taskArtifact.promptEnvelope ?? {},
+                stageId: stage.stageId,
+                prompt,
+                fallbackSystemInstruction: taskArtifact.systemInstruction ?? '',
+              });
               const executorProfile = profileById(stage.executorProfileId);
               const dataNoticeAccepted = await globalThis.AiWerewolfDataTransmissionNotice?.ensureExternalDataNoticeForProfile?.(executorProfile);
               if (dataNoticeAccepted === false) throw new Error('外部LLMへのデータ送信を開始しませんでした。');
@@ -148,10 +141,14 @@ export function createGenerationTestController(context) {
                 const response = await callStage({
                   stage,
                   prompt,
-                  requestPurpose: stage.stageId === 'draft' ? 'generation-draft' : 'normal',
+                  requestPurpose: stage.stageId === 'direct' ? 'normal' : `generation-${stage.stageId}`,
                 });
                 const evaluation = evaluateCandidate(response.text);
                 return { ok: evaluation.ok, rawResponse: response.text, evaluation, attemptCount: 1, usage: response.usage, issues: evaluation.issues };
+              },
+              requestFreeText: async ({ stage, prompt }) => {
+                const response = await callStage({ stage, prompt, requestPurpose: `generation-${stage.stageId}` });
+                return { ok: true, rawResponse: response.text, attemptCount: 1, usage: response.usage, issues: [] };
               },
               requestTextPatch: async ({ stage, prompt }) => {
                 const response = await callStage({ stage, prompt, requestPurpose: `generation-${stage.stageId}` });
@@ -159,9 +156,11 @@ export function createGenerationTestController(context) {
               },
               evaluateCandidate,
               resolveStagePromptPolicy: runtimeApi.resolveGenerationStagePromptPolicy,
-              buildDraftPrompt: runtimeApi.buildDraftStagePrompt,
+              buildDecidePrompt: runtimeApi.buildDecideStagePrompt,
+              buildAnalyzePrompt: runtimeApi.buildAnalyzeStagePrompt,
+              buildCritiquePrompt: runtimeApi.buildCritiqueStagePrompt,
+              buildFinalizePrompt: runtimeApi.buildFinalizeStagePrompt,
               buildRenderPrompt: runtimeApi.buildRenderStagePrompt,
-              buildProofreadPrompt: runtimeApi.buildProofreadStagePrompt,
             });
             if (!pipeline?.ok || !pipeline.evaluation?.ok) throw new Error('実効パイプラインの最終候補が現行検証を通りませんでした。');
             const expectedActualCalls = pipeline.generationRun.stages.filter((stage) => stage.status !== 'skipped' && Number(stage.attemptCount ?? 0) > 0).length;

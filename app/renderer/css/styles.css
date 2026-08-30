@@ -814,10 +814,10 @@ input:disabled, select:disabled, textarea:disabled { opacity: .65; }
 .ai-generation-stage.is-system { background: color-mix(in srgb, var(--success) 10%, transparent); border: 1px solid color-mix(in srgb, var(--success) 35%, transparent); }
 .ai-generation-arrow { color: var(--muted); }
 .ai-stage-assignment-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(210px, 100%), 1fr)); gap: 8px 12px; }
-.ai-stage-assignment-grid [hidden], .ai-proofread-policy[hidden] { display: none; }
-.ai-proofread-policy { display: grid; gap: 4px; padding: 10px 11px; border-left: 3px solid var(--primary); border-radius: 8px; background: color-mix(in srgb, var(--primary) 7%, transparent); }
-.ai-proofread-policy strong { font-size: 12px; }
-.ai-proofread-policy span { color: var(--muted); font-size: 11px; line-height: 1.55; }
+.ai-stage-assignment-grid [hidden], .ai-review-policy[hidden] { display: none; }
+.ai-review-policy { display: grid; gap: 4px; padding: 10px 11px; border-left: 3px solid var(--primary); border-radius: 8px; background: color-mix(in srgb, var(--primary) 7%, transparent); }
+.ai-review-policy strong { font-size: 12px; }
+.ai-review-policy span { color: var(--muted); font-size: 11px; line-height: 1.55; }
 .ai-task-depth-grid { border-top: 1px solid var(--border-soft); padding-top: 9px; }
 .ai-task-depth-grid > summary { cursor: pointer; color: #d8d0ff; font-size: 12px; }
 .ai-task-depth-grid .form-grid { margin-top: 10px; }

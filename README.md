@@ -55,14 +55,15 @@ app/
     data/characters/       管理グループ別のキャラクターJSON・呼称・クレジット
     generated/             自動生成bundle・ビルド識別情報・公開表示埋め込みCSS
   README.txt               配布利用者向けREADME
-  shared/dataCompatibility/ 製品版ユーザーデータschemaと一方向Migrationの正本
+  shared/dataCompatibility/ 製品版ユーザーデータschemaと任意の一方向Migrationの正本
 tools/
   build/                   bundle生成、製造ゲート、配布製造、ソース抽出
   tests/game/              ゲーム規則とRenderer側回帰テスト
   tests/desktop/           Main、IPC、配布、生成物の回帰テスト
 docs/
   AI_WORK_RULES.md         実装時に必ず守る製造規約
-  DATA_COMPATIBILITY.md    製品版ユーザーデータの後方互換・Migration仕様
+  DATA_COMPATIBILITY.md    製品版ユーザーデータのschema・Migration・退避仕様
+  ROLE_INTERACTIONS.md     役職・能力・状態が交差する現行相互作用仕様
   CHAT_ROOM_SPEC.md        人狼非依存の自由会話の現行仕様
   SPECTATOR_ROOM_SPEC.md   人狼観戦チャットの現行仕様
   tests/                   ゲーム／1プレイヤー／自由会話／人狼観戦の手動通しテスト手順
@@ -89,7 +90,7 @@ npm run verify
 4. ゲーム契約テスト
 5. デスクトップ契約テスト
 
-`bundle.js`、`buildInfo.js`、`index.html`のbundleキャッシュキーは同一の現行JS・CSS・キャラクターJSON・HTMLから決定的に生成されます。`buildInfo.js`が生成メタデータの唯一の正本で、`BUILD_ID`と`BUNDLE_SHA256`を保持します。個別に書き換えないでください。
+`bundle.js`、`buildInfo.js`、`index.html`のbundleキャッシュキーは、本番ES Modules（`app/renderer/js/`と`app/shared/`）・CSS・キャラクターJSON・正規化したHTMLに加え、bundle生成規則と`tools/package.json`で固定したTypeScript版を入力として決定的に生成されます。`buildInfo.js`が生成メタデータの唯一の正本で、`BUILD_ID`と`BUNDLE_SHA256`を保持します。個別に書き換えないでください。
 
 ## 5. テスト
 
@@ -100,7 +101,7 @@ npm run test:desktop
 npm run verify
 ```
 
-変更時は現行仕様の契約・境界・代表経路をテストで確認し、最終的に `npm run verify` を通してください。過去の不具合だけを再現する専用テストや、同じ契約の重複テストは残しません。製品版データMigrationの旧schema fixture／移行テストだけは、将来の後方互換そのものを保証する契約として保持します。
+変更時は現行仕様の契約・境界・代表経路をテストで確認し、最終的に `npm run verify` を通してください。過去の不具合だけを再現する専用テストや、同じ契約の重複テストは残しません。旧schema fixture／移行テストは、現在もそのMigrationを提供すること自体が製品契約である場合だけ保持します。
 
 主な検査対象は次のとおりです。
 
@@ -108,7 +109,7 @@ npm run verify
 - 公開情報と秘密情報の境界
 - AI応答契約と生成工程
   - Prompt Envelopeは`commonGameContext → taskInvariantContext → stablePlayerContext → taskVariableContext → dynamicTaskPrompt`の順とし、キャッシュ効率より応答品質と意味上の責務を優先します。役職・局面・出力契約などの可変情報をキャッシュ対象へ移しません。キャッシュ可否とProviderのsystem/user配置は別に扱い、Envelope再区分で指示のmessage roleを不用意に弱めません。
-  - `最終確認`以下は軽量LLM向けの最低限の返却条件として必ず末尾に維持します。深度3・4のdraftは公開履歴の射影だけを使用し、生イベント管理情報を工程プロンプトへ渡しません。内部UUIDは雪女の能力対象など機械契約がID返却を明示要求する箇所以外へ渡しません。
+  - `最終確認`以下は軽量LLM向けの最低限の返却条件として必ず末尾に維持します。多段生成の工程プロンプトは公開履歴の射影を使用し、生イベント管理情報を直接渡しません。深度3・4の`analyze` / `critique`は人物設定を使わない客観分析とし、`finalize`で人物の判断傾向と表現設定を戻します。内部UUIDは雪女の能力対象など機械契約がID返却を明示要求する箇所以外へ渡しません。
 - Main／RendererのIPC境界
 - API設定、APIキー暗号化、エラー分類
 - 自動保存の順序保証、書込失敗後の最新状態保持、終了時flush
@@ -175,11 +176,11 @@ build-report.txt
 
 アプリversionはSemantic Versioningの`MAJOR.MINOR.PATCH`で更新します。更新区分は次を正本とし、同一リリースで複数区分に該当する場合は最も大きい区分を採用します。
 
-- `PATCH`（例: `1.0.0` → `1.0.1`）: 不具合修正、既存仕様どおりの挙動へ戻す修正、利用方法や互換契約を変えない内部改善。
-- `MINOR`（例: `1.0.1` → `1.1.0`）: 新機能、新役職、新しい設定項目など、既存の利用方法を壊さない機能追加・拡張。
-- `MAJOR`（例: `1.1.0` → `2.0.0`）: 既存の利用方法・公開契約・製品仕様を互換でない形に変更する大幅変更。
+- `PATCH`（例: `1.0.0` → `1.0.1`）: 不具合修正、既存仕様どおりの挙動へ戻す修正、実行時の公開操作契約を変えない内部改善。
+- `MINOR`（例: `1.0.1` → `1.1.0`）: 新機能、新役職、新しい設定項目など、既存の実行時利用方法を壊さない機能追加・拡張。
+- `MAJOR`（例: `1.1.0` → `2.0.0`）: UI操作、公開API、配布・起動方法など、アプリの実行時公開契約を互換でない形に変更する大幅変更。
 
-`schemaVersion`と`PROMPT_SPEC_VERSION`はアプリversionとは独立した規則で管理し、PATCH / MINOR / MAJOR更新だけを理由に変更しません。
+ユーザーデータの読込互換はアプリSemVerとは独立した`schemaVersion`とMigration登録状況で決まり、schema変更だけを理由にアプリversionのMAJOR更新を強制しません。`schemaVersion`と`PROMPT_SPEC_VERSION`もPATCH / MINOR / MAJOR更新だけを理由に変更しません。
 
 ## 9. 永続データ
 
@@ -191,6 +192,7 @@ chat-room-session.json      人狼Stateと独立した最新自由会話セッ�
 spectator-room-session.json 人狼Stateと独立した最新人狼観戦セッション
 desktop-settings.json       AIプロファイル、割り当て、進行設定
 appearance.json             外観設定
+privacy-notice.json         外部LLM通信の確認状態
 character-library.json      ユーザー追加・編集キャラクター
 llm-usage-summary.json      AIプロファイル別API使用量・料金集計
 llm-request-log.jsonl       設定時のみ保存するAPI詳細ログ
@@ -199,7 +201,7 @@ autosave-shutdown-warning.json  終了時にゲーム自動保存flushが完了�
 
 APIキーはElectronの`safeStorage`で暗号化し、Rendererへ平文を返しません。ゲームJSON、自由会話セッション、人狼観戦セッション、AI接続設定は別管理です。ログ保存前には認証ヘッダーと既知のAPIキー形式をマスクします。API使用量の永続集計は`profileId`を正本とし、人狼・自由会話・人狼観戦・診断など用途が異なっても同じAIプロファイルへ合算します。
 
-自動保存はRendererから状態変更ごとにMainへ渡し、Mainの`AutosaveStore`が最新状態へ集約して原子的に保存します。書込中または書込失敗後に新しい状態を受け取った場合も最新状態を保持し、次回保存または終了時flushで再処理します。Renderer側へ単純な遅延debounceを再導入しないでください。
+自動保存はRendererの`settingsPersistenceCoordinator.js`が短時間の連続変更を集約し、最大待機時間を設けて専用スナップショットをMainへ送ります。Mainの`AutosaveStore`は受け取った最新状態だけを直列化して原子的に保存し、書込中または書込失敗後に新しい状態を受け取った場合も最新状態を保持して、次回保存または終了時flushで再処理します。Renderer側の集約を変更する場合も、最大待機時間と終了前flushを失わせないでください。
 
 `desktop-settings.json`は候補設定を原子的に保存できた後だけMainの実行中設定へ反映します。保存失敗時にメモリ上の設定だけを先行変更してはいけません。AI全自動開始は準備中を含め単一の開始Promiseへ集約し、同時に複数の実行セッションを作成しません。
 
@@ -207,15 +209,15 @@ APIキーはElectronの`safeStorage`で暗号化し、Rendererへ平文を返し
 
 公開訂正・役職訂正・復元は、利用者に事前の訂正モード開始を要求せず、各正式コマンドが必要な場合だけ訂正モードへ自動的に入ります。利用者向けUIは訂正モード中の明示終了だけを提供します。
 
-製品版`1.0.0`以降のユーザーデータJSONは、アプリversionとは独立した`schemaVersion`で後方互換を管理します。旧schemaは`app/shared/dataCompatibility/`の一方向Migrationで現行schemaへ変換してから各現行validatorへ渡し、未来schema・無版schemaは推測して読みません。ゲームJSONではMigration後も、現在必要なゲーム事実の構造・型・参照整合性を検証し、履歴から再生成できる派生状態は現行形式で再構築します。`appVersion`・`buildId`・`promptSpecVersion`は出自メタデータであり、それ自体を拒否条件にはしません。詳細は`docs/DATA_COMPATIBILITY.md`を正本として参照してください。
+ユーザーデータJSONは、アプリversionとは独立した`schemaVersion`で現行保存形式を管理します。旧schemaは対応Migrationが明示的に登録されている場合だけ現行schemaへ変換し、Migrationのない旧schema・未来schema・無版schemaは推測して読みません。ゲームJSONではMigration後も、現在必要なゲーム事実の構造・型・参照整合性を検証し、履歴から再生成できる派生状態は現行形式で再構築します。`appVersion`・`buildId`・`promptSpecVersion`は出自メタデータであり、それ自体を拒否条件にはしません。詳細は`docs/DATA_COMPATIBILITY.md`を正本として参照してください。
 
 自由会話はゲームState・`discussionRuntime`・Undo／Redoへ混在させず、`app/main/chatRoomStore.js`と`app/renderer/js/domain/chat/`で独立管理します。通常巡回と質問回答の優先ターンを分離し、質問1件ごとの追加回答と低頻度の会話きっかけを独立して扱います。会話ログはセッション内で最大1200件、AIへ渡す生ログは直近48件です。長期情報はキャラクターごとの個別内部メモとして保持し、他キャラクターへ共有しません。詳細は `docs/CHAT_ROOM_SPEC.md` を正本として参照してください。
 
 人狼観戦は`app/main/spectatorRoomStore.js`と`app/renderer/js/domain/spectator/`で独立保存・管理し、公開ログの再生位置をゲームStateそのものへ書き戻しません。追っかけ中は`app/renderer/js/public/publicReplaySnapshot.js`が再生地点までの公開履歴から盤面を再構成し、最新公開ログへ到達した時だけリアルタイムへ合流します。リアルタイム時の「人狼卓を1手進める」はAI管理の共通`runSingleAutomaticStep`へ委譲します。詳細は `docs/SPECTATOR_ROOM_SPEC.md` を正本として参照してください。
 
-AIプロファイルJSON転送も`ai-profile-package`として共通schema互換層の対象とし、製品版`1.0.0`の基準`schemaVersion`は1です。APIキー、使用量、参加者割り当ては転送対象外です。生成工程が参照する依存プロファイルは同一パッケージへ含め、読込時に新しいプロファイルIDへ付け替えます。
+AIプロファイルJSON転送も`ai-profile-package`として共通schema管理層の対象とし、製品版`1.0.0`の基準`schemaVersion`は1です。対応Migrationのない旧schemaは読み込みません。APIキー、使用量、参加者割り当ては転送対象外です。生成工程が参照する依存プロファイルは同一パッケージへ含め、読込時に新しいプロファイルIDへ付け替えます。
 
-`desktop-settings.json`も共通schema互換層を通し、旧schemaは現行schemaへMigrationしてから共有`settingsSchema.js`の完全な現行保存形として検証します。Migration前の永続ファイルは`*.pre-schema-N.json`へ退避し、未来schemaや無版schemaは推測して読みません。
+`desktop-settings.json`も共通schema管理層を通し、対応Migrationがある旧schemaだけを現行schemaへ変換してから共有`settingsSchema.js`の完全な現行保存形として検証します。Migrationのない旧schema・未来schema・無版schemaは推測して読みません。読み込めない既存設定は元ファイルを一意名へ退避して既定設定へ切り替え、Rendererへ理由と退避先を通知します。現行schema内のendpoint使用可否は保存構造の復元と分離し、後から通信規則に適合しなくなったendpointだけを理由に設定全体を破損扱いしません。
 
 ## 10. 実装ルール
 
@@ -236,7 +238,7 @@ AIプロファイルJSON転送も`ai-profile-package`として共通schema互換
 2. 変更対象モジュールの責務と関連テストを確認する
 3. 正本モジュールだけを修正する
 4. 責務・更新規則が変わる場合は先頭コメントを更新する
-5. 現行仕様の契約テストで確認する。過去不具合専用・重複テストは残さず、公開済み旧schemaのMigrationテストだけは後方互換契約として保持する
+5. 現行仕様の契約テストで確認する。過去不具合専用・重複テストは残さず、現在も提供する旧schema Migrationのテストだけを製品契約として保持する
 6. `npm run verify`を実行する
 7. 配布契約を変更した場合は`npm run release`で実配布物も確認する
 

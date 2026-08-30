@@ -11,7 +11,7 @@ export const RUNTIME_REQUIRED_METHODS = Object.freeze([
   'scheduleFullPublicHistory', 'getAiHistoryStatus', 'getCurrentAiTaskRequest', 'resolveAutomaticAction', 'executeAutomaticAction', 'prepareAiTask',
   'evaluateAiTaskCandidate', 'commitAiTaskCandidate', 'commitAiTaskFallback', 'resolveGenerationPlan',
   'runGenerationPipeline', 'createGenerationPipelineTestTask', 'resolveGenerationStagePromptPolicy',
-  'buildDraftStagePrompt', 'buildRenderStagePrompt', 'buildProofreadStagePrompt', 'parseTextPatchResponse',
+  'buildDecideStagePrompt', 'buildAnalyzeStagePrompt', 'buildCritiqueStagePrompt', 'buildFinalizeStagePrompt', 'buildRenderStagePrompt', 'projectGenerationStagePromptEnvelope', 'parseTextPatchResponse',
   'validateTextPatchForStage', 'mergeTextPatch',
 ]);
 

@@ -33,7 +33,7 @@ async function generateChatCompletion(profile, promptEnvelope, apiKey, signal, r
     stream: false,
     [tokenLimitField]: normalizeMaxOutputTokens(profile),
   };
-  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope);
+  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope, requestPurpose);
   if (structuredOutputMode === 'json-schema') {
     requestBody.response_format = {
       type: 'json_schema',

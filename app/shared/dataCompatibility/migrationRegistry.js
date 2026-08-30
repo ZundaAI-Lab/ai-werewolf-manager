@@ -1,6 +1,6 @@
 /**
  * 責務: 製品版ユーザーデータの「schema N → N+1」migrationをデータ種別ごとに登録・解決する。
- * 変更ルール: migrationは一方向だけを登録し、既存migrationを削除・意味変更しない。旧実装を本体へ残さず、旧schema対応は本レジストリ配下だけに閉じ込める。新schema追加時は専用migration関数とfixtureを追加し、飛び級migrationは作らない。
+ * 変更ルール: migrationは後方互換を明示的に提供する場合だけ一方向で登録し、提供を継続するmigrationの意味を変更しない。旧実装を本体へ残さず、互換対応は本レジストリ配下だけに閉じ込める。互換不要の破壊変更ではmigrationを追加せず旧schemaを拒否し、migrationを追加する場合は専用関数とfixtureを用意して飛び級migrationを作らない。
  */
 
 (function initializeMigrationRegistry(root, factory) {
@@ -14,8 +14,8 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, () => {
   'use strict';
 
-  // 製品版1.0.0は全ユーザーデータschema=1が基準点のため、現時点のmigrationは空。
-  // schemaを2へ上げるときに { 1: migrateV1ToV2 } の形で対象kindへ追加する。
+  // 現在のschema更新は後方互換を提供しない破壊変更のためmigrationは空。
+  // 将来、互換を明示的に提供する場合だけ { 1: migrateV1ToV2 } の形で対象kindへ追加する。
   const DATA_MIGRATIONS = Object.freeze({});
 
   function migrationFor(kind, fromVersion, registry = DATA_MIGRATIONS) {

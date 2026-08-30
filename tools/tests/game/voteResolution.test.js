@@ -4,7 +4,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { beginVote, finalizeVote, publishExecution, publishVoteResult, recordRandomVote, recordVote, resolveExecution } from '../../../app/renderer/js/domain/vote/voteCommands.js';
+import { beginVote, finalizeVote, publishExecution, publishVoteResult, recordRandomVote, recordVote, reopenVoteInput, resolveExecution } from '../../../app/renderer/js/domain/vote/voteCommands.js';
 import { resolveVoteResult } from '../../../app/renderer/js/domain/vote/voteResolution.js';
 import { buildVotePopulationBranches } from '../../../app/renderer/js/domain/vote/votePopulationAnalysis.js';
 
@@ -111,6 +111,63 @@ test('AI失敗時のランダム投票は注入した乱数で決定的に対象
   assert.equal(state.voteSession.votes[voterId], candidates.at(-1));
   const event = state.events.find((item) => item.id === response.eventId);
   assert.equal(event.payload.override.selectedBy, 'random');
+});
+
+
+test('逐次公開投票は全票公開後の再入力を拒否し集計可能状態を維持する', () => {
+  const state = createInitialState(4);
+  state.game.rules.vote.visibilityDuringInput = 'public';
+  prepareCompletedDiscussion(state);
+  assert.equal(beginVote(state).ok, true);
+
+  state.voteSession.eligibleVoterIds.forEach((voterId) => {
+    const targetId = state.voteSession.candidateIds.find((candidateId) => candidateId !== voterId);
+    assert.equal(recordVote(state, { voterId, targetId }).ok, true);
+  });
+  assert.equal(state.voteSession.status, 'ready');
+
+  const reopenReady = reopenVoteInput(state);
+  assert.equal(reopenReady.ok, false);
+  assert.match(reopenReady.message, /逐次公開済み/u);
+  assert.equal(state.voteSession.status, 'ready');
+  assert.equal(finalizeVote(state, () => 0).ok, true);
+
+  const resultBeforeReopen = structuredClone(state.voteSession.result);
+  const reopenFinalized = reopenVoteInput(state);
+  assert.equal(reopenFinalized.ok, false);
+  assert.equal(state.voteSession.status, 'finalized');
+  assert.deepEqual(state.voteSession.result, resultBeforeReopen);
+});
+
+test('秘密投票は全票入力後に再入力へ戻して1票を修正するとreadyへ復帰する', () => {
+  const state = createInitialState(4);
+  state.game.rules.vote.visibilityDuringInput = 'secret';
+  prepareCompletedDiscussion(state);
+  assert.equal(beginVote(state).ok, true);
+
+  state.voteSession.eligibleVoterIds.forEach((voterId) => {
+    const targetId = state.voteSession.candidateIds.find((candidateId) => candidateId !== voterId);
+    assert.equal(recordVote(state, { voterId, targetId }).ok, true);
+  });
+  assert.equal(state.voteSession.status, 'ready');
+
+  const firstVoterId = state.voteSession.eligibleVoterIds[0];
+  const previousTargetId = state.voteSession.votes[firstVoterId];
+  const replacementTargetId = state.voteSession.candidateIds.find(
+    (candidateId) => candidateId !== firstVoterId && candidateId !== previousTargetId,
+  );
+  assert.ok(replacementTargetId);
+
+  const reopened = reopenVoteInput(state);
+  assert.equal(reopened.ok, true, reopened.message);
+  assert.equal(state.voteSession.status, 'input');
+  assert.equal(state.voteSession.currentVoterIndex, 0);
+
+  const changed = recordVote(state, { voterId: firstVoterId, targetId: replacementTargetId });
+  assert.equal(changed.ok, true, changed.message);
+  assert.equal(state.voteSession.votes[firstVoterId], replacementTargetId);
+  assert.equal(state.voteSession.status, 'ready');
+  assert.equal(state.voteSession.currentVoterIndex, state.voteSession.eligibleVoterIds.length);
 });
 
 test('処刑役職公開を有効にしても役職名を付けて処刑公開を完了する', () => {

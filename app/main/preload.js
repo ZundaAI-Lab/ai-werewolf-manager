@@ -1,5 +1,5 @@
 /**
- * 責務: Rendererへ許可済みのデスクトップ機能、AI使用量の参照・範囲指定リセット、外観設定の読込・保存、独立チャットルームと独立観戦ルームの読込・保存、外部LLMデータ送信確認状態の読込・保存、キャラクターライブラリ読込とユーザーデータ・使用状態・グループ順・キャラクター順の更新だけを型の狭いAPIとして公開する。
+ * 責務: Rendererへ許可済みのデスクトップ機能、AI設定の読込・保存・起動時読込通知、AI使用量の参照・範囲指定リセット、外観設定の読込・保存、独立チャットルームと独立観戦ルームの読込・保存、外部LLMデータ送信確認状態の読込・保存、キャラクターライブラリ読込とユーザーデータ・使用状態・グループ順・キャラクター順の更新だけを型の狭いAPIとして公開する。
  * 変更ルール: ipcRenderer本体、Node.js API、任意チャンネル送信を公開しない。引数はMain側でも再検証する。
  */
 
@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('desktopWerewolf', Object.freeze({
     autosaveFlushHandler = handler;
   },
   getSettings: () => ipcRenderer.invoke('desktop:get-settings'),
+  getSettingsStartupNotices: () => ipcRenderer.invoke('desktop:get-settings-startup-notices'),
   saveSettings: (settings) => ipcRenderer.invoke('desktop:save-settings', settings),
   saveAppearance: (appearance) => ipcRenderer.invoke('desktop:save-appearance', appearance),
   acceptExternalDataNotice: (version) => ipcRenderer.invoke('desktop:accept-external-data-notice', version),

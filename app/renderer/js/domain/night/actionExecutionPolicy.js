@@ -1,6 +1,6 @@
 /**
  * 責務: 夜行動の開始前に共通状態異常を評価し、行動を実行できるかと消費する状態を純粋に決定する。
- * 変更ルール: 効果解決・死亡・護衛・状態反映を行わない。共同アクションは構成員全員が阻害された場合だけ行動全体を阻害し、その場合だけ恐怖を消費する。
+ * 変更ルール: 効果解決・死亡・護衛・状態反映を行わない。共同アクションは構成員全員が阻害された場合だけ行動全体を阻害し、その場合だけ恐怖を消費する。required=trueなのに実行可能な行動者がいない場合はnot-requiredへ潰さずunavailableとして記録する。
  */
 
 import { getPlayer } from '../game/standardRules.js';
@@ -41,13 +41,23 @@ export function resolveActionExecution(state, {
     const actor = getPlayer(state, actorId);
     return Boolean(actor?.alive && getFearActionGroup(state, actor) === actionType);
   });
-  if (!required || !normalizedActorIds.length) {
+  if (!required) {
     return {
       actionType,
       actorIds: [],
       fearfulActorIds: [],
       executionState: 'not-required',
       blockReason: null,
+      consumedFearPlayerIds: [],
+    };
+  }
+  if (!normalizedActorIds.length) {
+    return {
+      actionType,
+      actorIds: [],
+      fearfulActorIds: [],
+      executionState: 'unavailable',
+      blockReason: 'no-eligible-actor',
       consumedFearPlayerIds: [],
     };
   }

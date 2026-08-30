@@ -136,7 +136,7 @@
 6. 修正提案には、対象タスク、履歴モード、実際のプロンプト、AI原文、解析結果、検証結果、保存結果、違反する正式仕様を示す。正式仕様違反を示せない内容は不具合と断定せず、現行仕様を維持する。
 7. Prompt Envelopeは`commonGameContext → taskInvariantContext → stablePlayerContext → taskVariableContext → dynamicTaskPrompt`の順を正本とする。キャッシュ対象は最初の3区画だけとし、役職・局面・会話段階・その回の出力契約など可変情報をキャッシュ効率のために前方へ移してはならない。`taskInvariantContext`には同一taskTypeで不変の意味ルールだけを置く。キャッシュ対象かどうかとProviderのsystem/user配置は別に扱い、Envelope再区分だけを理由に従来system側だった指示をuser側へ降格させてはならない。`dynamicTaskPrompt`はuser側の最終タスクとして末尾を維持する。
 8. `dynamicTaskPrompt`および多段生成の各工程にある`## 最終確認`以下は、軽量LLMにも今回最低限必要な返却条件を応答直前に提示する固定末尾である。キャッシュ最適化、重複整理、区画再配置を理由に前方へ移動・削除・別区画へ分散してはならない。内容を変更する場合は、その変更自体を明示目的として扱い、対応する回帰テストも同時更新する。
-9. 深度3・4のdraftへ公開イベントの生オブジェクトを渡さない。公開履歴は通常プロンプトと同じ公開履歴ポリシーから生成した射影を正本とし、`opportunityContext`等の進行管理情報、空値・空配列・空オブジェクト、判断に不要な内部管理項目を工程プロンプトへ掲載しない。draftの構造データは意味を変えずcompact JSONで渡す。
+9. 多段生成の工程プロンプトへ公開イベントの生オブジェクトを渡さない。公開履歴は通常プロンプトと同じ公開履歴ポリシーから生成した射影を正本とし、`opportunityContext`等の進行管理情報、空値・空配列・空オブジェクト、判断に不要な内部管理項目を掲載しない。深度2の`decide`は直接生成と同じ判断材料・人物の推理傾向を使うが口調情報を持たせず、`render`は確定済み判断を変えず文章だけをキャラクター表現へ変換する。深度3・4の`analyze` / `critique`は人物設定を使わない自由記述の客観分析とし、`finalize`で人物の判断傾向と表現設定を戻して完成候補を生成する。工程へ渡す構造データは意味を変えずcompact JSONで扱う。
 10. 工程プロンプトへ内部UUIDを直接掲載しない。playerは表示名、公開eventは公開イベント番号へ変換し、オブジェクトの値だけでなくキーも境界検査する。雪女の能力対象など、機械契約が内部IDの返却を明示的に要求する箇所だけを例外とし、例外範囲を一般化してはならない。
 11. 公開発言ルールの文章整理は否定形を文単位で減らすことを目的にしない。同じ趣旨を複数箇所へ重複させず、優先事項・重複禁止・新規性要求・例外・情報境界の関係が一読で分かる文章全体へまとめる。新規性のための根拠薄弱な疑い・評価変更、実質同じ発言や単なる言い換え、根拠としての発言番号列挙など、実際の誤挙動を止める禁止は否定形のまま明確に残す。文言整理で深度1の意味契約を変更せず、深度2～4も同じ意味契約を維持する。
 12. AI応答JSONの`rationale`は結果判明前の具体的な選択理由を原則1～2文、雪女の推定を伴う場合は1～3文とする。パーサー後の内部保存名`selectionRationale`とは責務を分け、AIへ提示するJSON例・Schema・修復契約へ内部名を露出させない。これは前方の出力契約・工程指示で統一し、`最終確認`以下を長さ指針統一のために書き換えない。
@@ -168,13 +168,13 @@
 - Windows配布版は`配布版を作成.cmd`または`tools`配下の`npm run release`から生成し、成果物を`output/dist`以外へ出力しない。
 - 配布済みZIPまたはSetup EXEの利用者へNode.js、npm、VS Codeを要求しない。
 - `app/renderer/generated/bundle.js`、`buildInfo.js`、`publicViewStyles.js`、`app/renderer/index.html`のbundleキャッシュキーは、本番ES Modules・CSS・キャラクターJSON・HTMLに加え、bundle生成規則と`tools/package.json`で完全固定したTypeScript版を入力として決定的に再生成する。同一入力から異なる生成物を作ってはならず、ビルド規則・固定TypeScript版・公開表示CSSの変更も生成物鮮度検査で検出する。TypeScript要求版は`X.Y.Z`形式の完全固定版だけを許可する。生成メタデータを別ファイルへ重複保持せず、`buildInfo.js`だけを正本とする。
-- アプリversionはSemantic Versioningの`MAJOR.MINOR.PATCH`を正本とする。不具合修正・既存仕様どおりの挙動へ戻す修正・互換契約を変えない内部改善は`PATCH`、既存利用を壊さない新機能・新役職・設定追加は`MINOR`、既存の利用方法・公開契約・製品仕様を非互換に変更する場合は`MAJOR`を更新する。同一リリースで複数区分に該当する場合は最も大きい区分を採用し、`app/package.json`と`tools/package.json`を必ず同じ値へ更新する。`schemaVersion`と`PROMPT_SPEC_VERSION`はそれぞれ独立した更新規則に従い、アプリversion更新だけを理由に変更しない。
-- 製品版`1.0.0`以降のユーザーデータJSONは`app/shared/dataCompatibility/`のschemaVersionと一方向Migrationを正本として後方互換を維持する。アプリversion・`buildId`・`promptSpecVersion`は出自メタデータでありschema互換判定に使わない。旧schemaは必ずN→N+1で現行へ変換し、未来schema・無版schemaは推測して読まない。旧schema分岐をDomain・Store・UIへ散在させない。ゲーム状態はMigration後に構造・型・参照を検証し、履歴から再生成できる派生状態だけを現行形式へ再構築する。詳細規約は`docs/DATA_COMPATIBILITY.md`を正本とする。
-- Rendererから`localStorage`または`sessionStorage`へ保存しない。設定と自動保存はElectron Main側の専用ストアを使用する。自動保存失敗時も最新の待機状態を保持し、次回保存または終了時flushで再処理する。設定は原子的なファイル保存成功後だけ実行中状態へ反映する。
-- `desktop-settings.json`、`appearance.json`、チャット／観戦セッション、ユーザーキャラクター、使用量集計、外部LLM確認、AIプロファイル転送JSONは共通dataCompatibility層を通す。Migration後だけ各現行validatorへ渡し、保存時は現行schemaだけを書き出す。Main永続ファイルをMigrationする前は`*.pre-schema-N.json`へ変換前データを1世代退避する。
+- アプリversionはSemantic Versioningの`MAJOR.MINOR.PATCH`を正本とする。不具合修正・既存仕様どおりの挙動へ戻す修正・実行時の公開操作契約を変えない内部改善は`PATCH`、既存の実行時利用を壊さない新機能・新役職・設定追加は`MINOR`、UI操作・公開API・配布／起動方法などアプリの実行時公開契約を非互換に変更する場合は`MAJOR`を更新する。同一リリースで複数区分に該当する場合は最も大きい区分を採用し、`app/package.json`と`tools/package.json`を必ず同じ値へ更新する。ユーザーデータの読込互換はアプリSemVerから分離し、`schemaVersion`とMigration登録状況を正本とするため、schema変更だけを理由にMAJOR更新を強制しない。`schemaVersion`と`PROMPT_SPEC_VERSION`はそれぞれ独立した更新規則に従い、アプリversion更新だけを理由に変更しない。
+- ユーザーデータJSONは`app/shared/dataCompatibility/`のschemaVersionを現行保存形式の正本とする。アプリversion・`buildId`・`promptSpecVersion`は出自メタデータでありschema判定に使わない。旧schemaは対応Migrationが明示的に登録されている場合だけN→N+1で現行へ変換し、Migrationのない旧schema・未来schema・無版schemaは推測して読まない。旧schema分岐をDomain・Store・UIへ散在させない。ゲーム状態はMigration後に構造・型・参照を検証し、履歴から再生成できる派生状態だけを現行形式へ再構築する。詳細規約は`docs/DATA_COMPATIBILITY.md`を正本とする。
+- Rendererから`localStorage`または`sessionStorage`へ保存しない。設定と自動保存はElectron Main側の専用ストアを使用する。ゲーム自動保存はRendererの`settingsPersistenceCoordinator.js`で短時間の変更を集約しつつ最大待機時間を設け、終了前には明示flushする。Mainの`AutosaveStore`は最新要求だけを保持して直列・原子的に保存し、失敗時も最新の待機状態を次回保存または終了時flushで再処理する。設定は原子的なファイル保存成功後だけ実行中状態へ反映する。
+- `desktop-settings.json`、`appearance.json`、チャット／観戦セッション、ユーザーキャラクター、使用量集計、外部LLM確認、AIプロファイル転送JSONは共通dataCompatibility層を通す。対応Migrationがある場合はMigration後だけ各現行validatorへ渡し、保存時は現行schemaだけを書き出す。Main永続ファイルをMigrationする前は`*.pre-schema-N.json`へ変換前データを1世代退避する。`desktop-settings.json`の現行schema読込では、保存構造の妥当性とendpointの現在の通信可否を分離し、通信規則だけを理由に設定全体を破損扱いしない。
 - AI全自動開始は準備処理を含め単一Promiseへ集約し、開始操作の連続実行で複数の実行セッションを作成してはならない。
 - `ソース一式作成.cmd`は`output/ai_werewolf_manager_vXX_XX_XX.zip`を生成し、`.github`、`output`、`tools/node_modules`だけを除外する。
-- テストは現在および将来の製品契約・境界・代表経路だけを残し、過去不具合の再現専用、表示細部固定、重複検査を追加しない。例外として、製品版1.0.0以降に公開済みの旧schema用Migration・fixture・旧schema→current移行テストは後方互換契約そのものなので削除しない。
+- テストは現在および将来の製品契約・境界・代表経路だけを残し、過去不具合の再現専用、表示細部固定、重複検査を追加しない。旧schema用Migration・fixture・旧schema→current移行テストは、現在もそのMigrationを提供すること自体が製品契約である場合だけ保持する。
 
 ### テスト作成ルール
 
@@ -186,7 +186,7 @@
 - プロンプト全文snapshotや大量の部分一致で文章構成を凍結しない。セクションの有無自体が意味契約である場合も、可能ならセクション生成条件・構造化入力・組み立てポリシーを検証し、見出し文言や説明本文を固定しない。
 - 不具合修正の回帰テストは、その不具合を生んだ意味上の境界または失敗条件を最小入力で再現し、修正後の受理／拒否・状態変化を検証する。過去の回答文や旧プロンプト文言をそのままfixture化して恒久固定しない。
 - 既存テストを変更・追加するときは、同じ仕様を別テストが既に守っていないか確認し、重複する文言検査・同値検査を増やさない。テスト数ではなく、独立した製品契約をどれだけ直接検証しているかを基準にする。
-- ソースコードの後方互換は不要であり、廃止した旧実装や旧API分岐を残さない。ただし製品版1.0.0以降のデータMigrationとそのfixtureはこの削除規則の明示的な例外とする。
+- ソースコードの後方互換は不要であり、廃止した旧実装や旧API分岐を残さない。ユーザーデータMigrationも恒久保証せず、現在も明示的に提供するMigrationとそのfixtureだけを例外として保持する。
 
 ## 公開発言本文の境界
 
@@ -199,7 +199,7 @@
 ## 人狼非依存チャットルームの責務境界
 
 - チャットルームは人狼ゲームの特殊フェーズではない。`game` State、`discussionRuntime`、ゲームrevision、Undo／Redo、役職・陣営・CO・投票・能力・判断状態・陣営戦略へ混在させない。状態正本は`app/renderer/js/domain/chat/`、Prompt正本は`app/renderer/js/prompts/chat/chatRoomPrompt.js`、会話きっかけ選択正本は`app/renderer/js/prompts/chat/chatRoomConversationCuePolicy.js`、Main保存正本は`app/main/chatRoomStore.js`とする。
-- 最新チャットセッションは`chat-room-session.json`へ保存し、`game-autosave.json`へ混在させない。schemaVersionは共通dataCompatibilityを正本とし、製品版1.0.0の基準は1。旧schemaは共通Migration後に現行チャットvalidatorへ渡し、セッション内メッセージは最大1200件とする。
+- 最新チャットセッションは`chat-room-session.json`へ保存し、`game-autosave.json`へ混在させない。schemaVersionは共通dataCompatibilityを正本とし、製品版1.0.0の基準は1。対応Migrationがある旧schemaだけを現行チャットvalidatorへ渡し、セッション内メッセージは最大1200件とする。
 - チャット参加者は有効なキャラクターデータから2人以上を選び、チャット専用の`participants[].profileId`でAIプロファイルを割り当てる。チャットの個別割り当て・一括適用は人狼側`desktop-settings.json`の`assignments`を書き換えない。
 - 発言順は通常巡回と優先ターンを分離する。固定または巡回ごとのランダム通常巡回は1巡内で原則1キャラクター1回を維持する。`questionTargetIds`は返答を求める明示的な質問先だけを受理し、質問優先ONのAI質問とプレイヤーの特定キャラ指定は質問メッセージ1件・対象1人ごとに`kind: "answer"`の専用回答ターンを追加する。回答ターンは通常巡回枠を消費せず、同一巡内の同一キャラクター複数発言を許容する。質問優先OFFのAI質問は未解決質問だけ保持する。「次に話す」は`kind: "manual"`として通常巡回枠を移動し、質問回答とは別契約にする。
 - 初回会話きっかけは、お題ありでは選択せず、お題なしではキャラクター固有`conversationSeeds`85%／システム汎用cue15%で最初の通常発言者へ1件選ぶ。最初のAI発言以後は通常巡回ターンだけ、きっかけなし85%／固有10%／汎用5%で任意cueを弱く提示する。回答ターンと手動指定ターンへcueを混ぜず、直近利用cueを避ける短期履歴を保持する。汎用cueは10種類を`chatRoomConversationCuePolicy.js`で一元管理し、同じ状態の再生成で選択が変わらない決定的方式とする。
@@ -215,7 +215,7 @@
 ## 人狼観戦チャットの責務境界
 
 - 人狼観戦はゲームStateを複製・巻き戻す機能ではない。観戦セッションの状態正本は`app/renderer/js/domain/spectator/`、Main保存正本は`app/main/spectatorRoomStore.js`、公開盤面の時点再生正本は`app/renderer/js/public/publicReplaySnapshot.js`とし、観戦再生位置をゲームrevision・Undo／Redo・`discussionRuntime`へ混在させない。
-- 最新観戦セッションは`spectator-room-session.json`へ保存し、`game-autosave.json`および`chat-room-session.json`へ混在させない。schemaVersionは共通dataCompatibilityを正本とし、製品版1.0.0の基準は1。旧schemaは共通Migration後に現行観戦validatorへ渡す。
+- 最新観戦セッションは`spectator-room-session.json`へ保存し、`game-autosave.json`および`chat-room-session.json`へ混在させない。schemaVersionは共通dataCompatibilityを正本とし、製品版1.0.0の基準は1。対応Migrationがある旧schemaだけを現行観戦validatorへ渡す。
 - 観戦の追っかけ／リアルタイムは利用者が切り替える独立モード値にしない。`playbackEventSequence`と現在の最新公開イベントsequenceから導出し、再生位置が最新へ到達した時だけリアルタイムへ合流する。追っかけ中にゲームStateが進んでも再生位置を自動追従させない。
 - 観戦開始時のログ番号は1以上の整数とし、指定番号以上で最初に存在する公開ログから追っかけを開始する。指定番号が最新公開ログより後なら最初からリアルタイムとする。指定した開始ログ以前の履歴は盤面復元にだけ使用し、チャットへ再掲したりAIへ個別ログとして再投入したりしない。
 - 追っかけ中の「人狼卓を1手進める」は次の既存公開ログを1件だけ再生し、実ゲームStateを変更しない。リアルタイム中の同じ操作だけがAI管理Controllerの`runSingleAutomaticStep`へ委譲し、人狼進行規則を観戦Controllerへ複製しない。実行ロック、人間入力待ち、手動AI待ち、夜間プライバシーはAI管理側の既存契約を正本とする。

@@ -54,17 +54,19 @@ export function createDesktopAutomationConfig({
   ]);
 
   const GENERATION_DEPTH_DEFS = Object.freeze([
-    Object.freeze({ depth: 1, label: '直接生成', description: '1回のAI呼び出しで、ゲーム判断と完成した応答をまとめて生成します。', stages: Object.freeze(['direct']), calls: 1 }),
-    Object.freeze({ depth: 2, label: '直接生成＋公開発言校正', description: '1回目で完成した応答を生成し、2回目で昼の公開発言だけを校正します。投票・夜行動などは1回で生成します。', stages: Object.freeze(['direct', 'proofread']), calls: 2 }),
-    Object.freeze({ depth: 3, label: '構造草案＋発言化', description: '1回目でゲーム判断と出力項目を決め、2回目で完成した応答文にします。', stages: Object.freeze(['draft', 'render']), calls: 2 }),
-    Object.freeze({ depth: 4, label: '構造草案＋発言化＋公開発言校正', description: 'ゲーム判断と出力項目の決定、応答文の作成、昼の公開発言の校正を3回に分けます。投票・夜行動などは2回で生成します。', stages: Object.freeze(['draft', 'render', 'proofread']), calls: 3 }),
+    Object.freeze({ depth: 1, label: '直接生成', description: 'ゲーム判断からキャラクター口調の完成応答までを1回で生成します。', stages: Object.freeze(['direct']), calls: 1 }),
+    Object.freeze({ depth: 2, label: '判断＋キャラ発言化', description: '1回目は直接生成と同じ判断材料・人物の推理傾向で内容を決め、2回目で意味を変えずキャラクターらしい発言へ仕上げます。', stages: Object.freeze(['decide', 'render']), calls: 2 }),
+    Object.freeze({ depth: 3, label: '客観分析＋最終回答', description: '1回目は人物設定を使わず自由記述で状況を分析し、2回目で分析を参考に人物として判断・発言します。', stages: Object.freeze(['analyze', 'finalize']), calls: 2 }),
+    Object.freeze({ depth: 4, label: '客観分析＋批判的検証＋最終回答', description: '客観分析を別AI呼び出しで批判的に検証し、その両方を参考に人物として最終判断・発言します。', stages: Object.freeze(['analyze', 'critique', 'finalize']), calls: 3 }),
   ]);
 
   const GENERATION_STAGE_LABELS = Object.freeze({
-    direct: '完成応答を生成',
-    draft: '判断と出力項目を作成',
-    render: '応答文を作成',
-    proofread: '公開発言を校正',
+    direct: '完成応答を直接生成',
+    decide: '判断内容を決定',
+    analyze: '客観的に分析',
+    critique: '分析を批判的に検証',
+    finalize: '人物として最終回答',
+    render: 'キャラ口調へ発言化',
   });
 
 
@@ -97,9 +99,9 @@ export function createDesktopAutomationConfig({
   function defaultGenerationSettings() {
     return {
       depth: 1,
-      draftProfileId: null,
-      renderProfileId: null,
-      proofreadProfileId: null,
+      reasoningProfileId: null,
+      outputProfileId: null,
+      critiqueProfileId: null,
       taskOverrides: Object.fromEntries(GENERATION_TASK_OVERRIDE_DEFS.map(({ key }) => [key, null])),
     };
   }
@@ -109,9 +111,9 @@ export function createDesktopAutomationConfig({
     const depth = Number(generation?.depth);
     return {
       depth: [1, 2, 3, 4].includes(depth) ? depth : 1,
-      draftProfileId: generation?.draftProfileId ?? null,
-      renderProfileId: generation?.renderProfileId ?? null,
-      proofreadProfileId: generation?.proofreadProfileId ?? null,
+      reasoningProfileId: generation?.reasoningProfileId ?? null,
+      outputProfileId: generation?.outputProfileId ?? null,
+      critiqueProfileId: generation?.critiqueProfileId ?? null,
       taskOverrides: Object.fromEntries(GENERATION_TASK_OVERRIDE_DEFS.map(({ key }) => {
         const value = generation?.taskOverrides?.[key];
         return [key, [1, 2, 3, 4].includes(Number(value)) ? Number(value) : null];
@@ -123,9 +125,8 @@ export function createDesktopAutomationConfig({
     return GENERATION_DEPTH_DEFS.find((item) => item.depth === Number(depth)) ?? GENERATION_DEPTH_DEFS[0];
   }
 
-  function generationStagesForTask(depth, taskKey = 'speech') {
-    const stages = generationDepthDef(depth).stages;
-    return taskKey === 'speech' ? [...stages] : stages.filter((stageId) => stageId !== 'proofread');
+  function generationStagesForTask(depth) {
+    return [...generationDepthDef(depth).stages];
   }
 
   function effectiveGenerationDepthForTask(generation, taskKey) {
@@ -144,13 +145,12 @@ export function createDesktopAutomationConfig({
   function generationSummary(profile, generation) {
     const settings = normalizeGenerationSettings(generation);
     const definition = generationDepthDef(settings.depth);
-    if (!definition.stages.includes('proofread')) return `深度${definition.depth}・${definition.label}`;
-    const proofreader = generationExecutorProfile(profile, settings, 'proofread');
-    const proofreadLabel = proofreader?.id === profile.id
-      ? '自己校正'
-      : `「${proofreader?.label ?? `不明なプロファイル（${settings.proofreadProfileId ?? ''}）`}」による校正`;
-    const prefix = definition.depth === 2 ? '直接生成' : '構造草案 → 発言化';
-    return `深度${definition.depth}・${prefix} → ${proofreadLabel}`;
+    if (!definition.stages.includes('critique')) return `深度${definition.depth}・${definition.label}`;
+    const reviewer = generationExecutorProfile(profile, settings, 'critique');
+    const reviewerLabel = reviewer?.id === profile.id
+      ? '自己検証'
+      : `「${reviewer?.label ?? `不明なプロファイル（${settings.critiqueProfileId ?? ''}）`}」による批判的検証`;
+    return `深度4・客観分析 → ${reviewerLabel} → 最終回答`;
   }
 
   function generationFlowHtml(profile, generation) {
@@ -158,7 +158,7 @@ export function createDesktopAutomationConfig({
     const stages = generationDepthDef(normalized.depth).stages;
     const stageHtml = stages.map((stageId, index) => {
       const executor = generationExecutorProfile(profile, normalized, stageId);
-      const executorLabel = executor?.id === profile.id ? '選択中のAI' : executor?.label ?? `不明なプロファイル（${normalized[`${stageId}ProfileId`] ?? ''}）`;
+      const executorLabel = executor?.id === profile.id ? '選択中のAI' : executor?.label ?? `不明なプロファイル（${normalized[generationExecutorReferenceKey(stageId)] ?? ''}）`;
       return `${index ? '<span class="ai-generation-arrow" aria-hidden="true">→</span>' : ''}<span class="ai-generation-stage">${escapeHtml(GENERATION_STAGE_LABELS[stageId])}: ${escapeHtml(executorLabel)}</span>`;
     }).join('');
     return `${stageHtml}<span class="ai-generation-arrow" aria-hidden="true">→</span><span class="ai-generation-stage is-system">システム検証</span>`;
@@ -190,8 +190,13 @@ export function createDesktopAutomationConfig({
     return new Set(generationTaskPlans(generation).flatMap((plan) => plan.stages));
   }
 
+  function generationExecutorReferenceKey(stageId) {
+    return ({ decide: 'reasoningProfileId', analyze: 'reasoningProfileId', critique: 'critiqueProfileId', render: 'outputProfileId', finalize: 'outputProfileId' })[stageId] ?? null;
+  }
+
   function generationExecutorProfile(profile, generation, stageId) {
-    const referenceKey = `${stageId}ProfileId`;
+    const referenceKey = generationExecutorReferenceKey(stageId);
+    if (!referenceKey) return profile;
     const referenceId = generation?.[referenceKey] ?? null;
     return referenceId ? getProfileById(referenceId) ?? null : profile;
   }
@@ -219,7 +224,6 @@ export function createDesktopAutomationConfig({
   function generationExecutionPhrase(profile, generation, depth, taskKey = 'speech') {
     return generationStagesForTask(depth, taskKey).map((stageId) => {
       const executor = generationExecutorProfile(profile, generation, stageId) ?? profile;
-      if (stageId === 'proofread') return executor.id === profile.id ? '選択中のAIが公開発言を自己校正' : `${executor.label}が公開発言を校正`;
       return `${executor.id === profile.id ? '選択中のAI' : executor.label}が${GENERATION_STAGE_LABELS[stageId]}`;
     }).join('し、');
   }
@@ -235,21 +239,21 @@ export function createDesktopAutomationConfig({
     const generation = normalizeGenerationSettings(profile.generation);
     const definition = generationDepthDef(generation.depth);
     const requiredStages = generationRequiredStages(generation);
-    const draftNeeded = requiredStages.has('draft');
-    const renderNeeded = requiredStages.has('render');
-    const proofreadNeeded = requiredStages.has('proofread');
+    const firstThinkingNeeded = requiredStages.has('decide') || requiredStages.has('analyze');
+    const renderNeeded = requiredStages.has('render') || requiredStages.has('finalize');
+    const reviewNeeded = requiredStages.has('critique');
     return `<section class="ai-generation-section full" data-generation-section>
-      <div class="ai-generation-summary"><div><h4>生成深度</h4><p>1つのAI回答を作るまでに、ゲーム判断・文章化・校正を何回のAI呼び出しに分けるか設定します。選んだ深度はモデル名に関係なく適用されます。</p></div><span data-generation-summary>${escapeHtml(generationSummary(profile, generation))}</span></div>
+      <div class="ai-generation-summary"><div><h4>生成深度</h4><p>1つのAI回答を作るまでに、判断とキャラクター表現を何工程に分けるか設定します。選んだ深度はモデル名に関係なく適用されます。</p></div><span data-generation-summary>${escapeHtml(generationSummary(profile, generation))}</span></div>
       <div class="ai-depth-options">${generationDepthOptionsHtml(generation.depth, profile.id)}</div>
       <div class="ai-generation-flow" data-generation-flow>${generationFlowHtml(profile, generation)}</div>
       <div class="ai-stage-assignment-grid">
-        <label class="field" data-generation-stage-assignment="draft" ${draftNeeded ? '' : 'hidden'}><span>判断・出力項目の担当AI</span><select data-generation-profile-id="draftProfileId">${generationProfileOptions(generation.draftProfileId, profile.id)}</select></label>
-        <label class="field" data-generation-stage-assignment="render" ${renderNeeded ? '' : 'hidden'}><span>応答文作成の担当AI</span><select data-generation-profile-id="renderProfileId">${generationProfileOptions(generation.renderProfileId, profile.id)}</select></label>
-        <label class="field" data-generation-stage-assignment="proofread" ${proofreadNeeded ? '' : 'hidden'}><span>公開発言校正の担当AI</span><select data-generation-profile-id="proofreadProfileId">${generationProfileOptions(generation.proofreadProfileId, profile.id)}</select></label>
+        <label class="field" data-generation-stage-assignment="thinking" ${firstThinkingNeeded ? '' : 'hidden'}><span>第1工程（判断／客観分析）の担当AI</span><select data-generation-profile-id="reasoningProfileId">${generationProfileOptions(generation.reasoningProfileId, profile.id)}</select></label>
+        <label class="field" data-generation-stage-assignment="render" ${renderNeeded ? '' : 'hidden'}><span>第2/最終工程（発言化／最終回答）の担当AI</span><select data-generation-profile-id="outputProfileId">${generationProfileOptions(generation.outputProfileId, profile.id)}</select></label>
+        <label class="field" data-generation-stage-assignment="review" ${reviewNeeded ? '' : 'hidden'}><span>批判的検証の担当AI</span><select data-generation-profile-id="critiqueProfileId">${generationProfileOptions(generation.critiqueProfileId, profile.id)}</select></label>
       </div>
-      <div class="ai-proofread-policy" data-proofread-policy ${proofreadNeeded ? '' : 'hidden'}><strong>昼の公開発言校正では、次の点だけを確認します。</strong><span>✓ 発言時点の時系列</span><span>✓ 生存・死亡・処刑・襲撃の人物状態</span><span>✓ 公開されたCO・能力結果との整合</span><span>✓ 騙りCOをしている人狼陣営の発言が、主張中の役職として自然か</span><span>✓ 前工程で確定した投票先・能力対象・CO・構造化判断を変更しない</span><span>✓ 一人称・呼称・性格・語彙・発言長</span><span>✓ 会話として自然につながっているか</span><span>✓ 重複表現、説明書のような文章、JSON断片を取り除く</span><small>校正対象は昼の公開発言本文だけです。校正AIは批評ではなく完成稿を1回だけ返し、前工程への差し戻しは行いません。</small></div>
+      <div class="ai-review-policy" data-review-policy ${reviewNeeded ? '' : 'hidden'}><strong>批判的検証では客観分析をゲーム情報と照合します。</strong><span>✓ 事実・対象・時系列の取り違え</span><span>✓ 根拠から結論への飛躍</span><span>✓ 多数意見への過度な依存</span><span>✓ 別仮説や有力候補の見落とし</span><span>✓ 役職・陣営目標との不整合</span><small>妥当な部分は無理に否定せず、問題点と解釈し直すべき点を自由記述で整理します。</small></div>
       <details class="ai-task-depth-grid"><summary>タスク別に生成深度を変更</summary><div class="form-grid">${generationTaskOverrideHtml(generation.taskOverrides)}</div></details>
-      <div class="ai-generation-call-summary" data-generation-call-summary>1タスクあたりの最大AI呼び出し数: ${generationMaximumNormalCalls(generation)}回 / 担当別上限: ${escapeHtml(generationCallBreakdown(profile, generation))}<small>公開発言校正は昼の発言だけに適用します。通信エラー時の再試行はこの回数に含みません。</small></div>
+      <div class="ai-generation-call-summary" data-generation-call-summary>1タスクあたりの最大AI呼び出し数: ${generationMaximumNormalCalls(generation)}回 / 担当別上限: ${escapeHtml(generationCallBreakdown(profile, generation))}<small>各深度の工程はタスク種別を問わず同じ順序で適用します。通信エラー時の再試行はこの回数に含みません。</small></div>
       <div class="ai-generation-summary" data-generation-natural-summary>${escapeHtml(naturalGenerationSummary(profile, generation))}</div>
     </section>`;
   }
@@ -263,9 +267,9 @@ export function createDesktopAutomationConfig({
     const generation = normalizeGenerationSettings({
       depth,
       taskOverrides,
-      draftProfileId: card.querySelector('[data-generation-profile-id="draftProfileId"]')?.value || null,
-      renderProfileId: card.querySelector('[data-generation-profile-id="renderProfileId"]')?.value || null,
-      proofreadProfileId: card.querySelector('[data-generation-profile-id="proofreadProfileId"]')?.value || null,
+      reasoningProfileId: card.querySelector('[data-generation-profile-id="reasoningProfileId"]')?.value || null,
+      outputProfileId: card.querySelector('[data-generation-profile-id="outputProfileId"]')?.value || null,
+      critiqueProfileId: card.querySelector('[data-generation-profile-id="critiqueProfileId"]')?.value || null,
     });
     const requiredStages = generationRequiredStages(generation);
     card.querySelectorAll('.ai-depth-option').forEach((option) => option.classList.toggle('is-selected', option.contains(checked)));
@@ -274,15 +278,17 @@ export function createDesktopAutomationConfig({
     const summary = card.querySelector('[data-generation-summary]');
     if (summary) summary.textContent = generationSummary(profile, generation);
     const callSummary = card.querySelector('[data-generation-call-summary]');
-    if (callSummary && profile) callSummary.innerHTML = `1タスクあたりの最大AI呼び出し数: ${generationMaximumNormalCalls(generation)}回 / 担当別上限: ${escapeHtml(generationCallBreakdown(profile, generation))}<small>公開発言校正は昼の発言だけに適用します。通信エラー時の再試行はこの回数に含みません。</small>`;
+    if (callSummary && profile) callSummary.innerHTML = `1タスクあたりの最大AI呼び出し数: ${generationMaximumNormalCalls(generation)}回 / 担当別上限: ${escapeHtml(generationCallBreakdown(profile, generation))}<small>各深度の工程はタスク種別を問わず同じ順序で適用します。通信エラー時の再試行はこの回数に含みません。</small>`;
     const naturalSummary = card.querySelector('[data-generation-natural-summary]');
     if (naturalSummary && profile) naturalSummary.textContent = naturalGenerationSummary(profile, generation);
-    for (const stageId of ['draft', 'render', 'proofread']) {
-      const field = card.querySelector(`[data-generation-stage-assignment="${stageId}"]`);
-      if (field) field.hidden = !requiredStages.has(stageId);
-    }
-    const proofreadPolicy = card.querySelector('[data-proofread-policy]');
-    if (proofreadPolicy) proofreadPolicy.hidden = !requiredStages.has('proofread');
+    const thinkingField = card.querySelector('[data-generation-stage-assignment="thinking"]');
+    if (thinkingField) thinkingField.hidden = !(requiredStages.has('decide') || requiredStages.has('analyze'));
+    const renderField = card.querySelector('[data-generation-stage-assignment="render"]');
+    if (renderField) renderField.hidden = !(requiredStages.has('render') || requiredStages.has('finalize'));
+    const reviewField = card.querySelector('[data-generation-stage-assignment="review"]');
+    if (reviewField) reviewField.hidden = !requiredStages.has('critique');
+    const reviewPolicy = card.querySelector('[data-review-policy]');
+    if (reviewPolicy) reviewPolicy.hidden = !requiredStages.has('critique');
   }
 
 

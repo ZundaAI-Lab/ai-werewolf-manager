@@ -1,11 +1,12 @@
 /**
  * 責務: 昼会話の進行、CO機会、能力結果主張、役職別戦術機会をプロンプトへ構成する。
- * 変更ルール: 局面判定と候補抽出は既存ポリシーを正本とし、本文から質問・CO・能力結果を推定しない。昼の発言順はdiscussion.queueを正本として表示し、別順序を再構成しない。
+ * 変更ルール: 局面判定と候補抽出は既存ポリシーを正本とし、本文から質問・CO・能力結果を推定しない。昼の発言順はdiscussion.queueを正本とするが、一覧の表示はgame-state.alive側へ一元化し、この区画ではlaterSpeakersと必要時のcanReplyだけを表示する。狂人系不在時の初動補足は公開役職構成と本人可視のknownWolfIdsだけで判定し、最も発言順が早い人狼一人に限定する。役職固有の戦術説明は公開配役に存在する役職・相互作用だけを提示し、偽判定の将来リスクも二値能力役職が存在する場合だけ渡す。対抗CO候補の文章だけは本人roleIdをテンプレートへ渡し、通常人狼と狂人の異なる露呈価値を分離する。
  */
 
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
+import { countConfiguredMadmanSlots } from '../../domain/roles/roleAttributes.js';
 import {
   renderTwoSeerExecutionInstruction,
   renderWolfBlackResultCrisisInstruction,
@@ -113,10 +114,6 @@ export function dayConversationStatusSection(context, taskType, { conversationMo
   const otherPlayersNotYetSpoken = context.board.alive
     .filter((player) => player.id !== context.player.id && !spokenIds.has(player.id))
     .map((player) => player.name);
-  const discussion = context.game.discussion ?? {};
-  const speakingOrder = (discussion.queue ?? [])
-    .map((id) => playerName(context, id, ''))
-    .filter(Boolean);
   const opportunities = responseOpportunityData(context, conversationMode);
   const replyScope = opportunities?.canReply ?? null;
   const instruction = !opportunities
@@ -126,7 +123,6 @@ export function dayConversationStatusSection(context, taskType, { conversationMo
       : 'laterSpeakersの反応を作らず、質問先はcanReplyだけです。';
   return `## 昼の会話状況
 ${renderPromptDataBlock('day-conversation-status', {
-    order: speakingOrder,
     laterSpeakers: otherPlayersNotYetSpoken,
     ...(Array.isArray(replyScope) ? { canReply: replyScope } : {}),
   })}
@@ -174,6 +170,18 @@ export function latestWolfClaimPlan(context) {
   return past || '共有作戦に明示なし';
 }
 
+export function isEarliestKnownWolfSpeaker(context) {
+  const knownWolfIds = new Set(context.player.knowledge?.knownWolfIds ?? []);
+  if (!knownWolfIds.has(context.player.id)) return false;
+  const firstWolfSpeakerId = (context.game.discussion?.queue ?? []).find((playerId) => knownWolfIds.has(playerId));
+  return firstWolfSpeakerId === context.player.id;
+}
+
+export function shouldAddNoMadmanEarlyWolfClaimContext(context) {
+  return countConfiguredMadmanSlots(context.game.roleComposition ?? {}) === 0
+    && isEarliestKnownWolfSpeaker(context);
+}
+
 export function initialClaimDecisionSection(context, taskType) {
   if (!(isNormalSpeechTask(taskType) || taskType === 'priority-answer') || !isInitialClaimDecisionSituation(context)) return '';
   if (context.player.roleId === 'whiteWolf') return '';
@@ -181,6 +189,7 @@ export function initialClaimDecisionSection(context, taskType) {
     return renderWolfInitialClaimDecisionInstruction({
       sharedClaimPlan: latestWolfClaimPlan(context),
       speakerPosition: currentSpeakerPosition(context),
+      addNoMadmanEarlyWolfContext: shouldAddNoMadmanEarlyWolfClaimContext(context),
     });
   }
   if (context.player.strategyProfile === 'madman') {
@@ -201,7 +210,12 @@ export function wolfBlackResultCrisisSection(context, taskType) {
     .map((claim) => claim.actorId);
   const uniqueAccuserNames = [...new Set(accuserIds)].map((id) => playerName(context, id));
   if (!uniqueAccuserNames.length) return '';
-  return renderWolfBlackResultCrisisInstruction({ accuserNames: uniqueAccuserNames });
+  return renderWolfBlackResultCrisisInstruction({
+    accuserNames: uniqueAccuserNames,
+    hasMadmanClass: countConfiguredMadmanSlots(context.game.roleComposition) > 0,
+    hasMedium: Number(context.game.roleComposition?.medium ?? 0) > 0,
+    hasSeer: Number(context.game.roleComposition?.seer ?? 0) > 0,
+  });
 }
 
 export function guardClaimTimingSection(context, taskType, { mode = 'none' } = {}) {
@@ -258,6 +272,7 @@ export function twoSeerExecutionDecisionSection(context, taskType) {
   if (seerClaims.length !== 2) return '';
   return renderTwoSeerExecutionInstruction({
     seerNames: seerClaims.map((claim) => playerName(context, claim.actorId)),
+    hasMadmanClass: countConfiguredMadmanSlots(context.game.roleComposition) > 0,
   });
 }
 
@@ -267,6 +282,7 @@ export function endgameFactionTacticsSection(context, taskType, { enabled = fals
     strategyProfile: context.player.strategyProfile,
     team: context.player.team,
     taskType,
+    hasMadmanClass: countConfiguredMadmanSlots(context.game.roleComposition) > 0,
   });
 }
 
@@ -278,10 +294,18 @@ export function wolfPartnerPublicPositionSection(context, taskType) {
 ${renderPromptDataBlock('wolf-partner-public-positions', positions)}`;
 }
 
+function canClaimBinaryAbilityResult(context) {
+  return Number(context.game.roleComposition?.seer ?? 0) > 0
+    || Number(context.game.roleComposition?.medium ?? 0) > 0;
+}
+
 export function wolfDayStrategySection(context, taskType, partnerDispositionPolicy) {
   if (!(isNormalSpeechTask(taskType) || ['priority-answer', 'vote'].includes(taskType)) || context.player.strategyProfile !== 'wolf') return '';
   if (context.player.roleId === 'whiteWolf') {
-    return renderWhiteWolfDayStrategyInstruction({ voteRequired: taskType === 'vote' });
+    return renderWhiteWolfDayStrategyInstruction({
+      voteRequired: taskType === 'vote',
+      canClaimBinaryAbilityResult: canClaimBinaryAbilityResult(context),
+    });
   }
   const alivePartnerNames = (partnerDispositionPolicy?.alivePartnerIds ?? [])
     .map((id) => playerName(context, id));
@@ -289,6 +313,7 @@ export function wolfDayStrategySection(context, taskType, partnerDispositionPoli
     alivePartnerNames,
     allowedPartnerDispositions: partnerDispositionPolicy?.allowedValues ?? [],
     voteRequired: taskType === 'vote',
+    canClaimBinaryAbilityResult: canClaimBinaryAbilityResult(context),
   });
 }
 
@@ -298,6 +323,7 @@ export function madmanDayStrategySection(context, taskType) {
   return renderMadmanDayStrategyInstruction({
     ownActiveClaimRoleName: activeClaim ? (ROLE_DEFINITIONS[activeClaim.roleId]?.name ?? activeClaim.roleId) : 'なし',
     voteRequired: taskType === 'vote',
+    canClaimBinaryAbilityResult: canClaimBinaryAbilityResult(context),
   });
 }
 
@@ -308,9 +334,12 @@ export function madmanClaimBranchSection(context, taskType) {
   const ownClaims = context.board.publicAbilityClaims
     .filter((claim) => claim.actorId === context.player.id)
     .map((claim) => formatAbilityClaim(context, claim));
+  const activeClaimResults = ROLE_DEFINITIONS[activeClaim.roleId]?.publicAbilityClaim?.results ?? [];
+  const activeClaimSupportsBinaryResult = activeClaimResults.includes('wolf') || activeClaimResults.includes('not-wolf');
   return renderMadmanClaimBranchInstruction({
     claimedRoleName: ROLE_DEFINITIONS[activeClaim.roleId]?.name ?? activeClaim.roleId,
     ownClaimSummary: ownClaims.length ? ownClaims.join(' / ') : '能力結果主張なし',
+    activeClaimSupportsBinaryResult,
   });
 }
 
@@ -360,15 +389,18 @@ ${renderPromptDataBlock('pending-medium-claim-requirements', pendingMediumRequir
 
 あなたが霊能者COを継続しているため、未公開の霊能結果だけを示しています。対象・処刑時点・結果取得時点を対応する行へ一致させてください。selectionBasis・evidenceRefs・selectionReasonAtTimeは処刑履歴からシステムが補完します。`
     : '';
+  const mediumTiming = Number(context.game.roleComposition?.medium ?? 0) > 0
+    ? '霊能は処刑の翌朝に取得します。'
+    : '';
   return `## 能力履歴
 ${renderPromptDataBlock('ability-claim-evidence-windows', cutoffs)}${forcedBlock}
 
-actionDay/actionPhaseは能力を実行・成立させた時点、availableDay/availablePhaseは結果を取得した時点です。夜能力は実行した翌朝に取得し、霊能は処刑の翌朝に取得します。public-evidenceはactionDayの能力実行時点までの指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
+actionDay/actionPhaseは能力を実行・成立させた時点、availableDay/availablePhaseは結果を取得した時点です。夜能力は実行した翌朝に取得します。${mediumTiming}public-evidenceはactionDayの能力実行時点までの指定範囲内の個別番号だけを使い、根拠なしはselectionBasis=no-public-information / evidenceRefs=[]です。selectionReasonAtTimeは選択時点の理由とし、後発情報で書き換えません。`;
 }
 
-export function tacticalOpportunitySection({ counterClaimOpportunity = null, ownerClaimCorroborationOpportunity = null } = {}) {
+export function tacticalOpportunitySection(context, { counterClaimOpportunity = null, ownerClaimCorroborationOpportunity = null } = {}) {
   return [
-    renderCounterClaimOpportunityInstruction(counterClaimOpportunity),
+    renderCounterClaimOpportunityInstruction(counterClaimOpportunity, { actorRoleId: context?.player?.roleId ?? null }),
     renderOwnerClaimCorroborationInstruction(ownerClaimCorroborationOpportunity),
   ].filter(Boolean).join('\n\n');
 }
@@ -382,7 +414,7 @@ export function roleDecisionSection(context, taskType, {
   return [
     initialClaimDecisionSection(context, taskType),
     endgameFactionTacticsSection(context, taskType, { enabled: sectionPolicy?.showEndgameFactionTactics }),
-    tacticalOpportunitySection({ counterClaimOpportunity, ownerClaimCorroborationOpportunity }),
+    tacticalOpportunitySection(context, { counterClaimOpportunity, ownerClaimCorroborationOpportunity }),
     sectionPolicy?.showPartnerPublicPositions ? wolfPartnerPublicPositionSection(context, taskType) : '',
     twoSeerExecutionDecisionSection(context, taskType),
     sectionPolicy?.showWolfTacticalDetail ? wolfDayStrategySection(context, taskType, partnerDispositionPolicy) : '',

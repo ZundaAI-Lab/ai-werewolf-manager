@@ -211,23 +211,23 @@ function generationRunWithSkippedStages() {
     ownerProfileId: 'missing-owner-profile',
     taskCategory: 'speech',
     normalCallCount: 3,
-    totalCallCount: 1,
-    finalStageId: 'draft',
+    totalCallCount: 2,
+    finalStageId: 'finalize',
     stages: [
       {
-        stageId: 'draft', executorProfileId: 'missing-draft-profile', status: 'accepted', attemptCount: 1,
-        targetTextFields: [], skipReason: null, rawResponse: '{"publicSpeech":"監査対象"}',
+        stageId: 'analyze', executorProfileId: 'missing-draft-profile', status: 'accepted', attemptCount: 1,
+        targetTextFields: [], skipReason: null, rawResponse: '監査対象の客観分析',
         fallbackUsed: false, issues: [], usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 120 },
       },
       {
-        stageId: 'render', executorProfileId: 'missing-render-profile', status: 'skipped', attemptCount: 0,
-        targetTextFields: [], skipReason: 'NO_APPLICABLE_TEXT_FIELD', rawResponse: '',
-        fallbackUsed: false, issues: [], usage: zeroUsage(),
+        stageId: 'critique', executorProfileId: 'missing-proofread-profile', status: 'fallback', attemptCount: 0,
+        targetTextFields: [], skipReason: null, rawResponse: '',
+        fallbackUsed: true, issues: [{ code: 'STAGE_API_ERROR', message: '監査用の検証失敗' }], usage: zeroUsage(),
       },
       {
-        stageId: 'proofread', executorProfileId: 'missing-proofread-profile', status: 'skipped', attemptCount: 0,
-        targetTextFields: [], skipReason: 'NO_APPLICABLE_TEXT_FIELD', rawResponse: '',
-        fallbackUsed: false, issues: [], usage: zeroUsage(),
+        stageId: 'finalize', executorProfileId: 'missing-render-profile', status: 'accepted', attemptCount: 1,
+        targetTextFields: [], skipReason: null, rawResponse: '{"publicSpeech":"監査対象"}',
+        fallbackUsed: false, issues: [], usage: { inputTokens: 100, outputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 120 },
       },
     ],
   };
@@ -246,6 +246,31 @@ test('generationRunをexact shapeのまま保存・再読込し現在存在し�
   });
   assert.equal(response.ok, true, response.message);
   assert.deepEqual(raw.aiTurns.at(-1).generationRun, generationRun);
+
+  const prepared = prepareImportedState(structuredClone(raw));
+  const checked = validateImportedState(prepared);
+  assert.equal(checked.ok, true, checked.errors.join('\n'));
+  assert.deepEqual(prepared.aiTurns.at(-1).generationRun, generationRun);
+});
+
+
+test('客観分析を取得できない場合のcritique省略状態を保存・再読込できる', () => {
+  const raw = runningDiscussionStateForGenerationAudit();
+  const generationRun = generationRunWithSkippedStages();
+  generationRun.stages[1] = {
+    stageId: 'critique', executorProfileId: 'missing-proofread-profile', status: 'skipped', attemptCount: 0,
+    targetTextFields: [], skipReason: 'ANALYSIS_UNAVAILABLE', rawResponse: '',
+    fallbackUsed: false, issues: [{ code: 'ANALYSIS_UNAVAILABLE', message: '客観分析を取得できなかったため、批判的検証を省略しました。' }], usage: zeroUsage(),
+  };
+  const response = recordAiSpeech(raw, {
+    playerId: raw.players[0].id,
+    content: '客観分析なしでも最終回答を保存します。',
+    coOperation: { action: 'none', roleId: 'none' },
+    promptText: '元の本番プロンプト',
+    rawResponse: '{"publicSpeech":"客観分析なしでも最終回答を保存します。"}',
+    generationRun,
+  });
+  assert.equal(response.ok, true, response.message);
 
   const prepared = prepareImportedState(structuredClone(raw));
   const checked = validateImportedState(prepared);

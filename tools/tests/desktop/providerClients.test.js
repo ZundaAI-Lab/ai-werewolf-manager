@@ -67,7 +67,8 @@ async function withMockFetch(responseBody, run, { status = 200, headers = {} } =
   const originalFetch = global.fetch;
   global.fetch = async (url, options) => {
     requests.push({ url: String(url), options, headers: options.headers, body: JSON.parse(options.body || '{}') });
-    return new Response(JSON.stringify(responseBody), { status, headers: { 'content-type': 'application/json', ...headers } });
+    const body = typeof responseBody === 'function' ? responseBody(requests.length - 1, requests.at(-1)) : responseBody;
+    return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
   };
   try { return { result: await run(), requests }; } finally { global.fetch = originalFetch; }
 }
@@ -116,16 +117,6 @@ test('OpenAI Responses APIは投票Schemaをstrict text.formatへ変換し任意
   assert.deepEqual(format.schema.properties.decisionPatch.required, ['uncertainty']);
   assert.deepEqual(format.schema.properties.decisionPatch.properties.uncertainty.type, ['string', 'null']);
 });
-
-test('OpenAI旧モデルへ明示キャッシュ専用項目を送らない', async () => {
-  const { requests } = await withMockFetch({ id: 'resp-2', output_text: '{"ok":true}', usage: {} }, () => generateWithProvider({
-    profile: { id: 'openai-old', provider: 'openai', model: 'gpt-5.5', promptCacheMode: 'auto' },
-    apiKey: 'secret', promptEnvelope: promptEnvelope(),
-  }));
-  assert.equal(Object.hasOwn(requests[0].body, 'prompt_cache_options'), false);
-  assert.equal(requests[0].body.input[0].content.some((block) => Object.hasOwn(block, 'prompt_cache_breakpoint')), false);
-});
-
 test('Anthropicは既定5分キャッシュを安定区画だけへ設定する', async () => {
   const { result, requests } = await withMockFetch({
     id: 'msg-1', content: [{ type: 'text', text: '{"ok":true}' }],
@@ -145,7 +136,7 @@ test('Anthropicは既定5分キャッシュを安定区画だけへ設定する'
 });
 
 
-test('Anthropic 4.5以降は投票Schemaをoutput_config.formatへ渡し旧モデルは自動昇格しない', async () => {
+test('Anthropicの対応モデルは投票Schemaをoutput_config.formatへ渡す', async () => {
   const supported = await withMockFetch({
     id: 'msg-schema', content: [{ type: 'text', text: '{"actionAnswer":"プレイヤー2"}' }], usage: {},
   }, () => generateWithProvider({
@@ -155,15 +146,6 @@ test('Anthropic 4.5以降は投票Schemaをoutput_config.formatへ渡し旧モ�
   assert.equal(supported.result.providerDiagnostics.structuredOutputMode, 'json-schema');
   assert.equal(supported.requests[0].body.output_config.format.type, 'json_schema');
   assert.deepEqual(supported.requests[0].body.output_config.format.schema.required, ['actionAnswer']);
-
-  const legacy = await withMockFetch({
-    id: 'msg-legacy', content: [{ type: 'text', text: '{"actionAnswer":"プレイヤー2"}' }], usage: {},
-  }, () => generateWithProvider({
-    profile: { id: 'claude-legacy', provider: 'anthropic', model: 'claude-3-7-sonnet-latest', maxOutputTokens: 512 },
-    apiKey: 'secret', promptEnvelope: promptEnvelope({ structuredOutput: voteStructuredOutput() }),
-  }));
-  assert.equal(legacy.result.providerDiagnostics.structuredOutputMode, 'prompt-only');
-  assert.equal(Object.hasOwn(legacy.requests[0].body, 'output_config'), false);
 });
 
 test('Anthropicはキャッシュ可能接頭辞が1024トークン未満ならcache_controlを送らない', async () => {
@@ -199,6 +181,21 @@ test('GeminiはsystemInstructionへ共通契約だけを置きEnvelope全区画�
   assert.doesNotMatch(systemText, /COMMON_DATA_MARKER|TASK_DATA_MARKER|PLAYER_DATA_MARKER|VARIABLE_DATA_MARKER|INJECTION_PAYLOAD_MARKER|DYNAMIC_DATA_MARKER/u);
   assert.match(userText, /COMMON_DATA_MARKER[\s\S]*TASK_DATA_MARKER[\s\S]*PLAYER_DATA_MARKER[\s\S]*VARIABLE_DATA_MARKER[\s\S]*INJECTION_PAYLOAD_MARKER[\s\S]*DYNAMIC_DATA_MARKER$/u);
   assert.equal(requests[0].body.generationConfig.maxOutputTokens, 1024);
+});
+
+test('GeminiのAnalyze自由記述はJSON MIMEを強制しない', async () => {
+  const { result, requests } = await withMockFetch({
+    responseId: 'gem-analyze', candidates: [{ content: { parts: [{ text: 'AとBの発言を比較する。' }] } }], usageMetadata: {},
+  }, () => generateWithProvider({
+    profile: { provider: 'gemini', model: 'gemini-3.6-flash', maxOutputTokens: 1024 },
+    apiKey: 'secret',
+    requestPurpose: 'generation-analyze',
+    promptEnvelope: promptEnvelope({ structuredOutput: null }),
+  }));
+  assert.equal(result.text, 'AとBの発言を比較する。');
+  assert.equal(result.providerDiagnostics.structuredOutputMode, 'prompt-only');
+  assert.equal(Object.hasOwn(requests[0].body.generationConfig, 'responseMimeType'), false);
+  assert.equal(Object.hasOwn(requests[0].body.generationConfig, 'responseFormat'), false);
 });
 
 test('Gemini 2.5以降は投票SchemaをgenerationConfig.responseFormatへ渡す', async () => {
@@ -254,6 +251,20 @@ test('LM Studioのjson-object要求は投票Schemaがある場合だけjson-sche
   assert.deepEqual(requests[0].body.response_format.json_schema.schema.required, ['actionAnswer']);
 });
 
+test('LM StudioのCritique自由記述はjson-object設定でもresponse_formatを送らない', async () => {
+  const { result, requests } = await withMockFetch({ id: 'local-critique', choices: [{ message: { content: '根拠から結論への飛躍を確認する。' } }] }, () => generateWithProvider({
+    profile: {
+      provider: 'local-openai-compatible', endpoint: 'http://127.0.0.1:1234/v1/chat/completions', model: 'local-model',
+      localServerPreset: 'lm-studio', jsonRequestMode: 'json-object', contextWindowTokens: 32768, maxOutputTokens: 512,
+    },
+    requestPurpose: 'generation-critique',
+    promptEnvelope: promptEnvelope({ stablePlayerContext: '', structuredOutput: null }),
+  }));
+  assert.equal(result.text, '根拠から結論への飛躍を確認する。');
+  assert.equal(result.providerDiagnostics.structuredOutputMode, 'prompt-only');
+  assert.equal(Object.hasOwn(requests[0].body, 'response_format'), false);
+});
+
 test('customローカル接続はSchemaを推測適用せずjson-objectを維持する', async () => {
   const { requests } = await withMockFetch({ id: 'local-custom', choices: [{ message: { content: '{"actionAnswer":"プレイヤー2"}' } }] }, () => generateWithProvider({
     profile: {
@@ -285,6 +296,27 @@ test('Ollamaは共通契約だけをsystemへ置きEnvelope全区画をuserへ�
   const userText = requests[0].body.messages[1].content;
   assert.doesNotMatch(systemText, /COMMON_DATA_MARKER|TASK_DATA_MARKER|PLAYER_DATA_MARKER|VARIABLE_DATA_MARKER|INJECTION_PAYLOAD_MARKER|DYNAMIC_DATA_MARKER/u);
   assert.match(userText, /COMMON_DATA_MARKER[\s\S]*TASK_DATA_MARKER[\s\S]*PLAYER_DATA_MARKER[\s\S]*VARIABLE_DATA_MARKER[\s\S]*INJECTION_PAYLOAD_MARKER[\s\S]*DYNAMIC_DATA_MARKER$/u);
+});
+
+test('OllamaのAnalyze Thinking継続は自由記述契約を維持してJSONを要求しない', async () => {
+  const { result, requests } = await withMockFetch((index) => index === 0
+    ? { message: { content: '', thinking: '内部推論' }, done: true, done_reason: 'length', prompt_eval_count: 8, eval_count: 4 }
+    : { message: { content: 'AとBの発言を比較する。', thinking: '' }, done: true, done_reason: 'stop', prompt_eval_count: 10, eval_count: 3 }, () => generateWithProvider({
+    profile: {
+      provider: 'local-openai-compatible', endpoint: 'http://127.0.0.1:11434/v1/chat/completions', model: 'qwen3.5:9b',
+      localServerPreset: 'ollama', jsonRequestMode: 'json-object', jsonResponseMode: 'extract-object', thinkingLevel: 'low', maxOutputTokens: 1024, contextWindowTokens: 32768,
+    },
+    requestPurpose: 'generation-analyze',
+    promptEnvelope: promptEnvelope({ stablePlayerContext: '', structuredOutput: null }),
+  }));
+  assert.equal(result.text, 'AとBの発言を比較する。');
+  assert.equal(result.providerDiagnostics.structuredOutputMode, 'prompt-only');
+  assert.equal(requests.length, 2);
+  assert.equal(Object.hasOwn(requests[0].body, 'format'), false);
+  assert.equal(Object.hasOwn(requests[1].body, 'format'), false);
+  const continuation = requests[1].body.messages.at(-1).content;
+  assert.match(continuation, /自由記述本文/u);
+  assert.doesNotMatch(continuation, /最終JSONオブジェクト/u);
 });
 
 test('Ollamaのjson-object要求は投票Schemaをformatへ直接渡す', async () => {

@@ -370,7 +370,7 @@ export class WorkbenchTaskRenderer {
     const player = getPlayer(state, playerId);
     const completed = Object.keys(session.votes).length;
     const progress = session.eligibleVoterIds.map((id) => {
-      const done = id in session.votes;
+      const done = Object.hasOwn(session.votes, id);
       const publicTarget = state.game.rules.vote.visibilityDuringInput === 'public' && done
         ? ` → ${session.votes[id] === 'abstain' ? '棄権' : getPlayerName(state, session.votes[id])}` : '';
       return `<span class="vote-progress ${done ? 'done' : ''}">${escapeHtml(getPlayerName(state, id))}${escapeHtml(publicTarget)}</span>`;
@@ -392,8 +392,15 @@ export class WorkbenchTaskRenderer {
     }).join('')}</div>`;
   }
 
-  renderFinalizeVote() {
-    return `<div class="success-card"><h3>全員の投票が揃いました</h3><p>確定前であれば投票入力へ戻って修正できます。</p><div class="button-row"><button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button><button class="button primary" data-action="finalize-vote" type="button">投票を集計</button></div></div>`;
+  renderFinalizeVote(state) {
+    const publicDuringInput = state.game.rules.vote.visibilityDuringInput === 'public';
+    const correction = publicDuringInput
+      ? '<p>逐次公開済みの票は通常操作では変更できません。必要な場合は訂正・復元を使用してください。</p>'
+      : '<p>確定前であれば投票入力へ戻って修正できます。</p>';
+    const reopenButton = publicDuringInput
+      ? ''
+      : '<button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button>';
+    return `<div class="success-card"><h3>全員の投票が揃いました</h3>${correction}<div class="button-row">${reopenButton}<button class="button primary" data-action="finalize-vote" type="button">投票を集計</button></div></div>`;
   }
 
   renderPublishVote(state) {
@@ -410,7 +417,10 @@ export class WorkbenchTaskRenderer {
         : session.result.resolution === 'tie-no-execution'
           ? '決選投票上限後も同票: 吊りなし'
           : '有効票なし: 吊りなし';
-    return `<div class="task-head"><span class="task-count">公開前確認</span><h3>投票結果</h3></div>${mode !== 'execution-target-only' ? `<ul class="tally-list">${tally}</ul>` : ''}${mode === 'all-ballots' ? `<details class="optional-box" open><summary>全投票先</summary><ul>${ballots}</ul></details>` : ''}<div class="result-banner">${escapeHtml(resultLabel)}</div><div class="button-row"><button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button><button class="button primary" data-action="publish-vote" type="button">投票結果を公開</button></div>`;
+    const reopenButton = state.game.rules.vote.visibilityDuringInput === 'public'
+      ? ''
+      : '<button class="button ghost" data-action="reopen-vote" type="button">投票を修正</button>';
+    return `<div class="task-head"><span class="task-count">公開前確認</span><h3>投票結果</h3></div>${mode !== 'execution-target-only' ? `<ul class="tally-list">${tally}</ul>` : ''}${mode === 'all-ballots' ? `<details class="optional-box" open><summary>全投票先</summary><ul>${ballots}</ul></details>` : ''}<div class="result-banner">${escapeHtml(resultLabel)}</div><div class="button-row">${reopenButton}<button class="button primary" data-action="publish-vote" type="button">投票結果を公開</button></div>`;
   }
 
   renderExecution(state, playerId) {

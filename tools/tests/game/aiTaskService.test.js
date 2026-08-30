@@ -12,7 +12,7 @@ import { beginVote } from '../../../app/renderer/js/domain/vote/voteCommands.js'
 
 import { createInitialState } from '../../../app/renderer/js/state/stateStore.js';
 import { composeManualAiPrompt, prepareAiTask, evaluateAiTaskCandidate } from '../../../app/renderer/js/services/aiTaskService.js';
-import { buildDraftStagePrompt } from '../../../app/renderer/js/prompts/stages/generationStagePromptBuilder.js';
+import { buildDecideStagePrompt } from '../../../app/renderer/js/prompts/stages/generationStagePromptBuilder.js';
 import { resolveGenerationStagePromptPolicy } from '../../../app/renderer/js/prompts/stages/generationStagePromptPolicy.js';
 
 
@@ -25,7 +25,7 @@ function prepareVoteState(state) {
 }
 
 
-test('投票人数分岐はvoteの直接生成・深度3/4草案だけへ渡し非voteタスクへ流さない', () => {
+test('投票人数分岐はvoteの直接生成・判断用データだけへ渡し非voteタスクへ流さない', () => {
   const state = createInitialState(6);
   const actor = state.players[0];
   state.players[4].roleId = 'wolf';
@@ -44,7 +44,7 @@ test('投票人数分岐はvoteの直接生成・深度3/4草案だけへ渡し�
   );
 });
 
-test('Day2以降の通常昼議論第1巡では夜明け状況ガイドを直接生成と構造草案の両方へ同条件で渡す', () => {
+test('Day2以降の通常昼議論第1巡では夜明け状況ガイドを直接生成と判断回答の両方へ同条件で渡す', () => {
   const state = createInitialState(6);
   const actor = state.players[0];
   state.game.day = 2;
@@ -53,9 +53,9 @@ test('Day2以降の通常昼議論第1巡では夜明け状況ガイドを直接
   const artifact = prepareAiTask(state, { playerId: actor.id, taskType: 'speech' });
   const dynamicPrompt = artifact.promptEnvelope.dynamicTaskPrompt;
   const guide = artifact.stageSource.publicState.roleCompositionSituationGuide;
-  const draftPrompt = buildDraftStagePrompt({
+  const decidePrompt = buildDecideStagePrompt({
     taskArtifact: artifact,
-    policy: resolveGenerationStagePromptPolicy({ stageId: 'draft', taskType: 'speech' }),
+    policy: resolveGenerationStagePromptPolicy({ stageId: 'decide', taskType: 'speech' }),
   });
 
   assert.ok(dynamicPrompt.indexOf('## ゲーム状態') < dynamicPrompt.indexOf('## 初期役職構成から起こりうる夜明けの状況'));
@@ -65,8 +65,8 @@ test('Day2以降の通常昼議論第1巡では夜明け状況ガイドを直接
     noFreeze: [],
     singleDeathMayCombine: false,
   });
-  assert.match(draftPrompt, /roleCompositionSituationGuide/u);
-  assert.match(draftPrompt, /護衛による襲撃阻止/u);
+  assert.match(decidePrompt, /roleCompositionSituationGuide/u);
+  assert.match(decidePrompt, /護衛による襲撃阻止/u);
 });
 
 

@@ -17,7 +17,7 @@ import {
 } from '../../../app/renderer/js/domain/game/gameRuntime.js';
 import { resolveExecutionDeaths, resolveFollowUpDeaths, resolveNightDeaths } from '../../../app/renderer/js/domain/game/deathResolution.js';
 import { resolveNightActions } from '../../../app/renderer/js/domain/night/nightResolution.js';
-import { applyResolvedFearStatuses } from '../../../app/renderer/js/domain/night/actionExecutionPolicy.js';
+import { applyResolvedFearStatuses, resolveActionExecution } from '../../../app/renderer/js/domain/night/actionExecutionPolicy.js';
 import {
   detectWinner,
   getAttackCandidates,
@@ -99,6 +99,35 @@ test('全生存人狼が恐怖になった夜だけ襲撃全体を阻害し、�
 });
 
 
+
+
+
+test('必須夜行動に実行可能者がいない場合はunavailableとなり、凍結成功nullを生成しない', () => {
+  const state = createInitialState(5);
+  setRoles(state, ['snowWoman', 'wolf', 'villager', 'seer', 'guard']);
+  const [snowWoman, , target] = state.players;
+  snowWoman.alive = false;
+  snowWoman.death = { cause: 'execution', day: 1 };
+
+  const execution = resolveActionExecution(state, {
+    actionType: 'freeze',
+    actorIds: [snowWoman.id],
+    required: true,
+  });
+  assert.equal(execution.executionState, 'unavailable');
+  assert.equal(execution.blockReason, 'no-eligible-actor');
+  assert.deepEqual(execution.actorIds, []);
+
+  const resolution = resolveNightActions(state, {
+    freezeSlots: [{ actorId: snowWoman.id, targetId: target.id }],
+  });
+  const freezeExecution = resolution.actionExecutions.find((entry) => entry.actionType === 'freeze');
+  assert.equal(freezeExecution.executionState, 'unavailable');
+  assert.equal(resolution.freezeOutcome, 'not-executed');
+  assert.equal(resolution.freezeTargetId, null);
+  assert.equal(resolution.frozenPlayerId, null);
+  assert.match(resolution.gmNotes.join('\n'), /実行できる生存中の雪女がいない/u);
+});
 
 test('雪女の凍結は護衛対象には失敗し、夜行動自体は確定済みとして残る', () => {
   const state = createInitialState(6);

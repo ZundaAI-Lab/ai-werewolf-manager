@@ -1,12 +1,13 @@
 /**
  * 責務: 本人限定情報、正式本人履歴、最新判断、ゲーム状態、公開確定時系列、人口・勝利条件をプロンプト用データへ変換する。
- * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。
+ * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。昼発言用game-state.aliveの表示順だけはdiscussion.queueを優先して射影し、内部の生存者配列を並べ替えず、queue外の生存者は元の生存者順で末尾へ保持する。
  */
 
 import {
   PHASE_LABELS,
   ROLE_DEFINITIONS,
 } from '../../config/constants.js';
+import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 import { publicAbilityResultLabel } from '../../domain/policies/publicAbilityClaimPolicy.js';
 import { buildAbilityClaimTiming, formatAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import {
@@ -269,12 +270,23 @@ export function ownHistory(context, { mode = 'full' } = {}) {
   };
 }
 
+function promptAlivePlayers(context) {
+  const alive = [...context.board.alive];
+  if (!isNormalSpeechTask(context.task.type) || !(context.game.discussion?.queue?.length > 0)) return alive;
+  const byId = new Map(alive.map((player) => [player.id, player]));
+  const queued = context.game.discussion.queue
+    .map((id) => byId.get(id))
+    .filter(Boolean);
+  const queuedIds = new Set(queued.map((player) => player.id));
+  return [...queued, ...alive.filter((player) => !queuedIds.has(player.id))];
+}
+
 export function gameStateData(context, { mode = 'full' } = {}) {
   const aliveIds = new Set(context.board.alive.map((item) => item.id));
   const shared = {
     day: context.game.day,
     phase: PHASE_LABELS[context.game.phase] ?? context.game.phase,
-    alive: context.board.alive.map((item) => item.name),
+    alive: promptAlivePlayers(context).map((item) => item.name),
     publicOutcomes: publicOutcomeHistory(context),
     publicClaims: context.board.claims.map((claim) => ({
       player: playerName(context, claim.actorId),

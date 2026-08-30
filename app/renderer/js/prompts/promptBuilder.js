@@ -323,6 +323,7 @@ export function buildPromptModel(context, decision, {
       hasRequiredAnswers: Boolean(currentTask?.requiredAnswers?.length),
       hasRoleplayCue: Boolean(characterRoleplayCue),
       publicSpeechGuidance,
+      roleComposition: context.game.roleComposition,
     }),
     publicSpeechGuidance,
     reasoningPolicy: sectionPolicy.showReasoningPolicy ? renderRuntimeReasoningPolicy() : '',

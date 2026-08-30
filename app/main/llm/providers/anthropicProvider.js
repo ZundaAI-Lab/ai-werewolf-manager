@@ -40,7 +40,7 @@ function anthropicRequestSections(profile, envelope, requestPurpose) {
 
 async function generateAnthropic(profile, promptEnvelope, apiKey, signal, requestPurpose = 'normal') {
   const sections = anthropicRequestSections(profile, promptEnvelope, requestPurpose);
-  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope);
+  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope, requestPurpose);
   const requestBody = {
     model: normalizeModel(profile),
     system: sections.system,

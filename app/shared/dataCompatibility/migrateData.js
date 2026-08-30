@@ -1,6 +1,6 @@
 /**
  * 責務: 製品版ユーザーデータJSONのschemaVersionを検査し、登録済みの一方向migrationを順番に適用して現行schemaへ変換する。
- * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。旧schemaは必ずN→N+1を順に通し、変換前入力を破壊しない。各データの意味検証・sanitize・永続化は呼出元の責務とする。
+ * 変更ルール: schemaVersionなし・0以下・未来schemaは推測して読まない。旧schemaは必要なN→N+1 Migrationが全段登録されている場合だけ順に変換し、1段でも欠ければ拒否する。変換前入力を破壊せず、各データの意味検証・sanitize・永続化は呼出元の責務とする。
  */
 
 (function initializeDataMigration(root, factory) {

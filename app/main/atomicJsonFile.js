@@ -2,12 +2,14 @@
  * 責務: JSON文字列またはJSON値を同期・非同期の一時ファイルへ書き込み、fsync後のrenameで原子的に永続化する低レベルI/Oを提供する。
  * 変更ルール:
  * - ゲーム状態・チャット・観戦など保存対象の意味解釈、schema検証、migration、保存キュー管理を行わない。
- * - 一時ファイルは保存先と同じディレクトリへ作成し、失敗時に残骸を削除する。
+ * - 一時ファイルは保存先と同じディレクトリへ衝突しない名前で作成し、失敗時に残骸を削除する。
  * - rename後は対応環境で親ディレクトリもfsyncし、未対応エラーだけを限定的に無視する。
+ * - JSON整形差は呼出側がindentで指定し、原子的書込手順そのものを各Storeへ複製しない。
  */
 
 'use strict';
 
+const { randomUUID } = require('node:crypto');
 const {
   closeSync,
   fsyncSync,
@@ -20,13 +22,28 @@ const {
 const { mkdir, open, rename, rm } = require('node:fs/promises');
 const { dirname } = require('node:path');
 
+const DIRECTORY_FSYNC_UNSUPPORTED_CODES = new Set(['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR']);
+
+function shouldIgnoreDirectoryFsyncError(error) {
+  if (DIRECTORY_FSYNC_UNSUPPORTED_CODES.has(error?.code)) return true;
+  return process.platform === 'win32' && error?.code === 'EACCES';
+}
+
+function temporaryPathFor(path) {
+  return `${path}.${randomUUID()}.tmp`;
+}
+
+function serializeJson(value, indent) {
+  return JSON.stringify(value, null, indent ?? undefined);
+}
+
 async function fsyncDirectoryBestEffort(directoryPath) {
   let handle = null;
   try {
     handle = await open(directoryPath, 'r');
     await handle.sync();
   } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR'].includes(error?.code)) throw error;
+    if (!shouldIgnoreDirectoryFsyncError(error)) throw error;
   } finally {
     await handle?.close().catch(() => {});
   }
@@ -34,7 +51,7 @@ async function fsyncDirectoryBestEffort(directoryPath) {
 
 async function atomicWriteSerializedJson(path, serialized) {
   await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = temporaryPathFor(path);
   let handle = null;
   try {
     handle = await open(temporary, 'w', 0o600);
@@ -51,8 +68,8 @@ async function atomicWriteSerializedJson(path, serialized) {
   }
 }
 
-async function atomicWriteJson(path, value) {
-  await atomicWriteSerializedJson(path, JSON.stringify(value));
+async function atomicWriteJson(path, value, { indent = null } = {}) {
+  await atomicWriteSerializedJson(path, serializeJson(value, indent));
 }
 
 function fsyncDirectoryBestEffortSync(directoryPath) {
@@ -61,15 +78,17 @@ function fsyncDirectoryBestEffortSync(directoryPath) {
     descriptor = openSync(directoryPath, 'r');
     fsyncSync(descriptor);
   } catch (error) {
-    if (!['EINVAL', 'ENOTSUP', 'EPERM', 'EISDIR'].includes(error?.code)) throw error;
+    if (!shouldIgnoreDirectoryFsyncError(error)) throw error;
   } finally {
-    if (descriptor !== null) closeSync(descriptor);
+    if (descriptor !== null) {
+      try { closeSync(descriptor); } catch {}
+    }
   }
 }
 
 function atomicWriteSerializedJsonSync(path, serialized) {
   mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.tmp`;
+  const temporary = temporaryPathFor(path);
   let descriptor = null;
   try {
     descriptor = openSync(temporary, 'w', 0o600);
@@ -80,14 +99,21 @@ function atomicWriteSerializedJsonSync(path, serialized) {
     renameSync(temporary, path);
     fsyncDirectoryBestEffortSync(dirname(path));
   } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
+    if (descriptor !== null) {
+      try { closeSync(descriptor); } catch {}
+    }
     try { rmSync(temporary, { force: true }); } catch {}
     throw error;
   }
 }
 
+function atomicWriteJsonSync(path, value, { indent = null } = {}) {
+  atomicWriteSerializedJsonSync(path, serializeJson(value, indent));
+}
+
 module.exports = {
   atomicWriteJson,
+  atomicWriteJsonSync,
   atomicWriteSerializedJson,
   atomicWriteSerializedJsonSync,
 };

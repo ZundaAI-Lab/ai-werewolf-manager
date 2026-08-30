@@ -13,6 +13,7 @@ import { createEvent } from '../../../app/renderer/js/domain/events/eventStore.j
 
 import { applySetupRoles } from '../../../app/renderer/js/domain/setup/setupRoles.js';
 import { buildPromptContext } from '../../../app/renderer/js/prompts/promptBuilder.js';
+import { inspectPromptDataBlocks } from '../../../app/renderer/js/prompts/serialization/promptDataSerializer.js';
 import { createInitialState } from '../../../app/renderer/js/state/stateStore.js';
 import { synchronizePlayerKnowledgeForTest } from './testStateHelpers.js';
 
@@ -136,6 +137,16 @@ test('白狼不在時の過剰な人狼結果は通常ルールの文言だけ�
   assert.deepEqual(built.decision.ownPublicClaimConsistency.contradictionWarnings, [
     '公開済み人狼結果が、配役上の人狼数を超えています。',
   ]);
+  const inspected = inspectPromptDataBlocks(built.text);
+  assert.equal(inspected.ok, true);
+  const consistencyRows = inspected.blocks.find((block) => block.name === 'own-public-claim-consistency')?.value ?? [];
+  assert.equal(consistencyRows.some((row) => String(row).startsWith('公開中の役職CO:')), false);
+  assert.equal(consistencyRows.some((row) => String(row).startsWith('公開済み非人狼結果:')), false);
+  assert.equal(consistencyRows.some((row) => String(row).startsWith('公開済み人狼結果:')), false);
+  assert.equal(consistencyRows.includes('警告: 公開済み人狼結果が、配役上の人狼数を超えています。'), true);
+  const gameState = inspected.blocks.find((block) => block.name === 'game-state')?.value;
+  assert.equal(gameState?.publicClaims?.some((claim) => claim.player === seer.name && claim.role === '占い師'), true);
+  assert.equal(gameState?.publishedResults?.filter((claim) => claim.reporter === seer.name && claim.result === '人狼').length, 2);
   assert.doesNotMatch(built.text, /白狼/u);
 });
 

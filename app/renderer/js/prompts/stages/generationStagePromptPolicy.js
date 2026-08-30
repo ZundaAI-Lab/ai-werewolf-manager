@@ -1,6 +1,6 @@
 /**
  * 責務: 工程、タスク種別、検証済み候補から、工程プロンプトへ含める文章フィールド、固定構造、本人可視情報、キャラクター情報、履歴範囲を許可リスト方式で決定する。
- * 変更ルール: プロンプト本文、API通信、DOM、ゲーム状態更新を扱わない。生のcontextや候補全体を許可せず、新規区画・新規キーは明示登録されるまで出力対象にしない。公開発言化へ盤面全体を渡さず、currentMoment・characterSurface・callNamesと、会話開始・序盤反応に意味があるspeechGuidanceだけを許可する。墓場会話の構造草案には昼推理用characterReasoningを渡さず、口調・人格はrender側のcharacterSurfaceだけで維持する。文字数値は各工程末尾の最終確認へ集約し、人間向け発言量ラベルや長さ区分を中間工程へ渡さない。「最終確認」以下は各工程の固定末尾として位置・内容を維持し、キャッシュや中間区画整理のために前方へ移さない。深度3と4のdraft・render契約は共通とし、深度4だけがspeechとpriority-answerのpublicSpeech校正を後置する。heartVoiceの文章化対象は通常昼発言系とpriority-answerだけに限定し、遺言・墓場会話では生成工程へ渡さない。
+ * 変更ルール: プロンプト本文、API通信、DOM、ゲーム状態更新を扱わない。生のcontextや候補全体を文章化工程へ渡さず、新規区画・新規キーは明示登録されるまで出力対象にしない。decideは直接生成と同じ判断傾向を使うが口調情報を持たず、analyze/critiqueは人物設定を使わない客観分析とする。finalizeは客観分析を参考に人物の判断傾向と表現設定を戻して完成候補を作る。renderへ盤面全体を渡さず、currentMoment・characterSurface・callNamesと必要最小限の会話文脈だけを許可する。文字数値は各工程末尾の最終確認へ集約し、人間向け発言量ラベルや長さ区分を中間工程へ渡さない。「最終確認」以下は各工程の固定末尾として位置・内容を維持する。heartVoiceの文章化対象は通常昼発言系とpriority-answerだけに限定し、遺言・墓場会話では生成工程へ渡さない。
  */
 
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
@@ -36,7 +36,7 @@ const LOCK_FIELDS_BY_TASK = Object.freeze({
   'memo-consolidate': Object.freeze([]),
 });
 
-const DRAFT_CONTEXT_SECTIONS_BY_TASK = Object.freeze({
+const DECISION_CONTEXT_SECTIONS_BY_TASK = Object.freeze({
   speech: Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'histories']),
   'speech-designated': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'histories']),
   'speech-free': Object.freeze(['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'histories']),
@@ -66,10 +66,14 @@ function tableForTask(taskType) {
   throw new RangeError(`生成工程で未対応のtaskTypeです: ${taskType}`);
 }
 
-function draftContextSections(taskType) {
-  if (Object.hasOwn(DRAFT_CONTEXT_SECTIONS_BY_TASK, taskType)) return [...DRAFT_CONTEXT_SECTIONS_BY_TASK[taskType]];
+function decisionContextSections(taskType) {
+  if (Object.hasOwn(DECISION_CONTEXT_SECTIONS_BY_TASK, taskType)) return [...DECISION_CONTEXT_SECTIONS_BY_TASK[taskType]];
   if (isPersonalNightActionTask(taskType)) return ['currentMoment', 'publicState', 'privateState', 'roleTaskData', 'characterReasoning', 'histories'];
-  throw new RangeError(`構造草案で未対応のtaskTypeです: ${taskType}`);
+  throw new RangeError(`中間候補生成で未対応のtaskTypeです: ${taskType}`);
+}
+
+function objectiveContextSections(taskType) {
+  return decisionContextSections(taskType).filter((section) => section !== 'characterReasoning');
 }
 
 export function textFieldsForTaskType(taskType) {
@@ -83,11 +87,8 @@ export function textFieldPurpose(taskType, fieldName) {
 }
 
 export function targetTextFieldsForStage({ stageId, taskType, candidateObject, presentTopLevelKeys }) {
-  if (!['render', 'proofread'].includes(stageId)) throw new RangeError(`文章工程ではないstageIdです: ${stageId}`);
-  const taskFields = textFieldsForTaskType(taskType);
-  const allowedFields = stageId === 'proofread'
-    ? ((isNormalSpeechTask(taskType) || taskType === 'priority-answer') ? ['publicSpeech'] : [])
-    : taskFields;
+  if (stageId !== 'render') throw new RangeError(`文章工程ではないstageIdです: ${stageId}`);
+  const allowedFields = textFieldsForTaskType(taskType);
   if (!candidateObject || typeof candidateObject !== 'object') return [];
   const present = new Set(Array.isArray(presentTopLevelKeys) ? presentTopLevelKeys : Object.keys(candidateObject));
   return allowedFields.filter((fieldName) => present.has(fieldName));
@@ -99,15 +100,15 @@ export function resolveGenerationStagePromptPolicy({
   candidateObject = null,
   presentTopLevelKeys = [],
 } = {}) {
-  if (!['draft', 'render', 'proofread'].includes(stageId)) throw new RangeError(`未対応の生成工程です: ${stageId}`);
-  if (stageId === 'draft') {
+  if (!['decide', 'analyze', 'critique', 'finalize', 'render'].includes(stageId)) throw new RangeError(`未対応の生成工程です: ${stageId}`);
+  if (['decide', 'analyze', 'critique', 'finalize'].includes(stageId)) {
     return {
       applicable: true,
       targetTextFields: [],
       requiredReturnFields: [],
       fieldPurposes: {},
       candidateLockFields: [],
-      contextSections: draftContextSections(taskType),
+      contextSections: ['analyze', 'critique'].includes(stageId) ? objectiveContextSections(taskType) : decisionContextSections(taskType),
       skipReason: null,
     };
   }

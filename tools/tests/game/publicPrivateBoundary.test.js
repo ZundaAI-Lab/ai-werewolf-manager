@@ -304,7 +304,7 @@ test('正規の人狼共有情報は参加者だけが閲覧し非参加者へ�
 test('生成工程の中間回答はAIターン監査だけに保存し公開イベントと他AIプロンプトへ渡さない', () => {
   const state = fixture();
   const actor = state.players[0];
-  const intermediateSecret = '構造草案だけに存在する監査専用中間回答';
+  const intermediateSecret = '判断回答だけに存在する監査専用中間回答';
   const response = recordAiSpeech(state, {
     playerId: actor.id,
     content: '最終登録された公開本文です。',
@@ -313,16 +313,16 @@ test('生成工程の中間回答はAIターン監査だけに保存し公開イ
     rawResponse: '{"publicSpeech":"最終登録された公開本文です。"}',
     generationRun: {
       schemaVersion: 1, executionMode: 'automatic', depth: 2, ownerProfileId: 'owner-profile',
-      taskCategory: 'speech', normalCallCount: 2, totalCallCount: 2, finalStageId: 'proofread',
+      taskCategory: 'speech', normalCallCount: 2, totalCallCount: 2, finalStageId: 'render',
       stages: [
         {
-          stageId: 'direct', executorProfileId: 'owner-profile', status: 'accepted', attemptCount: 1,
+          stageId: 'decide', executorProfileId: 'owner-profile', status: 'accepted', attemptCount: 1,
           targetTextFields: [], skipReason: null, rawResponse: `{"publicSpeech":"${intermediateSecret}"}`,
           fallbackUsed: false, issues: [],
           usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0, totalTokens: 15 },
         },
         {
-          stageId: 'proofread', executorProfileId: 'proofread-profile', status: 'applied', attemptCount: 1,
+          stageId: 'render', executorProfileId: 'render-profile', status: 'applied', attemptCount: 1,
           targetTextFields: ['publicSpeech'], skipReason: null,
           rawResponse: '{"textPatch":{"publicSpeech":"最終登録された公開本文です。"}}',
           fallbackUsed: false, issues: [],

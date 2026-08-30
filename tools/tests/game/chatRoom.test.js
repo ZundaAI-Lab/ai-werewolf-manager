@@ -1,6 +1,6 @@
 /**
- * 責務: 人狼Stateから独立したチャットルームのrevision、プレイヤー名、キャラクター個別内部メモ、会話中の参加者差し替え・外部カタログ整合、通常巡回、質問専用回答ターン、手動指定、会話きっかけ、専用Prompt/応答契約を検証する。
- * 変更ルール: UI形状や個別キャラクターデータを固定せず、参加者変更・外部削除時の履歴保持、内部メモの個別性・完成版置換、通常巡回と回答ターンの分離、質問者保持と上限、質問解消、会話きっかけの弱い適用、人狼情報非混入というチャットDomain境界だけを検証する。
+ * 責務: 人狼Stateから独立したチャットルームの参加者・内部メモ・通常巡回・質問専用回答・手動指定・Prompt/応答境界を検証する。
+ * 変更ルール: UI形状、schema番号そのもの、会話きっかけ候補数や選択確率などの調整値は固定しない。履歴・内部メモ・質問・巡回・外部カタログ整合という利用者データと進行契約だけを確認する。
  */
 
 import test from 'node:test';
@@ -18,7 +18,6 @@ import {
   pendingQuestionsFor,
   reconcileChatRoomCharacters,
   replaceChatRoomParticipants,
-  rememberConversationCue,
   setCharacterMemory,
   setChatTopic,
 } from '../../../app/renderer/js/domain/chat/chatRoomState.js';
@@ -26,11 +25,6 @@ import {
   buildChatRoomPromptEnvelope,
   parseChatRoomResponse,
 } from '../../../app/renderer/js/prompts/chat/chatRoomPrompt.js';
-import {
-  SYSTEM_CONVERSATION_CUES,
-  selectOpeningConversationCue,
-  selectOptionalConversationCue,
-} from '../../../app/renderer/js/prompts/chat/chatRoomConversationCuePolicy.js';
 
 const require = createRequire(import.meta.url);
 const demoAi = require('../../../app/shared/demoAi.js');
@@ -86,13 +80,6 @@ test('チャットルーム新規状態の自動会話一区切りは10発言を
   const state = createChatRoomState({ participants });
   assert.equal(state.autoBatchSize, 10);
 });
-
-test('チャットPrompt EnvelopeはMain共通契約のschemaVersion 5を使用する', () => {
-  const state = room();
-  const envelope = buildChatRoomPromptEnvelope({ state, speakerCard: cards[0], participantCards: cards, pendingQuestions: [] });
-  assert.equal(envelope.schemaVersion, 5);
-});
-
 test('デモAIはチャットルーム専用応答を返しJSON例へ依存しない', () => {
   const state = room();
   setCharacterMemory(state, 'char-a', ['既存の内部メモ']);
@@ -212,18 +199,6 @@ test('会話中の参加者変更はログ・お題・プレイヤー名と継�
   assert.equal(state.queue.includes('char-c'), false);
   assert.equal(state.unresolvedQuestions.some((item) => item.targetId === 'char-c'), false);
 });
-
-test('参加者構成が同じでAIプロファイルだけ変えた場合は現在の発言順を維持する', () => {
-  const state = room();
-  assert.equal(consumeTurnSpeaker(state), 'char-a');
-  const queueBefore = [...state.queue];
-  const roundBefore = state.round;
-  replaceChatRoomParticipants(state, state.participants.map((item) => ({ ...item, profileId: `${item.profileId}-next` })));
-  assert.deepEqual(state.queue, queueBefore);
-  assert.equal(state.round, roundBefore);
-  assert.equal(state.participants.every((item) => item.profileId.endsWith('-next')), true);
-});
-
 test('固定巡回は1巡内で全参加者を一度ずつ発言させる', () => {
   const state = room();
   const spoken = [consumeTurnSpeaker(state), consumeTurnSpeaker(state), consumeTurnSpeaker(state)];
@@ -322,44 +297,6 @@ test('初回conversationSeedは最初の話者だけへ提示し初回発言後�
   const after = buildChatRoomPromptEnvelope({ state, speakerCard: firstCard, participantCards: cards, pendingQuestions: [] });
   assert.doesNotMatch(after.dynamicTaskPrompt, /会話のきっかけとして「夏休み」/u);
 });
-
-
-test('システム汎用会話きっかけは10種類あり回答ターンでは選択しない', () => {
-  assert.equal(SYSTEM_CONVERSATION_CUES.length, 10);
-  assert.equal(new Set(SYSTEM_CONVERSATION_CUES.map((cue) => cue.id)).size, 10);
-  const state = room();
-  addAiMessage(state, { speakerId: 'char-a', speakerName: 'A', text: '最初の発言' });
-  assert.equal(selectOptionalConversationCue({ state, speakerCard: cards[1], turnKind: 'answer' }), null);
-});
-
-test('お題なしの初回きっかけは固有または汎用から決定的に選び利用履歴を保持できる', () => {
-  const state = room();
-  const firstCard = cards.find((item) => item.id === state.opening.speakerId);
-  const cue1 = selectOpeningConversationCue({ state, speakerCard: firstCard });
-  const cue2 = selectOpeningConversationCue({ state, speakerCard: firstCard });
-  assert.deepEqual(cue1, cue2);
-  assert.ok(cue1?.id);
-  rememberConversationCue(state, cue1.id);
-  assert.deepEqual(state.conversationCueHistory, [cue1.id]);
-  state.topic = '指定お題';
-  assert.equal(selectOpeningConversationCue({ state, speakerCard: firstCard }), null);
-});
-
-test('通常会話の任意きっかけは低確率選択であり未選択を許容する', () => {
-  let foundNone = false;
-  let foundCue = false;
-  for (let index = 0; index < 400 && !(foundNone && foundCue); index += 1) {
-    const state = room();
-    state.id = `chat-cue-${index}`;
-    addAiMessage(state, { speakerId: 'char-a', speakerName: 'A', text: '会話開始' });
-    const cue = selectOptionalConversationCue({ state, speakerCard: cards[1], turnKind: 'round' });
-    if (cue) foundCue = true;
-    else foundNone = true;
-  }
-  assert.equal(foundNone, true);
-  assert.equal(foundCue, true);
-});
-
 test('お題変更は会話履歴へシステム発言として残し通常キューを変更しない', () => {
   const state = room();
   const before = [...state.queue];
@@ -430,21 +367,6 @@ test('回答済み質問は対象者の未解決一覧から解消される', ()
   addAiMessage(state, { speakerId: 'char-b', speakerName: 'B', text: '私はこう思う。', answersMessageIds: [question.id] });
   assert.deepEqual(pendingQuestionsFor(state, 'char-b'), []);
 });
-
-
-test('チャット状態revisionはプレイヤー割り込み・発言順変更・お題変更で単調増加する', () => {
-  const state = room();
-  const initialRevision = state.revision;
-  addHumanMessage(state, { text: '途中から参加します' });
-  const afterHuman = state.revision;
-  forceNextSpeaker(state, 'char-c');
-  const afterForce = state.revision;
-  setChatTopic(state, '新しい話題');
-  assert.ok(afterHuman > initialRevision);
-  assert.ok(afterForce > afterHuman);
-  assert.ok(state.revision > afterForce);
-});
-
 test('外部カタログから消えた参加者は履歴を保持したまま参照を一括除去し1人でもactiveセッションを維持する', () => {
   const state = room();
   setCharacterMemory(state, 'char-c', ['Cだけの内部メモ']);

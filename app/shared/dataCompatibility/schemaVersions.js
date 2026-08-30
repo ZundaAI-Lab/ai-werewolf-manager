@@ -1,6 +1,6 @@
 /**
  * 責務: 製品版で永続化・入出力するユーザーデータJSONの現行schemaVersionを一元管理する。
- * 変更ルール: アプリの製品versionとは独立して増分する。保存項目の追加・削除・意味変更・必須条件変更時だけ対象schemaを+1し、同時にmigrationRegistry.jsへ旧schema→次schemaの一方向migrationを追加する。製品版1.0.0の基準schemaはすべて1とし、開発版のschema番号を引き継がない。
+ * 変更ルール: アプリの製品versionとは独立して増分する。保存項目の追加・削除・意味変更・必須条件変更時だけ対象schemaを+1する。後方互換を提供する変更だけmigrationRegistry.jsへ旧schema→次schemaの一方向migrationを追加し、互換不要の破壊変更では旧schemaを現行として読み替えない。製品版1.0.0の基準schemaはすべて1とする。
  */
 
 (function initializeDataSchemaVersions(root, factory) {
@@ -28,12 +28,12 @@
 
   const CURRENT_DATA_SCHEMA_VERSIONS = Object.freeze({
     [DATA_SCHEMA_KIND.GAME_STATE]: 1,
-    [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 1,
+    [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 2,
     [DATA_SCHEMA_KIND.APPEARANCE]: 1,
     [DATA_SCHEMA_KIND.CHAT_ROOM]: 1,
     [DATA_SCHEMA_KIND.SPECTATOR_ROOM]: 1,
     [DATA_SCHEMA_KIND.USER_CHARACTER_LIBRARY]: 1,
-    [DATA_SCHEMA_KIND.AI_PROFILE_PACKAGE]: 1,
+    [DATA_SCHEMA_KIND.AI_PROFILE_PACKAGE]: 2,
     [DATA_SCHEMA_KIND.USAGE_SUMMARY]: 1,
     [DATA_SCHEMA_KIND.PRIVACY_NOTICE]: 1,
   });

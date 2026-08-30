@@ -138,7 +138,7 @@ AI管理画面と同じ`runSingleAutomaticStep()`を1回だけ実行する。観
 
 ## 12. 永続化
 
-最新観戦セッションはElectron Mainの`spectator-room-session.json`へ保存する。schemaVersionは共通`dataCompatibility`を正本とし、製品版1.0.0の基準は1。旧schemaは共通Migrationで現行schemaへ変換してから復元し、未来schema・無版schemaは推測して復元しない。
+最新観戦セッションはElectron Mainの`spectator-room-session.json`へ保存する。schemaVersionは共通`dataCompatibility`を正本とし、製品版1.0.0の基準は1。対応Migrationがある旧schemaだけを現行schemaへ変換してから復元し、Migrationのない旧schema・未来schema・無版schemaは推測して復元しない。
 
 主な再生状態は次を含む。
 

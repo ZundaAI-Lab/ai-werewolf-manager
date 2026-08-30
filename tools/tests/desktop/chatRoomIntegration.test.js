@@ -45,3 +45,24 @@ test('チャット保存はゲーム自動保存と別ファイルを使用し�
     rmSync(userData, { recursive: true, force: true });
   }
 });
+
+test('解釈不能なチャット保存は退避し、次の保存で元データを上書きしない', async () => {
+  const userData = mkdtempSync(`${tmpdir()}/aiwm-chat-corrupt-`);
+  try {
+    const target = `${userData}/chat-room-session.json`;
+    const corruptText = '{"schemaVersion":';
+    fs.writeFileSync(target, corruptText, 'utf8');
+    const chatStore = new ChatRoomStore(userData);
+    assert.equal(chatStore.loadSync(), null);
+    const backups = fs.readdirSync(userData).filter((name) => name.startsWith('chat-room-session.json.unreadable-') && name.endsWith('.bak'));
+    assert.equal(backups.length, 1);
+    assert.equal(fs.readFileSync(`${userData}/${backups[0]}`, 'utf8'), corruptText);
+
+    await chatStore.save(sampleChat({ topic: '復旧後' }));
+    await chatStore.flush();
+    assert.equal(chatStore.loadSync().topic, '復旧後');
+    assert.equal(fs.readFileSync(`${userData}/${backups[0]}`, 'utf8'), corruptText);
+  } finally {
+    rmSync(userData, { recursive: true, force: true });
+  }
+});

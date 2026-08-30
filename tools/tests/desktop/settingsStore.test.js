@@ -243,13 +243,13 @@ test('生成工程の存在しない参照・無効参照・参照中削除をMa
 
   assert.throws(() => store.savePublicSettings({
     ...base,
-    profiles: [{ ...base.profiles[0], id: 'owner', generation: { ...generation, proofreadProfileId: 'missing' } }],
+    profiles: [{ ...base.profiles[0], id: 'owner', generation: { ...generation, critiqueProfileId: 'missing' } }],
   }), /存在しないAIプロファイル/u);
 
   assert.throws(() => store.savePublicSettings({
     ...base,
     profiles: [
-      { ...base.profiles[0], id: 'owner', enabled: true, generation: { ...generation, proofreadProfileId: 'disabled' } },
+      { ...base.profiles[0], id: 'owner', enabled: true, generation: { ...generation, critiqueProfileId: 'disabled' } },
       { ...base.profiles[0], id: 'disabled', enabled: false, generation: { ...generation } },
     ],
   }), /無効なAIプロファイル/u);
@@ -257,7 +257,7 @@ test('生成工程の存在しない参照・無効参照・参照中削除をMa
   store.savePublicSettings({
     ...base,
     profiles: [
-      { ...base.profiles[0], id: 'owner', generation: { ...generation, proofreadProfileId: 'proofreader' } },
+      { ...base.profiles[0], id: 'owner', generation: { ...generation, critiqueProfileId: 'proofreader' } },
       { ...base.profiles[0], id: 'proofreader', generation: { ...generation } },
     ],
   });
@@ -377,4 +377,175 @@ test('カスタム接続先のendpoint変更時は保存済みAPIキーを引き
   });
   assert.equal(changedEndpoint.profiles[0].hasApiKey, false);
   assert.equal(store.decryptApiKey('custom-main'), '');
+});
+
+test('破損したAI設定は退避してから既定値へ切り替え、以後の保存で退避元を上書きしない', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-corrupt-quarantine-'));
+  const settingsPath = path.join(directory, 'desktop-settings.json');
+  const corruptText = '{"schemaVersion":';
+  fs.writeFileSync(settingsPath, corruptText, 'utf8');
+
+  const store = new SettingsStore(directory);
+  assert.equal(store.publicSettings().executionMode, 'automatic');
+  const backups = fs.readdirSync(directory).filter((name) => name.startsWith('desktop-settings.json.unreadable-') && name.endsWith('.bak'));
+  assert.equal(backups.length, 1);
+  assert.equal(fs.readFileSync(path.join(directory, backups[0]), 'utf8'), corruptText);
+  assert.equal(fs.existsSync(settingsPath), false);
+
+  store.savePublicSettings({ ...store.publicSettings(), executionMode: 'manual' });
+  assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf8')).executionMode, 'manual');
+  assert.equal(fs.readFileSync(path.join(directory, backups[0]), 'utf8'), corruptText);
+});
+
+test('カスタム接続先の表記差だけでは保存済みAPIキーを破棄しない', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-custom-endpoint-identity-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      id: 'custom-identity',
+      label: 'Custom identity',
+      provider: 'openai-compatible',
+      model: 'custom-model',
+      endpoint: 'https://api.Example.com/v1',
+      apiKey: 'secret-identity',
+    }],
+  });
+
+  const saved = store.savePublicSettings({
+    ...store.publicSettings(),
+    profiles: [{ ...store.publicSettings().profiles[0], endpoint: 'https://api.example.com/v1/' }],
+  });
+  assert.equal(saved.profiles[0].hasApiKey, true);
+  assert.equal(store.decryptApiKey('custom-identity'), 'secret-identity');
+});
+
+test('保存境界で不正なカスタム接続先と非ループバックのローカルLLM接続先を拒否する', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-endpoint-save-validation-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+
+  assert.throws(() => store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      id: 'invalid-custom',
+      provider: 'openai-compatible',
+      model: 'custom-model',
+      endpoint: 'ftp://api.example.com/v1',
+    }],
+  }), /APIエンドポイントが不正/u);
+
+  assert.throws(() => store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      id: 'invalid-local',
+      provider: 'local-openai-compatible',
+      localServerPreset: 'custom',
+      model: 'local-model',
+      endpoint: 'http://192.168.1.5:1234/v1/chat/completions',
+    }],
+  }), /localhost|127\.0\.0\.1|::1/u);
+});
+
+
+test('AIプロファイルが上限を超える場合は切り捨てず保存を拒否する', () => {
+  const { SettingsStore, MAX_PROFILE_COUNT } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-profile-count-limit-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  const profiles = Array.from({ length: MAX_PROFILE_COUNT + 1 }, (_, index) => ({
+    ...base.profiles[0],
+    id: `profile-${index + 1}`,
+    label: `Profile ${index + 1}`,
+  }));
+
+  assert.throws(() => store.savePublicSettings({
+    ...base,
+    profiles,
+  }), new RegExp(`最大${MAX_PROFILE_COUNT}件`, 'u'));
+  assert.equal(store.publicSettings().profiles.length, 1);
+});
+
+test('500文字を超える新規カスタムendpointは切り詰めず保存を拒否する', () => {
+  const { SettingsStore, MAX_ENDPOINT_LENGTH } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-endpoint-length-limit-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  const prefix = 'https://gateway.example/';
+  const endpoint = `${prefix}${'a'.repeat(MAX_ENDPOINT_LENGTH + 1 - prefix.length)}`;
+  assert.equal(endpoint.length, MAX_ENDPOINT_LENGTH + 1);
+
+  assert.throws(() => store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      id: 'too-long-endpoint',
+      provider: 'openai-compatible',
+      model: 'custom-model',
+      endpoint,
+    }],
+  }), new RegExp(`上限${MAX_ENDPOINT_LENGTH}文字`, 'u'));
+  assert.equal(store.publicSettings().profiles[0].id, 'profile-demo');
+});
+
+test('保存済みの現行ルール不適合endpointは文字列を保持し、未変更なら他設定を保存できる', () => {
+  const { SettingsStore, MAX_ENDPOINT_LENGTH } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-existing-invalid-endpoint-'));
+  const seedStore = new SettingsStore(directory);
+  const base = seedStore.publicSettings();
+  const valid = seedStore.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      id: 'existing-custom',
+      label: 'Existing custom',
+      provider: 'openai-compatible',
+      model: 'custom-model',
+      endpoint: 'https://gateway.example/v1',
+      apiKey: 'existing-secret',
+    }],
+  });
+
+  const settingsPath = path.join(directory, 'desktop-settings.json');
+  const stored = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+  const prefix = 'https://gateway.example/';
+  const tooLongEndpoint = `${prefix}${'b'.repeat(MAX_ENDPOINT_LENGTH + 1 - prefix.length)}`;
+  stored.profiles[0].endpoint = tooLongEndpoint;
+  fs.writeFileSync(settingsPath, JSON.stringify(stored, null, 2), 'utf8');
+
+  const store = new SettingsStore(directory);
+  assert.equal(store.publicSettings().profiles[0].endpoint, tooLongEndpoint);
+  const notices = store.consumeStartupNotices();
+  assert.equal(notices.some((notice) => notice.code === 'SETTINGS_PROFILE_ENDPOINT_UNAVAILABLE'), true);
+
+  const saved = store.savePublicSettings({
+    ...store.publicSettings(),
+    executionMode: valid.executionMode === 'manual' ? 'automatic' : 'manual',
+  });
+  assert.equal(saved.profiles[0].endpoint, tooLongEndpoint);
+  assert.equal(store.decryptApiKey('existing-custom'), 'existing-secret');
+});
+
+test('破損したAPI使用量集計は退避し、新しい集計だけを別ファイルへ保存する', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-usage-corrupt-quarantine-'));
+  const summaryPath = path.join(directory, 'llm-usage-summary.json');
+  const corruptText = '{broken';
+  fs.writeFileSync(summaryPath, corruptText, 'utf8');
+
+  const store = new SettingsStore(directory);
+  const backups = fs.readdirSync(directory).filter((name) => name.startsWith('llm-usage-summary.json.unreadable-') && name.endsWith('.bak'));
+  assert.equal(backups.length, 1);
+  assert.equal(fs.readFileSync(path.join(directory, backups[0]), 'utf8'), corruptText);
+  store.recordRequest({ profileId: 'profile-demo', label: 'デモAI', provider: 'demo', model: 'demo-balanced', status: 'completed', usage: { totalTokens: 1 } });
+  assert.equal(store.flushUsageSummary(), true);
+  assert.equal(JSON.parse(fs.readFileSync(summaryPath, 'utf8')).totals.totalTokens, 1);
+  assert.equal(fs.readFileSync(path.join(directory, backups[0]), 'utf8'), corruptText);
 });

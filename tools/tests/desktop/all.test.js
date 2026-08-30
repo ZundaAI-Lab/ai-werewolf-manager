@@ -7,6 +7,7 @@
 'use strict';
 
 require('./appearanceStore.test.js');
+require('./atomicJsonFile.test.js');
 require('./automaticAiExecutor.test.js');
 require('./automationRunControl.test.js');
 require('./automaticRunCoordinator.test.js');
@@ -25,6 +26,7 @@ require('./providerClients.test.js');
 require('./postgameAnalysisAdapter.test.js');
 require('./postgameAnalysisController.test.js');
 require('./privacyNoticeStore.test.js');
+require('./permissionPolicy.test.js');
 require('./profileBudgetReservation.test.js');
 require('./promiseDeadline.test.js');
 require('./promptEnvelopeValidator.test.js');

@@ -75,6 +75,41 @@ test('ユーザーキャラクター保存はPOSIXで0600の原子的保存を�
   );
 });
 
+
+test('組み込みキャラクターカタログはService初回読込後にディスクへ再アクセスしない', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-builtin-character-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const builtinDataRoot = path.join(root, 'characters');
+  const groupRoot = path.join(builtinDataRoot, 'builtin-test');
+  fs.mkdirSync(groupRoot, { recursive: true });
+  fs.writeFileSync(path.join(groupRoot, 'group.json'), JSON.stringify({
+    schemaVersion: 1,
+    id: 'builtin-test',
+    name: '組み込みテスト',
+    characters: ['character.json'],
+  }), 'utf8');
+  fs.writeFileSync(path.join(groupRoot, 'character.json'), JSON.stringify({
+    schemaVersion: 1,
+    id: 'builtin-character',
+    name: '組み込みキャラクター',
+    character: {},
+    callNames: {},
+  }), 'utf8');
+  const service = new CharacterLibraryService({
+    builtinDataRoot,
+    userStore: {
+      snapshot: () => normalizeStoredData({ schemaVersion: 1 }, { enforceTextLimits: false }),
+      replace: () => {},
+    },
+  });
+
+  const first = service.loadCatalog();
+  fs.rmSync(builtinDataRoot, { recursive: true, force: true });
+  const second = service.loadCatalog();
+
+  assert.deepEqual(second, first);
+});
+
 test('Rendererから受け取るユーザーキャラクターJSONは共有8MB上限を超える前に拒否する', () => {
   const service = new CharacterLibraryService({
     builtinDataRoot: path.join(__dirname, '..', '..', '..', 'app', 'renderer', 'data', 'characters'),

@@ -1,6 +1,6 @@
 /**
  * 責務: 投票開始・入力・集計・公開、処刑解決・公開を実行し、処刑あり／なしの公開確定時に当日終了のプレイヤー相関スナップショットを保存する。
- * 変更ルール: 投票候補と同票処理はvoteResolutionを正本とし、結果公開前に次フェーズへ進めない。遺言の要否・凍結による自動スキップはtestamentPolicyを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。相関スナップショットの構築・同日置換はplayerRelationshipModel.jsへ委譲する。
+ * 変更ルール: 投票候補と同票処理はvoteResolutionを正本とし、結果公開前に次フェーズへ進めない。逐次公開済みの票は通常操作で再入力へ戻さず、秘密投票だけ確定前の再入力を許可する。遺言の要否・凍結による自動スキップはtestamentPolicyを正本とする。AI失敗時のランダム代替は乱数関数を注入可能にして決定的検証を許可する。相関スナップショットの構築・同日置換はplayerRelationshipModel.jsへ委譲する。
  */
 
 import {
@@ -81,6 +81,19 @@ export function beginVote(state, { type = 'normal', candidateIds = null, round =
   };
   setPhase(state, type === 'runoff' ? 'runoff' : 'vote');
   return result(true, type === 'runoff' ? '決選投票を開始しました。' : '投票を開始しました。');
+}
+
+function firstPendingVoteIndex(session) {
+  return session.eligibleVoterIds.findIndex((id) => !Object.hasOwn(session.votes, id));
+}
+
+function refreshVoteSessionReadiness(session) {
+  const pendingIndex = firstPendingVoteIndex(session);
+  if (session.inputMode === 'sequential') {
+    session.currentVoterIndex = pendingIndex < 0 ? session.eligibleVoterIds.length : pendingIndex;
+  }
+  if (pendingIndex < 0 && session.status === 'input') session.status = 'ready';
+  return pendingIndex;
 }
 
 export function recordVote(state, {
@@ -185,11 +198,7 @@ export function recordVote(state, {
     });
   }
   rebuildPublicDerivedState(state);
-  if (session.inputMode === 'sequential') {
-    const nextIndex = session.eligibleVoterIds.findIndex((id, index) => index > session.currentVoterIndex && !(id in session.votes));
-    session.currentVoterIndex = nextIndex >= 0 ? nextIndex : session.eligibleVoterIds.length;
-  }
-  if (Object.keys(session.votes).length === session.eligibleVoterIds.length) session.status = 'ready';
+  refreshVoteSessionReadiness(session);
   return result(true, '投票を登録しました。', { eventId: event.id });
 }
 
@@ -213,10 +222,7 @@ export function setVoteInputMode(state, mode) {
   if (!state.voteSession || state.voteSession.status !== 'input') return result(false, '投票入力中ではありません。');
   if (!['sequential', 'list'].includes(mode)) return result(false, '入力方式が不正です。');
   state.voteSession.inputMode = mode;
-  if (mode === 'sequential') {
-    state.voteSession.currentVoterIndex = state.voteSession.eligibleVoterIds.findIndex((id) => !(id in state.voteSession.votes));
-    if (state.voteSession.currentVoterIndex < 0) state.voteSession.currentVoterIndex = state.voteSession.eligibleVoterIds.length;
-  }
+  if (mode === 'sequential') refreshVoteSessionReadiness(state.voteSession);
   return result(true, '投票入力方式を変更しました。');
 }
 
@@ -225,13 +231,16 @@ export function reopenVoteInput(state) {
   if (guard) return guard;
   const session = state.voteSession;
   if (!session || !['ready', 'finalized'].includes(session.status)) return result(false, '修正できる投票状態ではありません。');
+  if (state.game.rules.vote.visibilityDuringInput === 'public') {
+    return result(false, '逐次公開済みの投票は通常操作で変更できません。必要な場合は訂正・復元を使用してください。');
+  }
   if (session.status === 'finalized') {
     session.tally = [];
     session.result = null;
   }
   session.status = 'input';
-  session.currentVoterIndex = session.eligibleVoterIds.findIndex((id) => !(id in session.votes));
-  if (session.currentVoterIndex < 0) session.currentVoterIndex = 0;
+  const pendingIndex = firstPendingVoteIndex(session);
+  session.currentVoterIndex = pendingIndex < 0 ? 0 : pendingIndex;
   return result(true, '投票入力へ戻しました。');
 }
 

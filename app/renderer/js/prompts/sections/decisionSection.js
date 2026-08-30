@@ -1,6 +1,6 @@
 /**
  * 責務: 投票、決選、襲撃、公開主張整合性、議論再考の判断材料を文章化する。
- * 変更ルール: decisionContext.jsと公開主張だけを文章化し、候補固定、禁止、真役職断定を追加しない。投票では生存者・有効候補・同票処理と、votePopulationAnalysis.js由来の処刑直後／次夜襲撃成功後の基本勝敗分岐を分離して表示する。生存人狼数や候補正体が本人に未確定なら仮定分岐のまま示し、本人の確定秘密情報と矛盾する候補分岐は表示しない。追加死亡役職がある局面で単純人数分岐を確定表示しない。襲撃候補の非CO共通説明は候補ごとに複製せず一度だけ表示し、候補固有の公開警告だけを個別表示する。表示名・公開発言・公開主張由来の自由文を含む判断材料は[game-data:...]へ隔離し、指示文へ直接連結しない。
+ * 変更ルール: decisionContext.jsと公開主張だけを文章化し、候補固定、禁止、真役職断定を追加しない。投票では生存者・有効候補・同票処理と、votePopulationAnalysis.js由来の処刑直後／次夜襲撃成功後の基本勝敗分岐を分離して表示する。生存人狼数や候補正体が本人に未確定なら仮定分岐のまま示し、本人の確定秘密情報と矛盾する候補分岐は表示しない。追加死亡役職がある局面で単純人数分岐を確定表示しない。襲撃候補の非CO共通説明は候補ごとに複製せず一度だけ表示し、候補固有の公開警告だけを個別表示する。公開配役に存在しない役職名・相互作用は襲撃判断へ出さず、配役依存項目は文章単位で条件表示する。本人公開主張の整合性区画はCO・公開結果そのものを再掲せず、それらから導いた候補集合・配役制約・矛盾警告だけを表示する。表示名・公開発言・公開主張由来の自由文を含む判断材料は[game-data:...]へ隔離し、指示文へ直接連結しない。
  */
 
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
@@ -145,6 +145,8 @@ export function attackCandidatePublicWarningText(context, branch) {
 
 export function attackDecisionSection(context, decision) {
   if (!decision.attack) return '';
+  const composition = context.game.roleComposition ?? {};
+  const hasGuard = Number(composition.guard ?? 0) > 0;
   const successOutcome = decision.attack.successWolfOutcome === 'wolf-win'
     ? '襲撃成功時に人狼勝利条件へ到達します。'
     : decision.attack.successWolfOutcome === 'continue'
@@ -171,16 +173,16 @@ export function attackDecisionSection(context, decision) {
     const futureImpact = claim.roleId === 'seer'
       ? '主張が真なら、生存時は次の夜にも新しい占い結果を生成できます。襲撃成功時は以後の占い能力を失わせますが、死亡によって現在の占い結果や残る対抗COの評価が強まる場合があります。'
       : claim.roleId === 'medium'
-        ? '主張が真なら、生存して次の朝を迎えれば直前の処刑者の結果を公開できます。その後に新しい処刑がなければ追加結果は増えません。死亡によって残る占い結果の信用が変化する場合があります。'
+        ? '主張が真なら、生存して次の朝を迎えれば直前の処刑者の結果を公開できます。その後に新しい処刑がなければ追加結果は増えません。死亡によって既存の能力結果や残る対抗COの評価が変化する場合があります。'
         : claim.roleId === 'guard'
           ? '主張が真なら、生存中は今後の襲撃を阻止する可能性が残ります。本人を襲撃候補にした場合も、別の狩人候補、護衛規則、襲撃失敗時に残る能力を比較します。'
-          : '主張が真か偽か、狂人か人狼本体かによって、失われる能力・陣営票・残る内訳が異なります。';
+          : '主張の真偽と役職によって、失われる能力・陣営票・残る内訳が異なります。';
     return [`${playerName(context, branch.targetId)}: ${ROLE_DEFINITIONS[claim.roleId]?.name ?? claim.roleId}CO。襲撃後に同役職COは${remainingCount}人残ります。${resultNote}${futureImpact}${warningText ? ` ${warningText}` : ''}`];
   });
   const nonClaimRows = nonClaimBranches.length
     ? [
       `非CO候補: ${nonClaimBranches.map((branch) => playerName(context, branch.targetId)).join('、')}`,
-      '非CO候補の共通点: 襲撃後も現在の役職CO人数は維持されます。真狩人、潜伏役職、狂人、村人の可能性が公開情報上残る場合があり、襲撃によって役職内訳が確定するとは限りません。',
+      '非CO候補の共通点: 襲撃後も現在の役職CO人数は維持されます。公開配役上の潜伏役職である可能性が残り、襲撃によって役職内訳が確定するとは限りません。',
       ...nonClaimBranches.flatMap((branch) => {
         const warningText = attackCandidatePublicWarningText(context, branch);
         return warningText ? [`${playerName(context, branch.targetId)}: ${warningText}`] : [];
@@ -189,10 +191,10 @@ export function attackDecisionSection(context, decision) {
     : [];
   const candidateRows = [...nonClaimRows, ...claimedCandidateRows];
   const specialRoleFactors = [
-    Number(context.game.roleComposition?.fox ?? 0) > 0
+    Number(composition.fox ?? 0) > 0
       ? '妖狐を襲撃して死者が出ない可能性と、妖狐候補を確認する価値'
       : '',
-    Number(context.game.roleComposition?.cat ?? 0) > 0
+    Number(composition.cat ?? 0) > 0
       ? '猫又を襲撃して人狼が道連れになる危険'
       : '',
   ].filter(Boolean).map((text) => `- ${text}`);
@@ -201,25 +203,36 @@ export function attackDecisionSection(context, decision) {
     `襲撃成功後: ${decision.attack.successAliveCount}人生存、単独過半数は${decision.attack.successMajorityThreshold}票。${successOutcome}`,
     `襲撃失敗後: ${decision.attack.failureAliveCount}人生存、単独過半数は${decision.attack.failureMajorityThreshold}票。${failureOutcome}`,
     ...candidateRows,
-    '役職CO者の死亡は残るCO数と公開結果の評価を変え、真役職なら能力を、狂人なら陣営票を失わせます。非CO者の死亡ではCO構造を維持したまま、潜伏役職・狩人候補・推理役を失う可能性があります。',
+    '役職CO者の死亡は残るCO数と公開結果の評価を変え、主張の真偽と役職によって失われる能力・陣営票が異なります。非CO者の死亡ではCO構造を維持したまま、潜伏役職・推理役を失う可能性があります。',
   ];
+  const guardAssessment = hasGuard
+    ? `まず、死亡者・処刑者・狩人CO・過去の死者なしなどの公開情報から、狩人の生存可能性をlow / medium / highで評価します。狩人死亡が確定していない限り護衛リスクをゼロにせず、狩人生存可能性と特定対象の護衛可能性は分けてください。
+
+`
+    : '';
+  const comparisonItems = [
+    '- 襲撃成功の見込みと、確実に生存者を一人減らす価値',
+    '- 翌日の票数、処刑縄、勝利条件への影響',
+    '- 能力者・進行役を失わせる価値と、灰や役職内訳への影響',
+    hasGuard ? '- 狩人が生存している場合の護衛可能性' : '',
+    '- 対象を生存させた場合に翌日以降増える確定情報・能力結果・役職確定材料と、次夜以降の襲撃計画',
+  ].filter(Boolean).join('\n');
+  const guardRoute = hasGuard
+    ? '護衛されにくい人物を確実に減らすことや、狩人候補を先に襲う経路も比較できますが固定戦術ではありません。'
+    : '生存者を確実に減らすことも比較できます。';
   return `## 襲撃後に変化する情報
 ${renderPromptDataBlock('attack-decision-context', attackContextRows)}
 
 各候補を危険度だけで評価せず、襲撃後の盤面が狼陣営にどれだけ有利になるかを比較してください。
 
-まず、死亡者・処刑者・狩人CO・過去の死者なしなどの公開情報から、狩人の生存可能性をlow / medium / highで評価します。狩人死亡が確定していない限り護衛リスクをゼロにせず、狩人生存可能性と特定対象の護衛可能性は分けてください。
-
-その後、選択対象と最有力の別候補について次を比較します。
-- 襲撃成功の見込みと、確実に生存者を一人減らす価値
-- 翌日の票数、処刑縄、勝利条件への影響
-- 能力者・進行役を失わせる価値と、灰や役職内訳への影響
-- 狩人が生存している場合の護衛可能性
-- 対象を生存させた場合に翌日以降増える確定情報・能力結果・役職確定材料と、次夜以降の襲撃計画
+${guardAssessment}選択対象と最有力の別候補について次を比較します。
+${comparisonItems}
 ${specialRoleFactors.join('\n')}${specialRoleFactors.length ? '\n' : ''}
-能力者や強い発言者を優先する必要はありません。護衛されにくい人物を確実に減らすことや、狼に有利な票数・縄数へ近づけることが最善なら、その対象を選べます。狩人候補を先に襲う経路も比較できますが固定戦術ではありません。
+能力者や強い発言者を優先する必要はありません。狼に有利な票数・縄数へ近づけることが最善なら、その対象を選べます。${guardRoute ? ` ${guardRoute}` : ''}
 
 前夜と同じ対象を再襲撃する場合は、前夜の結果によって成功見込みがどう変化したかを評価してください。死者なしの原因が公開情報から確定していない場合、原因を断定してはいけません。`;
+
+
 }
 
 export function ownPublicClaimConsistency(context, decision) {
@@ -237,9 +250,6 @@ export function ownPublicClaimConsistency(context, decision) {
     ]
     : [];
   const rows = [
-    consistency.claimedRoleId && `公開中の役職CO: ${ROLE_DEFINITIONS[consistency.claimedRoleId]?.name ?? consistency.claimedRoleId}`,
-    consistency.claimedNotWolfIds.length && `公開済み非人狼結果: ${consistency.claimedNotWolfIds.map((id) => playerName(context, id)).join('、')}`,
-    consistency.claimedWolfIds.length && `公開済み人狼結果: ${consistency.claimedWolfIds.map((id) => playerName(context, id)).join('、')}`,
     ...whiteWolfRows,
     consistency.remainingPossibleWolfCandidateIds.length && `公開主張だけでは人狼である可能性を除外できない人物: ${consistency.remainingPossibleWolfCandidateIds.map((id) => playerName(context, id)).join('、')}`,
     consistency.remainingAliveWolfCandidateIds.length && `そのうち現在の生存者: ${consistency.remainingAliveWolfCandidateIds.map((id) => playerName(context, id)).join('、')}`,

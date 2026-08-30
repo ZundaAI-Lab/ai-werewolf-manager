@@ -1,6 +1,6 @@
 /**
  * 責務: Ollamaネイティブchat APIへ単発Envelopeを送り、Thinking段階、生成予算、同一要求内の継続生成、決定済み構造化出力方式のOllama形式変換を実装する。
- * 変更ルール: Ollama以外のプロバイダー分岐を追加せず、ゲーム固有Schemaを生成・変更せず、過去タスクのAPI会話を送らない。system roleにはProvider共通system契約だけを置き、Envelopeの全区画は定義順を維持した単一user入力として送る。キャッシュ可否を権限昇格の根拠にしない。同一要求内のThinking継続だけを許可し、Thinking本文を戻り値へ含めない。
+ * 変更ルール: Ollama以外のプロバイダー分岐を追加せず、ゲーム固有Schemaを生成・変更せず、過去タスクのAPI会話を送らない。system roleにはProvider共通system契約だけを置き、Envelopeの全区画は定義順を維持した単一user入力として送る。Analyze/Critiqueの自由記述契約ではJSON形式を要求しない。キャッシュ可否を権限昇格の根拠にしない。同一要求内のThinking継続だけを許可し、継続命令は要求目的の出力契約と一致させ、Thinking本文を戻り値へ含めない。
  */
 
 'use strict';
@@ -103,7 +103,10 @@ function addUsageTotals(target, usage) {
   return target;
 }
 
-function ollamaFinalizationInstruction() {
+function ollamaFinalizationInstruction(requestPurpose) {
+  if (requestPurpose === 'generation-analyze' || requestPurpose === 'generation-critique') {
+    return '直前のassistantメッセージには、この同じ要求について既に生成したThinkingが含まれています。その推論を引き継ぎ、分析を最初からやり直さず、元のsystem・user指示で要求された自由記述本文だけを完成させてください。JSON、コードフェンス、推論過程、生成工程についてのメタ説明は出力しないでください。';
+  }
   return '直前のassistantメッセージには、この同じ要求について既に生成したThinkingが含まれています。その推論を引き継ぎ、分析を最初からやり直さず、元のsystem・user指示で要求された最終JSONオブジェクトだけを完成させてください。内部Thinkingは現在の設定のまま利用し、可視本文には推論過程・説明文・コードフェンスを混ぜないでください。';
 }
 
@@ -120,7 +123,7 @@ async function generateOllamaChat(profile, promptEnvelope, apiKey, signal, reque
   const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0 };
   let continuationCount = 0;
   let lastBody = null;
-  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope);
+  const structuredOutputMode = resolveStructuredOutputMode(profile, promptEnvelope, requestPurpose);
 
   while (true) {
     const requestBody = {
@@ -175,7 +178,7 @@ async function generateOllamaChat(profile, promptEnvelope, apiKey, signal, reque
     messages = [
       ...messages,
       { role: 'assistant', thinking, content: '' },
-      { role: 'user', content: ollamaFinalizationInstruction() },
+      { role: 'user', content: ollamaFinalizationInstruction(requestPurpose) },
     ];
     continuationCount += 1;
   }

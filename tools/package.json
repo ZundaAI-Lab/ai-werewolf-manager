@@ -1,6 +1,6 @@
 {
   "name": "ai-werewolf-manager-tools",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "AI人狼マネージャーの開発・検査・配布製造ツール",
   "scripts": {

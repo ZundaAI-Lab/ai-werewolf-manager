@@ -647,9 +647,9 @@ export function createManagementView({
         },
         generation: {
           depth: Number(card.querySelector('[data-generation-depth]:checked')?.value ?? previous?.generation?.depth ?? 1),
-          draftProfileId: card.querySelector('[data-generation-profile-id="draftProfileId"]')?.value || null,
-          renderProfileId: card.querySelector('[data-generation-profile-id="renderProfileId"]')?.value || null,
-          proofreadProfileId: card.querySelector('[data-generation-profile-id="proofreadProfileId"]')?.value || null,
+          reasoningProfileId: card.querySelector('[data-generation-profile-id="reasoningProfileId"]')?.value || null,
+          outputProfileId: card.querySelector('[data-generation-profile-id="outputProfileId"]')?.value || null,
+          critiqueProfileId: card.querySelector('[data-generation-profile-id="critiqueProfileId"]')?.value || null,
           taskOverrides: Object.fromEntries(GENERATION_TASK_OVERRIDE_DEFS.map(({ key }) => {
             const value = card.querySelector(`[data-generation-task-override="${key}"]`)?.value ?? '';
             return [key, value === '' ? null : Number(value)];

@@ -1,23 +1,14 @@
 /**
- * 責務: Main側userData JSONのschema migration前バックアップと、migration成功後の原子的な現行schema書戻しを提供する。
- * 変更ルール: データ内容の意味検証・既定値補完・各Store固有の保存規則を持たない。旧schemaを書き換える前だけ同一ディレクトリへpre-schemaバックアップを1世代残し、migration本体はapp/shared/dataCompatibilityを正本とする。
+ * 責務: Main側userData JSONのschema migration前バックアップ、解釈不能ファイルの退避、migration成功後の原子的な現行schema書戻しを提供する。
+ * 変更ルール: データ内容の意味検証・既定値補完・各Store固有の保存規則を持たない。旧schemaを書き換える前はpre-schemaバックアップを1世代残し、読込・schema検証に失敗した既存JSONは元データを失わないよう同一ディレクトリへ一意名で退避する。migration本体はapp/shared/dataCompatibility、原子的書込手順はatomicJsonFile.jsを正本とする。
  */
 
 'use strict';
 
-const {
-  closeSync,
-  copyFileSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} = require('node:fs');
-const { dirname } = require('node:path');
+const { copyFileSync, existsSync, renameSync } = require('node:fs');
+const { randomUUID } = require('node:crypto');
 const { migrateData } = require('../shared/dataCompatibility/migrateData.js');
+const { atomicWriteJsonSync } = require('./atomicJsonFile.js');
 
 function backupPathForMigration(path, fromVersion) {
   return `${path}.pre-schema-${fromVersion}.json`;
@@ -36,27 +27,26 @@ function migratePersistedDocument(raw, { kind, label, path = '' } = {}) {
   return result;
 }
 
-function writeMigratedJsonSync(path, value) {
-  mkdirSync(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.${Date.now()}.migration.tmp`;
-  let descriptor = null;
+
+function quarantineUnreadableJsonSync(path) {
+  const backupPath = `${path}.unreadable-${Date.now()}-${randomUUID()}.bak`;
   try {
-    descriptor = openSync(temporary, 'w', 0o600);
-    writeFileSync(descriptor, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    fsyncSync(descriptor);
-    closeSync(descriptor);
-    descriptor = null;
-    renameSync(temporary, path);
+    renameSync(path, backupPath);
+    return backupPath;
   } catch (error) {
-    if (descriptor !== null) closeSync(descriptor);
-    rmSync(temporary, { force: true });
+    if (error?.code === 'ENOENT') return null;
     throw error;
   }
+}
+
+function writeMigratedJsonSync(path, value) {
+  atomicWriteJsonSync(path, value, { indent: 2 });
 }
 
 module.exports = Object.freeze({
   backupBeforeMigrationSync,
   backupPathForMigration,
   migratePersistedDocument,
+  quarantineUnreadableJsonSync,
   writeMigratedJsonSync,
 });

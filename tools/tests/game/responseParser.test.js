@@ -94,6 +94,14 @@ test('AI応答JSONは過剰ネストを分類可能な構文エラーとして�
   assert.match(parsed.diagnostics.errors[0] ?? '', /ネストが上限/u);
 });
 
+
+test('未知キー候補探索は許容距離を超える長大キーを距離行列生成前に除外する', { timeout: 1000 }, () => {
+  const longUnknownKey = 'x'.repeat(200_000);
+  const result = parseAiResponse(JSON.stringify({ publicSpeech: '本文', [longUnknownKey]: true }), 'public-only');
+  assert.equal(result.diagnostics.errors.some((error) => error.includes('は未定義です。')), true);
+  assert.equal(result.diagnostics.errors.some((error) => error.includes('誤記ではありませんか')), false);
+});
+
 test('各タスクはゲーム進行に必要な最小キーだけで解析でき、投票の説明項目欠落をエラーにしない', () => {
   assert.deepEqual(getRequiredResponseTopLevelKeys('vote'), ['actionAnswer']);
   const cases = [
@@ -157,6 +165,36 @@ test('投票理由はrationaleだけを受け付け、判断状態の理由に�
   assert.equal(validation.ok, true, validation.errors.join('\n'));
   assert.equal(validation.resolvedDecisionUpdate.decisionReason, rationale);
 });
+
+test('処刑候補はAI回答の順序を第一候補順として解決済み判断へ保持する', () => {
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  const first = state.players[2];
+  const second = state.players[1];
+  const payload = {
+    actionAnswer: first.name,
+    rationale: `${first.name}を現時点の第一処刑候補として投票するためです。`,
+    decisionPatch: {
+      executionCandidates: [first.name, second.name],
+      assessmentLevel: 'moderate',
+      leaveAliveBenefit: `${first.name}を残す利益を比較する。`,
+      misexecutionCost: `${first.name}を誤処刑した場合の損失を比較する。`,
+      selectionDifference: `${first.name}を${second.name}より優先する差を比較する。`,
+    },
+  };
+  const parsed = parseAiResponse(JSON.stringify(payload), 'vote');
+  assert.deepEqual(parsed.diagnostics.errors, []);
+  const validation = validateAiResponse(state, {
+    parsed,
+    playerId: actor.id,
+    taskType: 'vote',
+    candidateIds: state.players.slice(1).map((player) => player.id),
+  });
+  assert.equal(validation.ok, true, validation.errors.join('\n'));
+  assert.deepEqual(validation.resolvedDecisionUpdate.executionCandidateIds, [first.id, second.id]);
+  assert.equal(validation.resolvedDecisionUpdate.intendedVoteId, first.id);
+});
+
 
 
 test('必須項目欠落・未知キー・重複キー・JSON外文章を拒否する', () => {

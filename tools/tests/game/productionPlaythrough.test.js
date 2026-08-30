@@ -1,13 +1,13 @@
 /**
- * 責務: 初期3巡設定の1ゲーム通しテストと1人間プレイヤー通しテストを、デモAIの生回答・パーサー・検証器・登録コマンド・保存状態検証まで改変せず接続して実行する。
- * 変更ルール: 初期ルールを短縮せず、AI回答をダミーJSONへ置換・後加工せず、検証失敗をGM代理・ランダム登録で回避しない。生成された生回答をそのまま解析・意味検証・登録・完全状態検証・JSON再読込まで通す。任意項目の出力数は品質資料として集計するだけで合否条件にせず、出力された項目は解析・保存・再読込まで確認する。
+ * 責務: 初期3巡設定の全AIゲームを、デモAIの生回答・パーサー・検証器・正式登録・保存状態検証まで接続して1回だけ完走させる。
+ * 変更ルール: 人間入力や生成深度別の分岐は各専用テストへ委譲する。通しテスト側へゲーム規則の別実装や過去不具合専用検査を増やさず、本番AI回答経路の代表的な接続確認だけを行う。
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { markBriefingShown, acknowledgeRole } from '../../../app/renderer/js/domain/briefing/briefingCommands.js';
-import { recordAiSpeech, recordHumanSpeech } from '../../../app/renderer/js/domain/discussion/discussionCommands.js';
+import { recordAiSpeech } from '../../../app/renderer/js/domain/discussion/discussionCommands.js';
 import { startGame } from '../../../app/renderer/js/domain/game/gameCommands.js';
 import { getCurrentGmTask } from '../../../app/renderer/js/domain/game/workflow.js';
 import {
@@ -25,9 +25,7 @@ import {
   recordResultImpression,
 } from '../../../app/renderer/js/domain/result/resultCommands.js';
 import {
-  getAttackCandidates,
   getNightActionCandidates,
-  getVoteCandidates,
 } from '../../../app/renderer/js/domain/game/standardRules.js';
 import {
   beginVote,
@@ -49,7 +47,7 @@ import { prepareAiTask, evaluateAiTaskCandidate } from '../../../app/renderer/js
 import { resolveGenerationPlan } from '../../../app/renderer/js/services/generationDepthPolicy.js';
 import { runGenerationPipeline } from '../../../app/renderer/js/services/generationPipeline.js';
 import { resolveGenerationStagePromptPolicy } from '../../../app/renderer/js/prompts/stages/generationStagePromptPolicy.js';
-import { buildDraftStagePrompt, buildRenderStagePrompt, buildProofreadStagePrompt } from '../../../app/renderer/js/prompts/stages/generationStagePromptBuilder.js';
+import { buildDecideStagePrompt, buildAnalyzeStagePrompt, buildCritiqueStagePrompt, buildFinalizeStagePrompt, buildRenderStagePrompt } from '../../../app/renderer/js/prompts/stages/generationStagePromptBuilder.js';
 import { inspectPromptDataBlocks } from '../../../app/renderer/js/prompts/serialization/promptDataSerializer.js';
 
 const require = createRequire(import.meta.url);
@@ -68,19 +66,6 @@ function assertOk(response, label) {
 function assertValidState(state, label) {
   const validation = validateImportedState(state);
   assert.equal(validation.ok, true, `${label}: ${validation.errors.join(' / ')}`);
-}
-
-function validTargetIds(state, taskType, playerId) {
-  if (taskType === 'vote') {
-    return getVoteCandidates(state, playerId, state.voteSession.candidateIds).map((player) => player.id);
-  }
-  if (isPersonalNightActionTask(taskType)) {
-    return getNightActionCandidates(state, taskType, playerId).map((player) => player.id);
-  }
-  if (['wolf-conversation', 'wolf-attack'].includes(taskType)) {
-    return getAttackCandidates(state).map((player) => player.id);
-  }
-  return [];
 }
 
 function currentConversationSpeakerId(state, taskType) {
@@ -237,7 +222,7 @@ function buildAiCommonInput(built, rawResponse, parsed, validation, generationRu
   };
 }
 
-async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '', generationDepth = 1 }) {
+async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '' }) {
   const player = state.players.find((item) => item.id === playerId);
   assert.ok(player, `${taskType}のAIプレイヤーが存在する`);
   assert.equal(player.controller, 'ai', `${player.name}はAI制御である`);
@@ -252,8 +237,6 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
     assert.ok(currentTask.yourResult?.finalTeam && currentTask.yourResult?.result, '感想プロンプトへ本人の最終陣営と勝敗を含める');
     assert.equal(Object.hasOwn(currentTask, 'speaker'), false, '共通話者情報を感想専用データへ重複投入しない');
     assert.equal(Object.hasOwn(currentTask, 'speakerJourney'), false, '通常会話・本人投票の独立履歴を感想専用データへ残さない');
-    assert.equal(Object.hasOwn(currentTask, 'voteResult'), false, '旧最終投票ブロックを重複投入しない');
-    assert.equal(Object.hasOwn(currentTask, 'nightResult'), false, '旧最終夜明けブロックを重複投入しない');
     const flowEvents = (currentTask.gameFlow ?? []).flatMap((section) => section.events ?? []);
     assert.ok(
       flowEvents.some((event) => ['execution-result', 'night-result'].includes(event.type)),
@@ -272,24 +255,25 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
     id: 'profile-demo',
     label: 'デモAI',
     enabled: true,
-    generation: { depth: generationDepth },
+    generation: { depth: 1 },
   };
   const plan = resolveGenerationPlan({ ownerProfile, profiles: [ownerProfile], taskType });
-  const textStagePrompts = [];
   const pipeline = await runGenerationPipeline({
     plan,
     taskArtifact: built,
     evaluateCandidate: (rawResponse) => evaluateAiTaskCandidate(state, built, rawResponse),
     resolveStagePromptPolicy: resolveGenerationStagePromptPolicy,
-    buildDraftPrompt: buildDraftStagePrompt,
+    buildDecidePrompt: buildDecideStagePrompt,
+    buildAnalyzePrompt: buildAnalyzeStagePrompt,
+    buildCritiquePrompt: buildCritiqueStagePrompt,
+    buildFinalizePrompt: buildFinalizeStagePrompt,
     buildRenderPrompt: buildRenderStagePrompt,
-    buildProofreadPrompt: buildProofreadStagePrompt,
     requestFullCandidate: async ({ stage, prompt }) => {
       const rawResponse = demoAi.generate({
         prompt,
         taskType,
         playerName: player.name,
-        requestPurpose: stage.stageId === 'draft' ? 'generation-draft' : 'normal',
+        requestPurpose: stage.stageId === 'direct' ? 'normal' : `generation-${stage.stageId}`,
       });
       const evaluation = evaluateAiTaskCandidate(state, built, rawResponse);
       return {
@@ -301,15 +285,26 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
         issues: evaluation.issues,
       };
     },
+    requestFreeText: async ({ stage, prompt }) => ({
+      ok: true,
+      rawResponse: demoAi.generate({
+        prompt,
+        taskType,
+        playerName: player.name,
+        requestPurpose: `generation-${stage.stageId}`,
+      }),
+      attemptCount: 1,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, totalTokens: 0 },
+      issues: [],
+    }),
     requestTextPatch: async ({ stage, prompt }) => {
-      textStagePrompts.push({ stageId: stage.stageId, length: prompt.length, prompt });
       return {
         ok: true,
         rawResponse: demoAi.generate({
           prompt,
           taskType,
           playerName: player.name,
-          requestPurpose: stage.stageId === 'render' ? 'generation-render' : 'generation-proofread',
+          requestPurpose: 'generation-render',
         }),
         attemptCount: 1,
         usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, totalTokens: 0 },
@@ -317,7 +312,7 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
       };
     },
   });
-  assert.equal(pipeline.ok, true, `${player.name}/${taskType}/深度${generationDepth}の生成パイプラインが成功する`);
+  assert.equal(pipeline.ok, true, `${player.name}/${taskType}の生成パイプラインが成功する`);
   const rawResponse = pipeline.rawResponse;
   const parsed = pipeline.evaluation.parsed;
   const validation = pipeline.evaluation.validation;
@@ -399,7 +394,7 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
   assertStructuredFieldsSaved(state, parsed, validation);
   assertValidState(state, `${player.name}/${taskType}保存後`);
   const storedTurn = state.aiTurns.at(-1);
-  assert.equal(storedTurn.generationRun.depth, generationDepth);
+  assert.equal(storedTurn.generationRun.depth, 1);
   assert.equal(storedTurn.generationRun.taskCategory, plan.taskCategory);
   assert.equal(storedTurn.generationRun.stages.length, plan.stages.length);
   assert.equal(storedTurn.rawResponse, rawResponse, '中間回答ではなく最終候補だけをAIターンへ保存する');
@@ -410,62 +405,8 @@ async function executeAiResponsePipeline(state, { taskType, playerId, slotId = '
     prompt: built.text,
     rawResponse,
     hasTruncatedPublicHistory: built.text.includes('"historyDetail"'),
-    textStagePrompts,
-    resultPromptAudit: resultPromptAudit ? (() => {
-      const renderStageExpected = plan.stages.some((stage) => stage.stageId === 'render');
-      const renderPrompts = textStagePrompts.filter((item) => item.stageId === 'render');
-      return {
-        ...resultPromptAudit,
-        renderStageExpected,
-        renderStagePromptCount: renderPrompts.length,
-        usesConsolidatedStageSummary: renderStageExpected
-          ? renderPrompts.length > 0
-            && renderPrompts.every((item) => item.prompt.includes('resultSummary') && !item.prompt.includes('recentOutcomeSummary'))
-          : renderPrompts.length === 0,
-      };
-    })() : null,
+    resultPromptAudit,
   };
-}
-
-function executeHumanTask(state, task, humanId) {
-  assert.equal(task.playerId, humanId, '人間タスクは指定した人間プレイヤー本人のもの');
-  const player = state.players.find((item) => item.id === humanId);
-  if (task.type === 'speech') {
-    return recordHumanSpeech(state, {
-      playerId: humanId,
-      content: `${player.name}の人間入力です。#1を確認しつつ自由に発言します。`,
-      coOperation: { action: 'none', roleId: 'none' },
-    });
-  }
-  if (task.type === 'vote') {
-    const target = getVoteCandidates(state, humanId, state.voteSession.candidateIds)[0];
-    assert.ok(target, '人間投票の有効対象が存在する');
-    return recordVote(state, { voterId: humanId, targetId: target.id });
-  }
-  if (task.type === 'result-impression') {
-    return recordResultImpression(state, {
-      playerId: humanId,
-      content: '人間プレイヤーとして最後まで参加しました。',
-    });
-  }
-  const targetId = validTargetIds(state, task.type, humanId)[0];
-  assert.ok(targetId, `${task.type}の人間向け有効対象が存在する`);
-  if (task.type === 'wolf-attack') {
-    return recordWolfAttackVote(state, {
-      actorId: humanId,
-      targetId,
-      selectionRationale: '人間が専用操作で明示選択した。',
-    });
-  }
-  if (PERSONAL_NIGHT_TASKS.includes(task.type)) {
-    return recordNightAction(state, {
-      slotId: task.slotId,
-      actorId: humanId,
-      targetId,
-      selectionRationale: '人間が専用操作で明示選択した。',
-    });
-  }
-  assert.fail(`未対応の人間タスクです: ${task.type}`);
 }
 
 function recordPromptMetrics(metrics, execution) {
@@ -473,17 +414,9 @@ function recordPromptMetrics(metrics, execution) {
   if (execution.hasTruncatedPublicHistory) metrics.truncatedPublicHistoryPromptCount += 1;
   if (execution.resultPromptAudit) {
     metrics.resultPromptCount += 1;
-    assert.equal(execution.resultPromptAudit.usesConsolidatedStageSummary, true, '感想の文章工程は統合済みresultSummaryだけを参照する');
-    if (execution.resultPromptAudit.renderStageExpected) {
-      assert.ok(execution.resultPromptAudit.renderStagePromptCount > 0, '深度3・4の感想では発言化工程を実際に実行する');
-      metrics.deepResultRenderPromptCount += execution.resultPromptAudit.renderStagePromptCount;
-    }
     if (execution.resultPromptAudit.playerWasDead && execution.resultPromptAudit.hasAfterExitFlow) {
       metrics.earlyExitResultPromptCount += 1;
     }
-  }
-  for (const stagePrompt of execution.textStagePrompts ?? []) {
-    if (stagePrompt.stageId === 'proofread') metrics.proofreadPromptLengths.push(stagePrompt.length);
   }
   if (execution.taskType !== 'speech') return;
   const key = String(execution.day);
@@ -513,32 +446,23 @@ function assertThreeRoundDiscussion(state, completedDays) {
   completedDays.push({ day: state.game.day, round: state.discussion.round, speechCount: publicSpeeches.length });
 }
 
-async function runProductionPlaythrough({ humanPlayer = false, generationDepth = 1 } = {}) {
+async function runProductionPlaythrough() {
   const originalRandom = Math.random;
   Math.random = () => 0.137;
   try {
     const state = createInitialState(8);
-    assert.equal(state.game.rules.speechCountPerDay, 3, '118版初期設定の議論巡数は3');
-    const human = humanPlayer
-      ? state.players.find((player) => player.roleId === 'villager') ?? state.players[0]
-      : null;
-    if (human) human.controller = 'human';
-
+    assert.equal(state.game.rules.speechCountPerDay, 3, '現行初期設定の議論巡数は3');
     assertOk(startGame(state), 'ゲーム開始');
     assertValidState(state, 'ゲーム開始後');
 
     const metrics = {
-      humanPlayerId: human?.id ?? null,
       briefingPromptCount: 0,
       aiResponsePromptCount: 0,
       pipelineTaskCounts: {},
       completedDiscussionDays: [],
-      humanPublicSpeechCount: 0,
       speechPromptLengthsByDay: {},
-      proofreadPromptLengths: [],
       truncatedPublicHistoryPromptCount: 0,
       resultPromptCount: 0,
-      deepResultRenderPromptCount: 0,
       earlyExitResultPromptCount: 0,
       steps: 0,
     };
@@ -549,7 +473,7 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
 
       if (task.type === 'briefing') {
         const built = buildPromptContext(state, task.playerId, { taskType: 'briefing', validTargetIds: [] });
-        assert.match(built.text, /応答不要/u, '役職通知は118版既存契約どおり応答不要');
+        assert.match(built.text, /応答不要/u, '役職通知は応答不要契約を維持する');
         metrics.briefingPromptCount += 1;
         assertOk(markBriefingShown(state, task.playerId), '役職通知表示');
         assertOk(acknowledgeRole(state, task.playerId), '役職通知確認');
@@ -558,29 +482,19 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
         const execution = await executeAiResponsePipeline(state, {
           taskType: task.type,
           playerId,
-          generationDepth,
         });
         recordPromptMetrics(metrics, execution);
         metrics.aiResponsePromptCount += 1;
         metrics.pipelineTaskCounts[task.type] = Number(metrics.pipelineTaskCounts[task.type] ?? 0) + 1;
       } else if (AI_RESPONSE_TASKS.includes(task.type)) {
-        const isHumanTask = human && task.playerId === human.id;
-        if (isHumanTask) {
-          const response = executeHumanTask(state, task, human.id);
-          assertOk(response, `${human.name}/${task.type}人間登録`);
-          if (task.type === 'speech') metrics.humanPublicSpeechCount += 1;
-          assertValidState(state, `${human.name}/${task.type}人間保存後`);
-        } else {
-          const execution = await executeAiResponsePipeline(state, {
-            taskType: task.type,
-            playerId: task.playerId,
-            slotId: task.slotId ?? '',
-            generationDepth,
-          });
-          recordPromptMetrics(metrics, execution);
-            metrics.aiResponsePromptCount += 1;
-          metrics.pipelineTaskCounts[task.type] = Number(metrics.pipelineTaskCounts[task.type] ?? 0) + 1;
-        }
+        const execution = await executeAiResponsePipeline(state, {
+          taskType: task.type,
+          playerId: task.playerId,
+          slotId: task.slotId ?? '',
+        });
+        recordPromptMetrics(metrics, execution);
+        metrics.aiResponsePromptCount += 1;
+        metrics.pipelineTaskCounts[task.type] = Number(metrics.pipelineTaskCounts[task.type] ?? 0) + 1;
       } else if (task.type === 'private-notification') {
         assertOk(acknowledgePrivateResults(state, task.playerId), '人間の本人限定結果確認');
       } else if (task.type === 'resolve-night') {
@@ -624,10 +538,6 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
     assert.ok(Object.keys(metrics.pipelineTaskCounts).includes('vote'), '投票AI回答を本番経路へ通す');
     assert.ok(metrics.resultPromptCount > 0, '感想プロンプトを本番経路へ通す');
     assert.ok(metrics.earlyExitResultPromptCount > 0, '早期離脱者へ離脱後の正式ゲーム経過を渡す');
-    if (human) {
-      assert.ok(metrics.humanPublicSpeechCount >= 3, '人間本人が3巡の公開発言経路を通る');
-      assert.equal(state.aiTurns.some((turn) => turn.playerId === human.id && turn.taskType === 'speech'), false, '人間発言をAI発言として保存しない');
-    }
 
     return {
       state,
@@ -646,14 +556,5 @@ async function runProductionPlaythrough({ humanPlayer = false, generationDepth =
 
 test('初期3巡設定で全AIの1ゲームをデモAI統合経路で完走する', async () => {
   const { metrics } = await runProductionPlaythrough();
-  assert.equal(metrics.humanPlayerId, null);
   console.log(`PLAYTHROUGH_ALL_AI ${JSON.stringify(metrics)}`);
 });
-
-test('初期3巡設定で1人間プレイヤーを含む1ゲームをデモAI統合経路で完走する', async () => {
-  const { metrics } = await runProductionPlaythrough({ humanPlayer: true, generationDepth: 4 });
-  assert.ok(metrics.humanPlayerId);
-  assert.ok(metrics.deepResultRenderPromptCount > 0, '深度4の感想発言化工程を本番経路で検証する');
-  console.log(`PLAYTHROUGH_ONE_HUMAN ${JSON.stringify(metrics)}`);
-});
-

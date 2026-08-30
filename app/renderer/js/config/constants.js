@@ -5,7 +5,7 @@
 
 import { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } from './dataCompatibilityAdapter.js';
 
-export const APP_VERSION = '1.0.3';
+export const APP_VERSION = '1.0.4';
 
 // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
 // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。
@@ -14,7 +14,7 @@ export const SCHEMA_VERSION = getCurrentDataSchemaVersion(DATA_SCHEMA_KIND.GAME_
 
 // PROMPT_SPEC_VERSIONはAIへ渡す情報構成・方針・優先度・生成指示の版を表し、対局状態のruntimeへ記録する。
 // 製品版1.0.0では1を基準とし、正式リリース後はAIへ渡す契約・方針・情報構成を変更した場合だけ単調増加させ、リセットしない。
-export const PROMPT_SPEC_VERSION = 3;
+export const PROMPT_SPEC_VERSION = 4;
 export const MAX_NIGHT_ACTION_RATIONALE_LENGTH = 240;
 export const MAX_FREEZE_ACTION_RATIONALE_LENGTH = 360;
 export const MAX_RESULT_IMPRESSION_LENGTH = 180;

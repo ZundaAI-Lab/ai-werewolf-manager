@@ -6,7 +6,8 @@
  * - 公開根拠が存在しない関係や差を補完させない。challenge-consensusは対象者を事前断定せず、公開議論に集中が確認できる場合だけ使える条件付き盤面レンズとして文章化する。
  * - 選択されていない推理モードの一覧や診断用IDをプロンプトへ提示しない。anchorのevent sequenceは内部照合用に保持し、非公開参考視点の自然文では公開発言へ模倣されやすい#n表記を使わない。
  * - hypothesisBreadthはレンズ選択へ介入させず、選択済みレンズから得た材料を何候補まで保持するかという短い内部修飾だけを追加する。compare-candidatesは初日だけ短い暫定差ルールへ差し替える。
- * - 対象人物名と参照イベント番号、およびそれらから作る可読参照ラベルはJSONの[game-data:reasoning-focus]へ隔離し、自由入力可能な表示名を内部検討指示へ直接展開しない。
+ * - 対象人物名と参照イベント番号、およびそれらから作る可読参照ラベルはJSONの[game-data:reasoning-focus]へ隔離し、自由入力可能な表示名を内部検討指示へ直接展開しない。referenceDescriptionはreferenceLabelと意味が異なる場合だけ出力し、同値の再掲を作らない。
+ * - 陣営overlayでは公開根拠の有無だけを補助し、factionStrategyの保存先やpublicSpeechへの反映義務など陣営戦略出力の意味規則はpromptTemplates.js側の陣営指示を正本として重複説明しない。
  */
 
 import { renderPromptDataBlock } from '../serialization/promptDataSerializer.js';
@@ -21,12 +22,12 @@ function reasoningFocusData(directive) {
   const referenceLabel = [playerLabel, eventLabel].filter(Boolean).join('の');
   const referenceDescription = directive?.modeId === 'trace-change' && referenceLabel
     ? `${referenceLabel}を含む公開行動を時系列に並べる`
-    : referenceLabel;
+    : '';
   return renderPromptDataBlock('reasoning-focus', {
     focusPlayerNames,
     anchorEventSequences,
     referenceLabel: referenceLabel || null,
-    referenceDescription: referenceDescription || null,
+    ...(referenceDescription ? { referenceDescription } : {}),
   });
 }
 
@@ -103,7 +104,7 @@ function factionOverlayText(directive) {
     return '陣営上の参考視点: 白狼は村人として自然に推理し、占いの非人狼判定を長期信用へつなげる潜伏価値を優先できます。仲間への擁護や投票は公開根拠だけで選び、無理な騙りや対抗COを作る必要はありません。';
   }
   if (directive.factionOverlay === 'wolf') {
-    return '陣営上の参考視点: 公開情報から成立する推理と、本人限定の秘密の勝ち筋を分離できているか。秘密の勝ち筋はfactionStrategyへ記録でき、この参考視点を処刑誘導や仲間擁護としてpublicSpeechへ反映する義務はありません。公開根拠のない疑い先や反対意見を作らないでください。';
+    return '陣営上の参考視点: 公開情報から成立する推理と、本人限定の秘密の勝ち筋を分離できているか。公開根拠のない疑い先や反対意見を作らないでください。';
   }
   if (directive.factionOverlay === 'madman') {
     return '陣営上の参考視点: 正確な人狼位置を知っているような断定を避けたまま、複数の公開上の見方の中に人狼陣営へ有利なものがあるか。採用や公開は任意で、根拠のない対立軸を作る必要はありません。';

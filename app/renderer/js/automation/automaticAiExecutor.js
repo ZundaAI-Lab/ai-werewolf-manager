@@ -1,6 +1,6 @@
 /**
- * 責務: 1件のAIタスクについて工程別API要求、通信再試行、全履歴再同期、応答修復、正式登録または項目代替までを実行する。
- * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は有効対象だけの最小契約、それ以外は最新の基準プロンプトを参照する。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一タスク内で一度だけThinkingを無効化する。
+ * 責務: 1件のAIタスクについて生成深度ごとの既存直接生成・判断・客観分析・批判的検証・最終回答・発言化API要求、通信再試行、全履歴再同期、応答修復、正式登録または項目代替までを実行する。
+ * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は有効対象だけの最小契約、それ以外は最新の基準プロンプトを参照する。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、その工程API要求内だけThinkingを無効化し、別工程・別プロファイルへ状態を持ち越さない。
  */
 
 
@@ -13,17 +13,17 @@ function replaceTaskArtifact(target, source) {
 function buildFullCandidateStagePrompt({
   stageId,
   taskArtifact,
+  analysisText = '',
+  critiqueText = '',
   resolveStagePromptPolicy,
-  buildDraftStagePrompt,
+  buildDecideStagePrompt,
+  buildFinalizeStagePrompt,
 }) {
   if (stageId === 'direct') return String(taskArtifact.promptEnvelope?.dynamicTaskPrompt ?? taskArtifact.text ?? '');
-  if (stageId === 'draft') {
-    return buildDraftStagePrompt({
-      taskArtifact,
-      policy: resolveStagePromptPolicy({ stageId: 'draft', taskType: taskArtifact.taskType }),
-    });
-  }
-  throw new Error(`完成候補生成の対象外工程です: ${stageId}`);
+  const policy = resolveStagePromptPolicy({ stageId, taskType: taskArtifact.taskType });
+  if (stageId === 'decide') return buildDecideStagePrompt({ taskArtifact, policy });
+  if (stageId === 'finalize') return buildFinalizeStagePrompt({ taskArtifact, policy, analysisText, critiqueText });
+  throw new Error(`完成候補生成の対象外です: ${stageId}`);
 }
 
 function createAutomaticAiExecutor(dependencies) {
@@ -78,7 +78,6 @@ function createAutomaticAiExecutor(dependencies) {
     runtimeApi.dismissToast?.(responseRetryToastKey);
     let taskApiCallCount = 0;
     let regenerationRecorded = false;
-    let ollamaThinkingFallbackUsed = false;
 
     function addStageUsage(target, usage) {
       for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens', 'costUsd']) {
@@ -88,17 +87,20 @@ function createAutomaticAiExecutor(dependencies) {
     }
 
     function responseContractSystemInstruction(requestPurpose) {
-      return ['generation-render', 'generation-proofread'].includes(requestPurpose)
+      return ['generation-analyze', 'generation-critique', 'generation-render'].includes(requestPurpose)
         ? ''
         : String(taskArtifact.systemInstruction ?? '');
     }
 
-    function rebuildStagePrompt(stageId) {
+    function rebuildStagePrompt(stageId, analysisText = '', critiqueText = '') {
       return buildFullCandidateStagePrompt({
         stageId,
         taskArtifact,
+        analysisText,
+        critiqueText,
         resolveStagePromptPolicy: runtimeApi.resolveGenerationStagePromptPolicy,
-        buildDraftStagePrompt: runtimeApi.buildDraftStagePrompt,
+        buildDecideStagePrompt: runtimeApi.buildDecideStagePrompt,
+        buildFinalizeStagePrompt: runtimeApi.buildFinalizeStagePrompt,
       });
     }
 
@@ -114,7 +116,7 @@ function createAutomaticAiExecutor(dependencies) {
       return [...new Set(names)];
     }
 
-    async function refreshTaskArtifact(stageId, { forceFullHistory = false } = {}) {
+    async function refreshTaskArtifact({ forceFullHistory = false } = {}) {
       runControl.assertRunning(session);
       if (forceFullHistory) runtimeApi.scheduleFullPublicHistory?.([playerId]);
       await runControl.delayWithAbort(0, session);
@@ -126,27 +128,16 @@ function createAutomaticAiExecutor(dependencies) {
         forceFullPublicHistory: forceFullHistory,
       });
       replaceTaskArtifact(taskArtifact, refreshedArtifact);
-      return rebuildStagePrompt(stageId);
+      return taskArtifact;
     }
 
-    function requestPromptEnvelope(prompt, requestPurpose) {
-      const base = taskArtifact.promptEnvelope;
-      if (!base || typeof base !== 'object') throw new Error('構造化プロンプトEnvelopeを利用できません。');
-      const textPatchStage = ['generation-render', 'generation-proofread'].includes(requestPurpose);
-      return {
-        schemaVersion: 5,
-        commonSystemInstruction: responseContractSystemInstruction(requestPurpose),
-        commonGameContext: textPatchStage ? '' : String(base.commonGameContext ?? ''),
-        taskInvariantContext: textPatchStage ? '' : String(base.taskInvariantContext ?? ''),
-        taskVariableContext: textPatchStage ? '' : String(base.taskVariableContext ?? ''),
-        stablePlayerContext: textPatchStage ? '' : String(base.stablePlayerContext ?? ''),
-        dynamicTaskPrompt: String(prompt ?? ''),
-        structuredOutput: textPatchStage ? null : (base.structuredOutput ? structuredClone(base.structuredOutput) : null),
-        cacheIdentity: {
-          ...(base.cacheIdentity ?? {}),
-          promptFamily: textPatchStage ? 'text-patch' : String(base.cacheIdentity?.promptFamily ?? 'game-candidate'),
-        },
-      };
+    function requestPromptEnvelope(stageId, prompt, requestPurpose) {
+      return runtimeApi.projectGenerationStagePromptEnvelope({
+        baseEnvelope: taskArtifact.promptEnvelope,
+        stageId,
+        prompt,
+        fallbackSystemInstruction: responseContractSystemInstruction(requestPurpose),
+      });
     }
 
     async function requestStageApi({
@@ -160,6 +151,7 @@ function createAutomaticAiExecutor(dependencies) {
     }) {
       let attemptCount = 0;
       let apiRetryIndex = 0;
+      let ollamaThinkingDisabledForRetry = false;
       const usage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, costUsd: 0 };
       const issues = [];
       let currentPrompt = prompt;
@@ -193,7 +185,7 @@ function createAutomaticAiExecutor(dependencies) {
           const response = await bridge.generate({
             requestId,
             profileId: executorProfile.id,
-            promptEnvelope: requestPromptEnvelope(currentPrompt, requestPurpose),
+            promptEnvelope: requestPromptEnvelope(stage.stageId, currentPrompt, requestPurpose),
             taskType,
             requestPurpose,
             generationStage,
@@ -201,7 +193,11 @@ function createAutomaticAiExecutor(dependencies) {
             gameId: currentGameState()?.game?.id ?? '',
             retryIndex: attemptCount - 1,
             publicHistoryMode,
-            thinkingLevelOverride: ollamaThinkingFallbackUsed ? 'none' : null,
+            thinkingLevelOverride: taskType === 'vote'
+              && executorProfile.localServerPreset === 'ollama'
+              && ollamaThinkingDisabledForRetry
+              ? 'none'
+              : null,
             ...usageFlags,
           });
           runControl.assertRunning(session);
@@ -227,9 +223,9 @@ function createAutomaticAiExecutor(dependencies) {
           if (taskType === 'vote'
             && executorProfile.localServerPreset === 'ollama'
             && apiError.code === 'OLLAMA_THINKING_FINAL_RESPONSE_MISSING'
-            && !ollamaThinkingFallbackUsed
+            && !ollamaThinkingDisabledForRetry
             && attemptCount < callBudget) {
-            ollamaThinkingFallbackUsed = true;
+            ollamaThinkingDisabledForRetry = true;
             issues.push({ code: 'OLLAMA_VOTE_THINKING_DISABLED', message: '投票の再試行だけThinkingを無効化しました。' });
             continue;
           }
@@ -272,8 +268,9 @@ function createAutomaticAiExecutor(dependencies) {
       throw error;
     }
 
-    async function requestFullCandidate({ stage, prompt, callBudget }) {
-      let phase = stage.stageId === 'draft' ? 'generation-draft' : 'normal';
+    async function requestFullCandidate({ stage, prompt, callBudget, analysisText = '', critiqueText = '' }) {
+      const initialPurpose = stage.stageId === 'direct' ? 'normal' : `generation-${stage.stageId}`;
+      let phase = initialPurpose;
       let basePrompt = prompt;
       let currentPrompt = basePrompt;
       let failedResponse = '';
@@ -285,8 +282,8 @@ function createAutomaticAiExecutor(dependencies) {
       const stageIssues = [];
       while (totalAttempts < callBudget) {
         runControl.assertRunning(session);
-        const initialCandidatePhase = phase === 'normal' || phase === 'generation-draft';
-        const historyCapableStage = stage.stageId === 'direct' || stage.stageId === 'draft';
+        const initialCandidatePhase = phase === 'normal' || phase === initialPurpose;
+        const historyCapableStage = ['direct', 'decide', 'finalize'].includes(stage.stageId);
         let result;
         try {
           result = await requestStageApi({
@@ -298,7 +295,8 @@ function createAutomaticAiExecutor(dependencies) {
             publicHistoryMode: initialCandidatePhase && historyCapableStage ? taskArtifact.publicHistoryMode : 'full',
             onResync: initialCandidatePhase && historyCapableStage && deltaRequested
               ? async () => {
-                basePrompt = await refreshTaskArtifact(stage.stageId, { forceFullHistory: true });
+                await refreshTaskArtifact({ forceFullHistory: true });
+                basePrompt = rebuildStagePrompt(stage.stageId, analysisText, critiqueText);
                 currentPrompt = basePrompt;
                 return { prompt: basePrompt, publicHistoryMode: 'full' };
               }
@@ -346,7 +344,7 @@ function createAutomaticAiExecutor(dependencies) {
         };
         const decision = responseRetryPolicy.decideNext({
           recoveryMode,
-          phase: phase === 'normal' || phase === 'generation-draft' ? 'normal' : phase,
+          phase: phase === 'normal' || phase === initialPurpose ? 'normal' : phase,
           commitResult,
           stateRefreshUsed,
           previousIssueSignature,
@@ -367,11 +365,12 @@ function createAutomaticAiExecutor(dependencies) {
         failedResponse = evaluation.effectiveRawResponse ?? result.rawResponse;
         if (decision.action === 'regenerate-prompt') {
           const refreshWithFullHistory = Boolean(forceFullPublicHistory || deltaRequested);
-          basePrompt = await refreshTaskArtifact(stage.stageId, {
+          await refreshTaskArtifact({
             forceFullHistory: refreshWithFullHistory,
           });
+          basePrompt = rebuildStagePrompt(stage.stageId, analysisText, critiqueText);
           currentPrompt = basePrompt;
-          phase = stage.stageId === 'draft' ? 'generation-draft' : 'normal';
+          phase = initialPurpose;
           stateRefreshUsed = true;
           continue;
         }
@@ -403,12 +402,23 @@ function createAutomaticAiExecutor(dependencies) {
       return { ok: false, rawResponse: failedResponse, attemptCount: totalAttempts, usage, issues: stageIssues };
     }
 
-    async function requestTextPatch({ stage, prompt, callBudget }) {
-      const requestPurpose = stage.stageId === 'render' ? 'generation-render' : 'generation-proofread';
+    async function requestFreeText({ stage, prompt, callBudget }) {
+      if (!['analyze', 'critique'].includes(stage.stageId)) throw new RangeError(`自由記述対象ではないstageIdです: ${stage.stageId}`);
       return requestStageApi({
         stage,
         prompt,
-        requestPurpose,
+        requestPurpose: `generation-${stage.stageId}`,
+        callBudget,
+        publicHistoryMode: 'full',
+      });
+    }
+
+    async function requestTextPatch({ stage, prompt, callBudget }) {
+      if (stage.stageId !== 'render') throw new RangeError(`文章差分工程ではないstageIdです: ${stage.stageId}`);
+      return requestStageApi({
+        stage,
+        prompt,
+        requestPurpose: 'generation-render',
         callBudget,
         publicHistoryMode: 'full',
       });
@@ -423,12 +433,15 @@ function createAutomaticAiExecutor(dependencies) {
         plan,
         taskArtifact,
         requestFullCandidate,
+        requestFreeText,
         requestTextPatch,
         evaluateCandidate: (rawResponse) => runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse }),
         resolveStagePromptPolicy: runtimeApi.resolveGenerationStagePromptPolicy,
-        buildDraftPrompt: runtimeApi.buildDraftStagePrompt,
+        buildDecidePrompt: runtimeApi.buildDecideStagePrompt,
+        buildAnalyzePrompt: runtimeApi.buildAnalyzeStagePrompt,
+        buildCritiquePrompt: runtimeApi.buildCritiqueStagePrompt,
+        buildFinalizePrompt: runtimeApi.buildFinalizeStagePrompt,
         buildRenderPrompt: runtimeApi.buildRenderStagePrompt,
-        buildProofreadPrompt: runtimeApi.buildProofreadStagePrompt,
       });
       runControl.assertRunning(session);
       commitResult = runtimeApi.commitAiTaskCandidate({

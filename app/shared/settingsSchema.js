@@ -28,7 +28,7 @@
     'anthropicCacheTtl', 'jsonRequestMode', 'jsonResponseMode', 'thinkingLevel', 'localServerPreset', 'billing', 'generation',
   ]);
   const PROFILE_BILLING_KEYS = Object.freeze(['inputUsdPerMillion', 'cachedInputUsdPerMillion', 'cacheWriteUsdPerMillion', 'outputUsdPerMillion', 'profileBudgetUsd']);
-  const GENERATION_KEYS = Object.freeze(['depth', 'draftProfileId', 'renderProfileId', 'proofreadProfileId', 'taskOverrides']);
+  const GENERATION_KEYS = Object.freeze(['depth', 'reasoningProfileId', 'outputProfileId', 'critiqueProfileId', 'taskOverrides']);
   const TASK_OVERRIDE_KEYS = Object.freeze(['speech', 'vote', 'nightAction', 'privateConversation', 'resultImpression', 'memoConsolidate']);
 
   return Object.freeze({

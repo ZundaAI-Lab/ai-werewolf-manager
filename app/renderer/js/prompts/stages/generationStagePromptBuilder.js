@@ -1,27 +1,29 @@
 /**
- * 責務: 共通の構造草案・発言化契約と、深度4だけに後置する昼公開発言校正契約から、最小工程プロンプトを生成する。
+ * 責務: 深度2の判断・キャラ発言化、深度3/4の客観分析、深度4の批判的検証、深度3/4の最終回答から、責務を分離した最小プロンプトを生成する。
  * 変更ルール:
- * - 深度3と4のdraft・renderを同一実装に保ち、全game-data区画の値はpromptDataSerializerを正本としてJSON化・データ境界文字列を無害化し、通常昼発言のdraftでは解決済み非公開参考視点を直接生成と同じ文面で判断材料へ含め、ゲーム状態を書き換えず、他人の私有情報を追加せず、公開発言本文の意味を解析しない。
+ * - 深度2の判断は直接生成と同じ人物プロフィール・推理傾向・議論行動・非公開参考視点を判断材料に使うが、一人称・口調・語尾・口調例・呼称は使わない。深度3/4の客観分析と深度4の批判的検証は人物設定を使わず、役職・陣営・本人可視情報とゲーム規則だけを扱う。
  * - 処刑判断はgenerationGuidance.executionValuePolicyを正本として投票と最終巡の通常発言・優先回答へ同じ文面で適用し、voteのdecisionPatch具体化ガイダンスはvoteResponseGuidancePolicy.jsを正本として深度1/2と同じ優先項目を使用する。
- * - 構造草案では検証上任意の項目を原則出力と条件付き出力へ分離し、原則出力の生成機会を削らず、欠落だけをエラー条件へ昇格させない。能力結果を公開する草案ではabilityClaimsを構造化正本として維持し、同じ役職・対象・結果をpublicSpeechにも必ず明示させる。
- * - draftへ生公開イベントを渡さずgenerationStageSourceの公開履歴射影を使用し、空値を除去したminified JSONだけを掲載する。
+ * - 完成回答を生成する判断・最終回答では、検証上任意の項目を原則出力と条件付き出力へ分離し、原則出力の生成機会を削らず、欠落だけをエラー条件へ昇格させない。能力結果を公開する回答ではabilityClaimsを構造化正本として維持し、同じ役職・対象・結果をpublicSpeechにも必ず明示させる。
+ * - 判断・客観分析・批判的検証へ生公開イベントを渡さずgenerationStageSourceの公開履歴射影を使用し、空値を除去したminified JSONだけを掲載する。
  * - 各工程の中間区画は判断・表現・意味ロックだけを説明し、AI向け必須出力・原則出力、主JSON例、返却キー、文字数制約は各工程末尾の最終確認へ一度だけ集約する。heartVoiceは文数を指定せずmaxHeartVoiceLengthの文字数上限だけを提示する。
  * - 回答検証上のrequiredTopLevelKeysは原則出力項目を省く根拠にせず、recommendedTopLevelKeysと主JSON例へ検証任意項目の生成機会を維持する。
  * - 公開発言量の人間向けラベルや長さ区分は中間工程へ出さず、会話開始・序盤反応に意味がある追加指示だけroleTaskData.promptGuidanceから引き継ぐ。通常昼議論第1巡の初期役職構成由来ガイドはpublicState内の解釈補助として直接生成と同じ条件で引き継ぐ。墓場会話では生存中のdecisionと昼推理用characterReasoningを草案へ再投入せず、memoAddをプロンプト契約から外して秘密共有・答え合わせ・感想の会話目的を維持する。
  * - 内部UUIDは雪女の明示ID契約以外へ出さず表示名またはイベント番号へ変換する。
  * - renderではsourceTextを唯一の意味正本とし、話者・口調・呼称・意味ロックだけを渡して他人の公開発言本文や候補全体を渡さない。
- * - 校正ではpublicSpeech以外、生の公開イベント、実役職、未許可区画を出力しない。
+ * - 批判的検証は客観分析の事実誤認・対象取り違え・推論飛躍・陣営目標との不整合・見落としを自由記述で検査し、ゲーム上の確定候補は生成しない。Analyze/Critiqueの推奨出力量はgenerationIntermediateTextPolicyを正本とし、Finalizeは存在する参照区画だけを提示する。キャラ発言化は確定候補の意味を変更しない。
  */
 
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
 import { publicAbilityResultLabel } from '../../domain/policies/publicAbilityClaimPolicy.js';
+import { resolvePublicSpeechPromptMaxChars } from '../../domain/policies/publicSpeechLengthPolicy.js';
 import { formatAbilityClaimTiming } from '../../domain/policies/abilityClaimTimingPolicy.js';
 import { renderPriorityAnswerSemanticRules, renderPublicSpeechSemanticRules, renderVoteReevaluationRule, renderWolfAttackSemanticRules } from '../policies/taskInstructionPolicy.js';
 import { renderVoteDecisionPatchGuidance } from '../policies/voteResponseGuidancePolicy.js';
 import { renderInternalReasoningDirective } from '../templates/characterReasoningDirectiveTemplates.js';
 import { getDecisionPatchKeys } from '../response/responseContract.js';
 import { stringifyPromptData } from '../serialization/promptDataSerializer.js';
+import { generationIntermediateTextPolicy } from './generationIntermediateTextPolicy.js';
 
 function nonEmpty(value) {
   if (value === null || value === undefined) return false;
@@ -32,7 +34,7 @@ function nonEmpty(value) {
 
 function json(value, { compact = false } = {}) {
   // generation工程でも共通serializerを使い、game-data境界文字列を値としてのみ保持する。
-  // draftは転送量削減のためminifyする。
+  // 中間生成用データは転送量削減のためminifyする。
   return stringifyPromptData(value, { pretty: !compact });
 }
 
@@ -167,7 +169,7 @@ function sanitizePromptValue(source, value) {
 }
 
 
-function draftPublicState(source) {
+function stagePublicState(source) {
   return {
     alivePlayers: (source?.publicState?.alivePlayers ?? []).map((row) => String(row?.name ?? row?.playerName ?? '')),
     deadPlayers: (source?.publicState?.deadPlayers ?? []).map((row) => String(row?.name ?? row?.playerName ?? '')),
@@ -180,11 +182,12 @@ function draftPublicState(source) {
   };
 }
 
-function draftPrivateState(source) {
+function stagePrivateState(source) {
   const teammates = source?.privateState?.teammates ?? {};
   return {
     ownRole: sanitizePromptValue(source, source?.privateState?.ownRole ?? {}),
     ownAbilityResults: sanitizePromptValue(source, source?.privateState?.ownAbilityResults ?? []),
+    ownFactionStrategy: sanitizePromptValue(source, source?.privateState?.ownFactionStrategy ?? null),
     teammates: {
       knownWolves: (teammates.knownWolfIds ?? []).map((id) => displayPlayerName(source, id)),
       knownMadmen: (teammates.knownMadmanIds ?? []).map((id) => displayPlayerName(source, id)),
@@ -194,7 +197,7 @@ function draftPrivateState(source) {
   };
 }
 
-function draftRoleTaskData(source, taskType) {
+function stageRoleTaskData(source, taskType) {
   const roleTaskData = source?.roleTaskData ?? {};
   const result = sanitizePromptValue(source, roleTaskData);
   delete result.validTargetNames;
@@ -218,70 +221,6 @@ function compactCallNames(source) {
   })).filter((row) => row.targetName && row.preferred);
 }
 
-function buildProofreadSpeaker(source) {
-  const expression = source?.characterExpression ?? {};
-  return {
-    name: String(source?.currentMoment?.playerName ?? ''),
-    firstPerson: String(expression.firstPerson ?? ''),
-    genericSecondPerson: String(expression.genericSecondPerson ?? ''),
-    speakingStyle: String(expression.speakingStyle ?? ''),
-    defaultEndings: String(expression.defaultEndings ?? ''),
-    avoidedExpressions: String(expression.avoidedExpressions ?? ''),
-    callNames: compactCallNames(source),
-  };
-}
-
-function compactCandidateAbilityClaims(value) {
-  if (!Array.isArray(value)) return null;
-  return value.map((claim) => {
-    const common = {
-      intent: String(claim?.intent ?? ''),
-      selectionBasis: String(claim?.selectionBasis ?? ''),
-      evidenceRefs: [...(claim?.evidenceRefs ?? [])].map(Number).filter(Number.isInteger),
-      selectionReasonAtTime: String(claim?.selectionReasonAtTime ?? ''),
-    };
-    if (common.intent === 'truthful') {
-      return {
-        ...common,
-        sourceRef: Number(claim?.sourceRef ?? 0),
-      };
-    }
-    return {
-      ...common,
-      roleId: String(claim?.roleId ?? ''),
-      actionDay: Number(claim?.actionDay ?? 0),
-      actionPhase: String(claim?.actionPhase ?? ''),
-      availableDay: Number(claim?.availableDay ?? 0),
-      availablePhase: String(claim?.availablePhase ?? ''),
-      target: String(claim?.target ?? ''),
-      result: String(claim?.result ?? ''),
-    };
-  });
-}
-
-function buildLockedMeaning(candidateObject) {
-  const interaction = candidateObject?.speechInteraction ?? {};
-  const decisionPatch = candidateObject?.decisionPatch ?? {};
-  return {
-    questionTargets: [...(interaction.questionTargets ?? [])].map(String),
-    answerToRefs: [...(interaction.answerToRefs ?? [])].map(Number).filter(Number.isInteger),
-    correctedSpeechRefs: [...(decisionPatch.correctedSpeechRefs ?? [])].map(Number).filter(Number.isInteger),
-    coOperation: Object.hasOwn(candidateObject ?? {}, 'coOperation')
-      ? structuredClone(candidateObject.coOperation)
-      : null,
-    abilityClaims: Object.hasOwn(candidateObject ?? {}, 'abilityClaims')
-      ? compactCandidateAbilityClaims(candidateObject.abilityClaims)
-      : null,
-    decisionStance: {
-      suspects: [...(decisionPatch.suspects ?? [])].map(String),
-      executionCandidates: [...(decisionPatch.executionCandidates ?? [])].map(String),
-      intendedVote: Object.hasOwn(decisionPatch, 'intendedVote') ? decisionPatch.intendedVote : undefined,
-      assessmentLevel: String(decisionPatch.assessmentLevel ?? ''),
-      uncertainty: String(decisionPatch.uncertainty ?? ''),
-    },
-  };
-}
-
 function formatActiveClaims(source) {
   return (source?.publicState?.activeClaims ?? []).map((claim) => {
     const actor = displayPlayerName(source, claim?.actorId);
@@ -299,81 +238,6 @@ function formatPublishedAbilityClaims(source) {
   });
 }
 
-function buildProofreadPublicSituation(source) {
-  return {
-    day: Number(source?.currentMoment?.day ?? 0),
-    phase: String(source?.currentMoment?.phase ?? ''),
-    aliveNames: (source?.publicState?.alivePlayers ?? []).map((row) => String(row?.name ?? row?.playerName ?? row?.id ?? '')),
-    deadNames: (source?.publicState?.deadPlayers ?? []).map((row) => String(row?.name ?? row?.playerName ?? row?.id ?? '')),
-    activeClaims: formatActiveClaims(source),
-    publishedAbilityClaims: formatPublishedAbilityClaims(source),
-  };
-}
-
-function effectivePublicClaim(source, candidateObject) {
-  const playerId = String(source?.currentMoment?.playerId ?? '');
-  const existing = (source?.publicState?.activeClaims ?? []).find((claim) => String(claim?.actorId ?? '') === playerId) ?? null;
-  const operation = candidateObject?.coOperation ?? null;
-  const action = String(operation?.action ?? 'none');
-  if (['declare', 'change'].includes(action)) {
-    return { roleId: String(operation?.roleId ?? ''), day: Number(source?.currentMoment?.day ?? 0) };
-  }
-  if (action === 'withdraw') return null;
-  return existing ? { roleId: String(existing.roleId ?? ''), day: Number(existing.day ?? 0) } : null;
-}
-
-function compactClaimHistoryItem(source, claim) {
-  return {
-    timing: formatAbilityClaimTiming(claim),
-    actionDay: Number(claim?.actionDay ?? 0),
-    availableDay: Number(claim?.availableDay ?? 0),
-    targetName: claim?.targetId
-      ? displayPlayerName(source, claim.targetId)
-      : String(claim?.target ?? ''),
-    result: publicAbilityResultLabel(claim?.result, claim?.claimedRoleId ?? claim?.roleId),
-    selectionReasonAtTime: String(claim?.selectionReasonAtTime ?? ''),
-  };
-}
-
-function buildClaimConsistency(source, candidateObject) {
-  const ownRole = source?.privateState?.ownRole ?? {};
-  const effectiveClaim = effectivePublicClaim(source, candidateObject);
-  const isFakeWolfTeamClaim = String(ownRole.team ?? '') === 'wolf'
-    && Boolean(effectiveClaim?.roleId)
-    && String(effectiveClaim.roleId) !== String(ownRole.roleId ?? '');
-  if (!isFakeWolfTeamClaim) {
-    return { checkRequired: false, claimedRole: null, claimStartedDay: null, publishedAbilityClaims: [] };
-  }
-  const playerId = String(source?.currentMoment?.playerId ?? '');
-  const roleId = String(effectiveClaim.roleId);
-  const prior = (source?.publicState?.publicAbilityClaims ?? [])
-    .filter((claim) => String(claim?.actorId ?? '') === playerId && String(claim?.claimedRoleId ?? claim?.roleId ?? '') === roleId)
-    .map((claim) => compactClaimHistoryItem(source, claim));
-  const current = Array.isArray(candidateObject?.abilityClaims)
-    ? candidateObject.abilityClaims
-      .filter((claim) => String(claim?.roleId ?? '') === roleId)
-      .map((claim) => compactClaimHistoryItem(source, claim))
-    : [];
-  return {
-    checkRequired: true,
-    claimedRole: roleLabel(roleId),
-    claimStartedDay: Number(effectiveClaim.day ?? source?.currentMoment?.day ?? 0),
-    publishedAbilityClaims: [...prior, ...current],
-  };
-}
-
-export function buildSpeechProofreadInput({ taskArtifact, candidateObject }) {
-  if (!(isNormalSpeechTask(taskArtifact?.taskType) || taskArtifact?.taskType === 'priority-answer')) throw new RangeError('校正プロンプトは昼の公開発言だけ（通常発言・回答優先発言）を対象にします。');
-  const source = taskArtifact.stageSource;
-  return {
-    sourceText: String(candidateObject?.publicSpeech ?? ''),
-    speaker: buildProofreadSpeaker(source),
-    lockedMeaning: sanitizePromptValue(source, buildLockedMeaning(candidateObject)),
-    publicSituation: buildProofreadPublicSituation(source),
-    claimConsistency: buildClaimConsistency(source, candidateObject),
-  };
-}
-
 function publicSpeechGuidance(source) {
   return String(source?.roleTaskData?.promptGuidance?.publicSpeechGuidance ?? '').trim();
 }
@@ -382,13 +246,14 @@ function publicSpeechOutputConstraint(source, taskType = 'speech') {
   const policy = source?.promptPolicies?.publicSpeechLengthPolicy ?? {};
   const targetChars = Number(policy.targetChars ?? 0);
   if (!Number.isFinite(targetChars) || targetChars <= 0) return '';
-  const maxChars = Number(source?.promptPolicies?.outputLimits?.maxPublicSpeechLength ?? 450);
+  const absoluteMaxChars = Number(source?.promptPolicies?.outputLimits?.maxPublicSpeechLength ?? 450);
+  const promptMaxChars = resolvePublicSpeechPromptMaxChars(targetChars, { absoluteMaxChars });
   const claimTargetChars = Number(policy.claimOverride?.targetChars ?? 0);
   const claimOverride = Number.isFinite(claimTargetChars) && claimTargetChars > 0 && claimTargetChars !== targetChars
-    ? `（CO・能力履歴公開時は約${claimTargetChars}文字）`
+    ? `（CO・能力履歴公開時は目安約${claimTargetChars}文字、上限約${resolvePublicSpeechPromptMaxChars(claimTargetChars, { absoluteMaxChars })}文字）`
     : '';
   const label = taskType === 'priority-answer' ? '公開回答' : '公開発言';
-  return `${label}: ${maxChars}文字以内。目安は約${targetChars}文字${claimOverride}`;
+  return `${label}: 目安は約${targetChars}文字、上限は約${promptMaxChars}文字${claimOverride}`;
 }
 
 function stageOutputConstraints(source, { taskType = '', fields = [] } = {}) {
@@ -405,7 +270,7 @@ function stageOutputConstraints(source, { taskType = '', fields = [] } = {}) {
   return rows.join('、');
 }
 
-function draftContractView(contract, recommendedKeys, conditionalKeys) {
+function candidateContractView(contract, recommendedKeys, conditionalKeys) {
   const conditionalExamples = structuredClone(contract?.conditionalExamples ?? {});
   if (conditionalKeys.includes('speechInteraction') && Object.hasOwn(contract?.completeExample ?? {}, 'speechInteraction')) {
     conditionalExamples.speechInteraction = structuredClone(contract.completeExample.speechInteraction);
@@ -420,7 +285,7 @@ function draftContractView(contract, recommendedKeys, conditionalKeys) {
   };
 }
 
-function draftExample(contract, taskType, recommendedKeys, conditionalKeys) {
+function candidateExample(contract, taskType, recommendedKeys, conditionalKeys) {
   const blocked = new Set(conditionalKeys);
   const complete = contract?.completeExample ?? {};
   const keys = [];
@@ -433,9 +298,9 @@ function draftExample(contract, taskType, recommendedKeys, conditionalKeys) {
   return Object.fromEntries(keys.map((key) => [key, structuredClone(complete[key])]));
 }
 
-function draftFinalConfirmation(source, taskType, contract, recommendedKeys, conditionalKeys) {
+function candidateFinalConfirmation(source, taskType, contract, recommendedKeys, conditionalKeys) {
   const requiredKeys = [...(contract?.requiredTopLevelKeys ?? [])];
-  const example = draftExample(contract, taskType, recommendedKeys, conditionalKeys);
+  const example = candidateExample(contract, taskType, recommendedKeys, conditionalKeys);
   const rules = [`今回の必須出力: ${requiredKeys.join(' / ') || 'なし'}。`];
   const constraints = stageOutputConstraints(source, {
     taskType,
@@ -459,11 +324,13 @@ ${JSON.stringify(example)}${constraints ? `
 function characterSurface(source) {
   const value = source?.characterExpression ?? {};
   return {
+    profile: value.profile,
     firstPerson: value.firstPerson,
     genericSecondPerson: value.genericSecondPerson,
     speakingStyle: value.speakingStyle,
     defaultEndings: value.defaultEndings,
     avoidedExpressions: value.avoidedExpressions,
+    speechExamples: String(value.speechExamples ?? '').split(/\r?\n/u).map((line) => line.trim()).filter(Boolean),
   };
 }
 
@@ -555,7 +422,7 @@ function selectObjectKeys(source, keys) {
   return Object.fromEntries(keys.filter((key) => Object.hasOwn(source ?? {}, key)).map((key) => [key, structuredClone(source[key])]));
 }
 
-function draftHistories(source, taskType) {
+function stageHistories(source, taskType) {
   const histories = source?.histories ?? {};
   if (taskType === 'wolf-conversation') {
     return compactStageValue(sanitizePromptValue(source, selectObjectKeys(histories, ['recentWolfConversation', 'existingInternalMemo']))) ?? {};
@@ -580,18 +447,18 @@ function draftHistories(source, taskType) {
 }
 
 
-function draftTaskData(taskArtifact, policy) {
+function stageTaskData(taskArtifact, policy) {
   const source = taskArtifact.stageSource;
   const sections = new Set(policy.contextSections ?? []);
   const result = {};
   if (sections.has('currentMoment')) result.currentMoment = promptMoment(source);
-  if (sections.has('publicState')) result.publicState = draftPublicState(source);
+  if (sections.has('publicState')) result.publicState = stagePublicState(source);
   if (sections.has('recentOutcomeSummary') && !sections.has('publicState')) result.recentOutcomeSummary = sanitizePromptValue(source, source.publicState?.recentOutcomeSummary ?? []);
   if (sections.has('resultSummary')) result.resultSummary = sanitizePromptValue(source, source.roleTaskData?.taskSpecific?.resultImpression ?? null);
-  if (sections.has('privateState')) result.privateState = draftPrivateState(source);
-  if (sections.has('roleTaskData')) result.roleTaskData = draftRoleTaskData(source, taskArtifact.taskType);
+  if (sections.has('privateState')) result.privateState = stagePrivateState(source);
+  if (sections.has('roleTaskData')) result.roleTaskData = stageRoleTaskData(source, taskArtifact.taskType);
   if (sections.has('histories') || sections.has('recentWolfConversation') || sections.has('recentMasonConversation') || sections.has('recentGraveyardConversation') || sections.has('pastGraveyardConversations') || sections.has('existingInternalMemo')) {
-    result.histories = draftHistories(source, taskArtifact.taskType);
+    result.histories = stageHistories(source, taskArtifact.taskType);
   }
   Object.keys(result).forEach((key) => { if (!nonEmpty(result[key])) delete result[key]; });
   return compactStageValue(result) ?? {};
@@ -667,9 +534,9 @@ function purposeInstructions(fieldJobs, stageId) {
   const purposes = new Set(fieldJobs.map((job) => job.purpose));
   const lines = [];
   if (purposes.has('public-dialogue')) {
-    lines.push('- public-dialogueはsourceTextと同じ話者・対象・結論・時系列を維持し、一人称・呼称・話し方・語尾・文法だけを整えてください。');
+    lines.push('- public-dialogueはsourceTextと同じ話者・対象・結論・時系列を維持し、一人称、呼称、語彙、語順、文の分割・統合、接続表現、相槌、語尾などを自然に調整してください。');
     lines.push('- sourceTextにない新しい根拠、推理、質問、投票意向、CO、能力結果を追加せず、内容を削除または反転しないでください。');
-    lines.push('- 安全に表現だけを変更できない場合はsourceTextをそのまま返してください。');
+    lines.push('- 単に特徴的な語尾を付け足すだけでなく、characterSurfaceを参考に文章全体を自然な話し方へ整えてください。');
   }
   if (purposes.has('private-dialogue')) lines.push('- private-dialogueは指定参加者だけの自然な秘密会話にし、公開説明へ変えないでください。');
   if (purposes.has('inner-voice')) lines.push('- inner-voiceは公開発言調へ変えず、その局面固有の短い内心として整えてください。');
@@ -690,19 +557,10 @@ function promptContractForDraft(contract, taskType) {
   return result;
 }
 
-export function buildDraftStagePrompt({ taskArtifact, policy }) {
-  if (!policy?.applicable) throw new RangeError('構造草案ポリシーが適用不能です。');
+function responseContractPromptParts(taskArtifact, policy) {
+  if (!policy?.applicable) throw new RangeError('回答生成ポリシーが適用不能です。');
   const source = taskArtifact.stageSource;
-  const taskData = draftTaskData(taskArtifact, policy);
-  const reasoningCharacter = policy.contextSections?.includes('characterReasoning')
-    ? structuredClone(source.characterReasoning ?? {})
-    : {};
-  const isFirstDay = Number(source?.currentMoment?.day ?? 0) === 1;
-  const firstDaySparseEvidence = isFirstDay
-    && (source?.publicState?.publicAbilityClaims ?? []).filter((claim) => claim.status !== 'voided').length <= 1;
-  const internalReasoningDirective = isNormalSpeechTask(taskArtifact.taskType)
-    ? renderInternalReasoningDirective(source.internalReasoningDirective ?? null, { isFirstDay })
-    : '';
+  const taskData = stageTaskData(taskArtifact, policy);
   const contract = promptContractForDraft(source.responseContract ?? {}, taskArtifact.taskType);
   const allowedKeys = new Set(contract.allowedTopLevelKeys ?? []);
   const conditionalKeys = [...new Set([
@@ -712,7 +570,7 @@ export function buildDraftStagePrompt({ taskArtifact, policy }) {
   const recommendedKeys = (contract.optionalTopLevelKeys ?? [])
     .filter((key) => !conditionalKeys.includes(key))
     .filter((key) => !(isNormalSpeechTask(taskArtifact.taskType) && key === 'publicSpeech'));
-  const contractView = draftContractView(contract, recommendedKeys, conditionalKeys);
+  const contractView = candidateContractView(contract, recommendedKeys, conditionalKeys);
   const recommendedRule = recommendedKeys.length
     ? `\n- response-contract.recommendedTopLevelKeysの ${recommendedKeys.join(' / ')} は回答検証上は任意ですが、現在の入力から意味のある内容を生成できる限り原則出力してください。情報不足または該当なしで適切な内容を生成できない場合に限り省略でき、欠落だけでエラーにはなりません。`
     : '';
@@ -723,17 +581,24 @@ export function buildDraftStagePrompt({ taskArtifact, policy }) {
     ? '\n- heartVoiceは原則出力します。公開本文へ出していない局面固有の本音・迷い・警戒を記入し、現在の入力から別内容を適切に生成できない場合だけ省略してください。'
     : '';
   const abilityClaimRule = allowedKeys.has('abilityClaims')
-    ? '\n- abilityClaimsを出力して能力結果を公開する場合は、同じ公開主張の役職・対象・結果をpublicSpeechにも必ず自然な台詞として含めてください。abilityClaimsだけに能力結果を置いてpublicSpeechから省略してはいけません。本人選択能力のselectionBasis・evidenceRefs・selectionReasonAtTimeは選択時点の根拠として記録し、後発情報で変更しないでください。'
+    ? '\n- abilityClaimsを出力して能力結果を公開する場合は、同じ公開主張の役職・対象・結果をpublicSpeechにも必ず明示してください。abilityClaimsだけに能力結果を置いてpublicSpeechから省略してはいけません。本人選択能力のselectionBasis・evidenceRefs・selectionReasonAtTimeは選択時点の根拠として記録し、後発情報で変更しないでください。'
     : '';
   const rationaleRule = allowedKeys.has('rationale')
     ? `\n- rationaleは結果判明前の具体的な選択理由を${taskArtifact.taskType === 'freeze' ? '1～3文' : '1～2文'}で簡潔に記録してください。`
     : '';
   const privateTeamStrategyRule = (isNormalSpeechTask(taskArtifact.taskType) || taskArtifact.taskType === 'priority-answer')
     && nonEmpty(taskData?.histories?.privateTeamStrategy)
-    ? '\n- histories.privateTeamStrategyは本人限定の判断材料です。文面をpublicSpeechへ引用・転用せず、公開発言は公開情報だけでも成立する表現にしてください。'
+    ? '\n- histories.privateTeamStrategyは本人限定の判断材料です。文面をpublicSpeechへ引用・転用せず、公開発言は公開情報だけでも成立する内容にしてください。'
+    : '';
+  const ownFactionStrategyRule = (isNormalSpeechTask(taskArtifact.taskType) || taskArtifact.taskType === 'priority-answer')
+    && nonEmpty(taskData?.privateState?.ownFactionStrategy)
+    ? '\n- privateState.ownFactionStrategyは本人限定の現在戦術です。判断材料として使用し、戦術内部の文面や非公開意図をpublicSpeechへそのまま露出しないでください。'
     : '';
   const executionValuePolicy = String(source?.roleTaskData?.promptGuidance?.executionValuePolicy ?? '').trim();
   const executionFactionPolicy = String(source?.roleTaskData?.promptGuidance?.executionFactionPolicy ?? '').trim();
+  const isFirstDay = Number(source?.currentMoment?.day ?? 0) === 1;
+  const firstDaySparseEvidence = isFirstDay
+    && (source?.publicState?.publicAbilityClaims ?? []).filter((claim) => claim.status !== 'voided').length <= 1;
   const speechRules = isNormalSpeechTask(taskArtifact.taskType)
     ? `
 ${renderPublicSpeechSemanticRules({ firstDaySparseEvidence })}
@@ -760,28 +625,70 @@ ${renderVoteDecisionPatchGuidance(getDecisionPatchKeys('vote'))}`
 - roleTaskData.promptGuidance.graveyardConversationGuidanceがある場合は、その参加状況に応じた会話目的を優先してください。`
           : taskArtifact.taskType === 'wolf-attack'
             ? `
-${renderWolfAttackSemanticRules()}`
+${renderWolfAttackSemanticRules({ roleComposition: source?.promptPolicies?.roleComposition ?? {} })}`
             : '';
-  const finalConfirmation = draftFinalConfirmation(
+  return {
     source,
-    taskArtifact.taskType,
+    taskData,
     contract,
+    contractView,
     recommendedKeys,
     conditionalKeys,
+    recommendedRule,
+    conditionalRule,
+    heartVoiceRule,
+    abilityClaimRule,
+    rationaleRule,
+    privateTeamStrategyRule,
+    ownFactionStrategyRule,
+    speechRules,
+    isFirstDay,
+  };
+}
+
+function responseContractRules(parts, taskArtifact) {
+  const finalConfirmation = candidateFinalConfirmation(
+    parts.source,
+    taskArtifact.taskType,
+    parts.contract,
+    parts.recommendedKeys,
+    parts.conditionalKeys,
   );
-  const draftLead = taskArtifact.taskType === 'graveyard-conversation'
-    ? '墓場で共有する生前の秘密、答え合わせ、感想を整理してください。\n文章表現の完成度より、誰が何を実際に知っているかと、墓場で共有済みかどうかの整合を優先してください。'
-    : 'ゲーム判断と構造化情報を確定してください。\n文章表現の完成度より、対象、結果、時系列、公開情報との整合を優先してください。';
-  return `# 構造草案工程
-
-${draftLead}
-
-タスク固有情報:
-[game-data:draft-task-data]
-${json(taskData, { compact: true })}
+  return `応答契約:
+[game-data:response-contract]
+${json(parts.contractView, { compact: true })}
 [/game-data]
 
-${nonEmpty(reasoningCharacter) ? `判断上の人物設定:
+- response-contractの許可項目・原則出力・条件付き出力の区分と項目構造を維持してください。
+- 項目を出す場合は具体値を入れ、空値や空配列を穴埋めとして出力しないでください。${parts.recommendedRule}${parts.conditionalRule}${parts.heartVoiceRule}${parts.abilityClaimRule}${parts.rationaleRule}${parts.privateTeamStrategyRule}${parts.ownFactionStrategyRule}${parts.speechRules}
+
+${finalConfirmation}`;
+}
+
+export function buildDecideStagePrompt({ taskArtifact, policy }) {
+  const parts = responseContractPromptParts(taskArtifact, policy);
+  const reasoningCharacter = policy.contextSections?.includes('characterReasoning')
+    ? structuredClone(parts.source.characterReasoning ?? {})
+    : {};
+  const internalReasoningDirective = isNormalSpeechTask(taskArtifact.taskType)
+    ? renderInternalReasoningDirective(parts.source.internalReasoningDirective ?? null, { isFirstDay: parts.isFirstDay })
+    : '';
+  const graveyardLead = taskArtifact.taskType === 'graveyard-conversation'
+    ? '現在利用できる情報と人物の判断傾向を踏まえ、生前の秘密、答え合わせ、感想を中心に内容を決めてください。'
+    : '現在利用できるゲーム情報、本人だけが知る情報、これまでの判断状態、陣営目標を踏まえて、今回の行動と発言内容を決定してください。';
+  return `# 行動と発言内容の決定
+
+${graveyardLead}
+人物のreasoningProfileやdiscussionBehaviorは、何を重視し、どのように疑い、どのように結論を出すかへ自然に反映してください。
+publicSpeech、wolfMessage、rationaleなどの文章は、意味が明確で簡潔な文章にしてください。
+行動対象、投票先、能力使用、CO内容、能力結果の主張、decisionPatch、factionStrategy、発言で伝える主張と根拠を互いに整合させてください。
+
+現在の情報:
+[game-data:decision-input]
+${json(parts.taskData, { compact: true })}
+[/game-data]
+
+${nonEmpty(reasoningCharacter) ? `人物の判断傾向:
 [game-data:reasoning-character]
 ${json(compactStageValue(reasoningCharacter) ?? {}, { compact: true })}
 [/game-data]
@@ -789,32 +696,139 @@ ${json(compactStageValue(reasoningCharacter) ?? {}, { compact: true })}
 ` : ''}${internalReasoningDirective ? `非公開の参考視点:
 ${internalReasoningDirective}
 
-` : ''}応答契約:
-[game-data:response-contract]
-${json(contractView, { compact: true })}
-[/game-data]
-
-- response-contractの許可項目・原則出力・条件付き出力の区分と項目構造を維持してください。
-- 文章フィールドは、意味が正確な簡潔な草案で構いません。
-- 項目を出す場合は具体値を入れ、空値や空配列を穴埋めとして出力しないでください。${recommendedRule}${conditionalRule}${heartVoiceRule}${abilityClaimRule}${rationaleRule}${privateTeamStrategyRule}${speechRules}
-
-${finalConfirmation}`;
+` : ''}${responseContractRules(parts, taskArtifact)}`;
 }
 
-function buildTextStagePrompt({ stageId, taskArtifact, candidateObject, policy }) {
+export function buildAnalyzeStagePrompt({ taskArtifact, policy }) {
+  if (!policy?.applicable) throw new RangeError('分析用ポリシーが適用不能です。');
+  const source = taskArtifact.stageSource;
+  const taskData = stageTaskData(taskArtifact, policy);
+  return `# 状況分析
+
+現在利用できるゲーム情報から状況を分析してください。
+
+必要に応じて次の観点を整理してください。
+- 現時点で確定している事実
+- 各主要候補を支持する材料と反証する材料
+- 他プレイヤーの主張の整合性
+- 現在取り得る主要な選択肢
+- 各選択肢の利点とリスク
+- 見落としている可能性のある別仮説
+- 今後得られる情報
+- 自陣営の勝利条件から見た利害
+
+多数の人物が同じ意見を述べていること自体を、その意見が正しい根拠にはしないでください。
+公開情報と本人だけが知る情報を区別し、人名、能力対象、投票先、白黒判定を正確に扱ってください。
+重要度の高い内容から箇条書きで整理し、最大${generationIntermediateTextPolicy('analyze').promptMaxItems}項目、全体${generationIntermediateTextPolicy('analyze').promptMaxChars}文字以内にまとめてください。
+
+現在の情報:
+[game-data:analysis-input]
+${json(taskData, { compact: true })}
+[/game-data]
+
+自由記述で回答してください。`;
+}
+
+export function buildCritiqueStagePrompt({ taskArtifact, policy, analysisText }) {
+  if (!policy?.applicable) throw new RangeError('検証用ポリシーが適用不能です。');
+  const taskData = stageTaskData(taskArtifact, policy);
+  return `# 分析内容の検証
+
+以下の分析内容を、現在のゲーム情報と照合して検証してください。
+
+特に次を確認してください。
+- ゲーム上の事実の取り違え
+- 人物名、能力対象、投票先、白黒判定の混同
+- 公開情報と本人限定情報の混同
+- 根拠から結論への論理的飛躍
+- 矛盾、虚偽、説明不足が誰の発言・行動に存在する問題かを特定し、その問題を別の人物の疑い材料へ転嫁していないか
+- 多数意見への過度な依存
+- 別仮説や有力候補の見落とし
+- 情報取得価値と誤判断コストの比較
+- 陣営目標との不整合
+
+妥当な部分は無理に否定せず、そのまま妥当と評価してください。
+問題がある場合は、どの部分が問題で、どのように解釈し直すべきかを具体的に示してください。
+重要な問題から箇条書きで整理し、最大${generationIntermediateTextPolicy('critique').promptMaxItems}項目、全体${generationIntermediateTextPolicy('critique').promptMaxChars}文字以内にまとめてください。
+
+現在の情報:
+[game-data:critique-input]
+${json(taskData, { compact: true })}
+[/game-data]
+
+分析内容:
+[game-data:analysis-text]
+${json({ text: String(analysisText ?? '') }, { compact: true })}
+[/game-data]
+
+自由記述で回答してください。`;
+}
+
+export function buildFinalizeStagePrompt({ taskArtifact, policy, analysisText, critiqueText = '' }) {
+  const parts = responseContractPromptParts(taskArtifact, policy);
+  const reasoningCharacter = policy.contextSections?.includes('characterReasoning')
+    ? structuredClone(parts.source.characterReasoning ?? {})
+    : {};
+  const expressionCharacter = structuredClone(parts.source.characterExpression ?? {});
+  const objectiveAnalysis = String(analysisText ?? '').trim();
+  const analysisCritique = String(critiqueText ?? '').trim();
+  const references = {
+    ...(objectiveAnalysis ? { objectiveAnalysis } : {}),
+    ...(analysisCritique ? { analysisCritique } : {}),
+  };
+  const hasAnalysis = Boolean(objectiveAnalysis);
+  const hasCritique = Boolean(analysisCritique);
+  const referenceLead = hasAnalysis && hasCritique
+    ? '現在のゲーム情報と以下の分析内容・検証内容を参考に、今回の行動と発言を決定してください。'
+    : hasAnalysis
+      ? '現在のゲーム情報と以下の分析内容を参考に、今回の行動と発言を決定してください。'
+      : hasCritique
+        ? '現在のゲーム情報と以下の検証内容を参考に、今回の行動と発言を決定してください。'
+        : '現在のゲーム情報から、今回の行動と発言を決定してください。';
+  const referenceCheck = hasAnalysis && hasCritique
+    ? '分析内容と検証内容はゲーム情報と照合し、事実誤認や対象の取り違えがあれば引き継がないでください。'
+    : hasAnalysis
+      ? '分析内容はゲーム情報と照合し、事実誤認や対象の取り違えがあれば引き継がないでください。'
+      : hasCritique
+        ? '検証内容はゲーム情報と照合し、事実誤認や対象の取り違えがあれば引き継がないでください。'
+        : '';
+  const referenceBlock = Object.keys(references).length
+    ? `\n分析資料:\n[game-data:analysis-reference]\n${json(references, { compact: true })}\n[/game-data]\n`
+    : '';
+  return `# 回答作成
+
+${referenceLead}
+人物のreasoningProfileやdiscussionBehaviorを判断へ自然に反映してください。
+${referenceCheck ? `${referenceCheck}\n` : ''}行動、投票先、能力対象、CO内容、能力結果の主張、decisionPatch、factionStrategyを整合させてください。
+publicSpeechなどの文章は人物設定に従い、その人物らしい自然な発言にしてください。
+
+現在の情報:
+[game-data:finalize-input]
+${json(parts.taskData, { compact: true })}
+[/game-data]
+${referenceBlock}
+人物の判断傾向:
+[game-data:reasoning-character]
+${json(compactStageValue(reasoningCharacter) ?? {}, { compact: true })}
+[/game-data]
+
+人物の表現設定:
+[game-data:character-expression]
+${json(compactStageValue(sanitizePromptValue(parts.source, expressionCharacter)) ?? {}, { compact: true })}
+[/game-data]
+
+${responseContractRules(parts, taskArtifact)}`;
+}
+
+function buildTextStagePrompt({ taskArtifact, candidateObject, policy }) {
   const fieldJobs = buildStageFieldJobs({ taskArtifact, candidateObject, policy });
-  const title = stageId === 'proofread' ? '# 最終校正工程' : '# 発言化工程';
-  const lead = stageId === 'proofread'
-    ? '判断を再実行せず、各fieldJobの文章をその場で完成稿へ校正してください。'
-    : 'sourceTextが意味・話者・対象・結論・時系列の唯一の正本です。各fieldJob内の情報だけを使い、同じ内容のまま表現だけを完成稿へ整えてください。';
-  const unchanged = stageId === 'proofread' ? '\n- 変更が不要でも、対象キーは元の文章をそのまま返してください。' : '';
   const constraints = stageOutputConstraints(taskArtifact.stageSource, {
     taskType: taskArtifact.taskType,
     fields: policy.targetTextFields,
   });
-  return `${title}
+  return `# キャラクター発言化
 
-${lead}
+以下の文章の意味、判断、事実関係を保ったまま、指定された人物の自然な発言として書き換えてください。
 
 今回の作業:
 [game-data:field-jobs]
@@ -825,8 +839,8 @@ ${json(fieldJobs)}
 - 指定されていないキーは禁止です。
 - semanticLocksを維持し、fieldJobにない事実・判断・情報を追加または推測しないでください。
 - 他人の発言を回答として選ばず、context内の文章をコピーしないでください。
-- 話者、対象、肯定・否定、評価の強さ、CO、能力結果、質問関係、投票意向を変更しないでください。${unchanged}
-${purposeInstructions(fieldJobs, stageId)}
+- 話者、対象、肯定・否定、評価の強さ、CO、能力結果、質問関係、投票意向を変更しないでください。
+${purposeInstructions(fieldJobs, 'render')}
 
 ## 最終確認
 
@@ -843,51 +857,5 @@ ${JSON.stringify(exactTextPatchExample(policy.targetTextFields))}${constraints ?
 }
 
 export function buildRenderStagePrompt({ taskArtifact, candidateObject, policy }) {
-  return buildTextStagePrompt({ stageId: 'render', taskArtifact, candidateObject, policy });
+  return buildTextStagePrompt({ taskArtifact, candidateObject, policy });
 }
-
-export function buildProofreadStagePrompt({ taskArtifact, candidateObject, policy }) {
-  if (!(isNormalSpeechTask(taskArtifact?.taskType) || taskArtifact?.taskType === 'priority-answer')) throw new RangeError('校正プロンプトは昼の公開発言だけ（通常発言・回答優先発言）を対象にします。');
-  if (!policy?.applicable || policy.targetTextFields?.length !== 1 || policy.targetTextFields[0] !== 'publicSpeech') {
-    throw new RangeError('校正対象はpublicSpeechだけです。');
-  }
-  const input = buildSpeechProofreadInput({ taskArtifact, candidateObject });
-  const claimSection = input.claimConsistency.checkRequired ? `
-## 騙りCO整合性
-
-この話者は公開上「${input.claimConsistency.claimedRole}」をCOしています。
-公開情報だけを知るその役職者本人として自然か、公開済みの対象・結果・選択理由・時点・過去COとの整合を確認してください。騙りや人狼であることは漏らさず、安全に直せない場合は原文を維持してください。
-` : '';
-  const constraints = stageOutputConstraints(taskArtifact.stageSource, {
-    taskType: taskArtifact.taskType,
-    fields: ['publicSpeech'],
-  });
-  return `# 昼議論・最終校正
-
-意味・対象・評価の強さ・CO・能力結果・質問関係・訂正対象を変更せず、公開文章だけを完成稿へ校正してください。
-
-- 文法、助詞、語順、一人称、呼称、口調、語尾、会話接続、重複を整えてください。
-- 発言時点の時系列、生存・死亡・処刑・襲撃、公開CO・公開能力結果と整合させてください。
-- 新しい事実、根拠、推理、質問、誘導、非公開情報を追加せず、内容を水増ししないでください。
-- 意味が変わる可能性がある場合は原文を維持してください。
-${claimSection}
-[game-data:proofread-input]
-${json(input)}
-[/game-data]
-
-- 変更が不要な場合は原文をそのまま返してください。
-
-## 最終確認
-
-単一JSONオブジェクトだけを返してください。
-textPatch以外のトップレベルキー、説明、批評、コードフェンスは禁止です。
-
-今回返すキー: publicSpeech。
-
-### 今回のJSON例
-
-${JSON.stringify({ textPatch: { publicSpeech: '校正後の完成文章' } })}${constraints ? `
-
-出力制約: ${constraints}` : ''}`;
-}
-

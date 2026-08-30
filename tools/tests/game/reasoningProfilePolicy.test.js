@@ -1,35 +1,41 @@
 /**
- * 責務: 推理・議論傾向の選択肢と内部参考視点ポリシーの境界が一致していることを確認する。
- * 変更ルール: キャラクター個別データや自然言語表現を固定せず、選択肢集合、参考視点の選択条件、質問・対立傾向との責務分離だけを検証する。
+ * 責務: 推理・議論傾向から内部参考視点を解決する現行ポリシーと、質問・対立傾向との責務分離を確認する。
+ * 変更ルール: 過去の選択肢不存在や自然言語表現を固定せず、現在利用する参考視点の選択条件だけを検証する。
  */
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  DEFAULT_REASONING_PROFILE,
-  REASONING_PROFILE_OPTION_LABELS,
-} from '../../../app/renderer/js/config/constants.js';
+import { DEFAULT_REASONING_PROFILE } from '../../../app/renderer/js/config/constants.js';
 
 import { resolveInternalReasoningDirective } from '../../../app/renderer/js/prompts/policies/characterReasoningDirector.js';
+import { renderInternalReasoningDirective } from '../../../app/renderer/js/prompts/templates/characterReasoningDirectiveTemplates.js';
+import { inspectPromptDataBlocks } from '../../../app/renderer/js/prompts/serialization/promptDataSerializer.js';
 
 
 function profileWith(evidenceFocus) {
   return { ...DEFAULT_REASONING_PROFILE, evidenceFocus };
 }
 
-test('evidenceFocusは人物由来の6種類だけを公開し旧人狼専門項目を残さない', () => {
-  assert.deepEqual(Object.keys(REASONING_PROFILE_OPTION_LABELS.evidenceFocus), [
-    'balanced',
-    'response',
-    'chronology',
-    'consistency',
-    'commitment',
-    'social-reaction',
-  ]);
-  assert.equal(Object.hasOwn(REASONING_PROFILE_OPTION_LABELS.evidenceFocus, 'vote'), false);
-  assert.equal(Object.hasOwn(REASONING_PROFILE_OPTION_LABELS.evidenceFocus, 'role-structure'), false);
-});
+function reasoningFocusValue(directive) {
+  const inspected = inspectPromptDataBlocks(renderInternalReasoningDirective(directive));
+  assert.equal(inspected.ok, true);
+  return inspected.blocks.find((block) => block.name === 'reasoning-focus')?.value;
+}
 
+test('reasoning-focusはreferenceLabelと同値のreferenceDescriptionを省略し意味が異なる場合だけ保持する', () => {
+  const shared = {
+    focusPlayerNames: ['プレイヤー2'],
+    anchorEventSequences: [24, 32],
+    identity: {},
+  };
+  const normal = reasoningFocusValue({ ...shared, modeId: 'compare-candidates' });
+  assert.equal(normal.referenceLabel, 'プレイヤー2の発言24と発言32');
+  assert.equal(Object.hasOwn(normal, 'referenceDescription'), false);
+
+  const trace = reasoningFocusValue({ ...shared, modeId: 'trace-change' });
+  assert.equal(trace.referenceLabel, 'プレイヤー2の発言24と発言32');
+  assert.equal(trace.referenceDescription, 'プレイヤー2の発言24と発言32を含む公開行動を時系列に並べる');
+});
 test('指名制・発言希望制も通常発言と同じ非公開参考視点を解決する', () => {
   for (const taskType of ['speech-designated', 'speech-free']) {
     const context = {

@@ -1,11 +1,11 @@
 /**
- * 責務: Electronウィンドウ、秘密情報を扱うIPC、外観設定IPC、組み込み/ユーザーキャラクターライブラリ、人狼ゲームとは独立した自由チャットルーム保存・観戦ルーム保存、構造化プロンプトEnvelopeのLLM要求、外部LLMデータ送信確認とプロファイル利用上限の送信前ガード、API使用量・実績料金集計、自動保存を提供する。
- * 変更ルール: ゲーム規則とDOM操作を持たず、現在のメインウィンドウmainFrameから届く固定IPCだけを受理する。通常生成ではRendererが渡した固定完全応答契約をプロバイダーのsystem指示へ分離して送り、本文プロンプトへ再結合しない。プロファイルの一時上書きはOllama投票再試行のthinking=noneだけを厳密条件下で許可し、保存設定を変更しない。LLM失敗は構造化して返し、HTTP分類はproviderClients.js、料金計算・プロファイル上限判定はllm/usageCostCalculator.js、並行要求の上限予約はprofileBudgetReservation.js、ローカルモデル発見はlocalLlmClient.js、自動保存順序はautosaveStore.jsを正本とする。アプリ終了時はゲーム自動保存・自由チャット保存・観戦ルーム保存を期限付きで完了待機してから終了する。外部ナビゲーションと任意ファイルアクセスは許可せず、Clipboard書込もMain IPC境界でUTF-8バイト上限を検証する。組み込みキャラクターは固定ディレクトリから読み、ユーザー作成分・使用状態・表示順だけをuserDataへ保存する。
+ * 責務: Electronウィンドウ、秘密情報を扱うIPC、AI設定の読込・保存・起動時読込通知IPC、外観設定IPC、組み込み/ユーザーキャラクターライブラリ、人狼ゲームとは独立した自由チャットルーム保存・観戦ルーム保存、構造化プロンプトEnvelopeのLLM要求、外部LLMデータ送信確認とプロファイル利用上限の送信前ガード、API使用量・実績料金集計、自動保存を提供する。
+ * 変更ルール: ゲーム規則とDOM操作を持たず、現在のメインウィンドウmainFrameから届く固定IPCだけを受理する。Web権限はpermissionPolicy.jsで全拒否し、必要な権限をMain側で暗黙許可しない。通常生成ではRendererが渡した固定完全応答契約をプロバイダーのsystem指示へ分離して送り、本文プロンプトへ再結合しない。プロファイルの一時上書きはOllama投票再試行のthinking=noneだけを厳密条件下で許可し、保存設定を変更しない。LLM失敗は構造化して返し、HTTP分類はproviderClients.js、料金計算・プロファイル上限判定はllm/usageCostCalculator.js、並行要求の上限予約はprofileBudgetReservation.js、ローカルモデル発見はlocalLlmClient.js、自動保存順序はautosaveStore.jsを正本とする。アプリ終了時はゲーム自動保存・自由チャット保存・観戦ルーム保存を期限付きで完了待機してから終了する。外部ナビゲーションと任意ファイルアクセスは許可せず、Clipboard書込もMain IPC境界でUTF-8バイト上限を検証する。組み込みキャラクターは固定ディレクトリから読み、ユーザー作成分・使用状態・表示順だけをuserDataへ保存する。
  */
 
 'use strict';
 
-const { app, BrowserWindow, clipboard, ipcMain, MessageChannelMain, shell } = require('electron');
+const { app, BrowserWindow, clipboard, ipcMain, MessageChannelMain, session, shell } = require('electron');
 const { createHash, randomUUID } = require('node:crypto');
 const { join } = require('node:path');
 const { AutosaveStore } = require('./autosaveStore.js');
@@ -28,6 +28,7 @@ const { createTrustedIpcRegistrar } = require('./ipcSenderGuard.js');
 const { UserCharacterDataStore } = require('./userCharacterDataStore.js');
 const { CharacterLibraryService } = require('./characterLibraryService.js');
 const { runExternalDataOperation } = require('./externalDataNoticeGate.js');
+const { installPermissionDenyPolicy } = require('./permissionPolicy.js');
 
 let mainWindow = null;
 let settingsStore = null;
@@ -208,6 +209,7 @@ function registerIpc() {
   });
 
   trustedIpc.handle('desktop:get-settings', () => settingsStore.publicSettings());
+  trustedIpc.handle('desktop:get-settings-startup-notices', () => settingsStore.consumeStartupNotices());
   trustedIpc.handle('desktop:save-appearance', (_event, appearance) => appearanceStore.savePublicSettings(appearance));
   trustedIpc.handle('desktop:accept-external-data-notice', (_event, version) => privacyNoticeStore.accept(version));
   trustedIpc.handle('desktop:save-settings', (_event, settings) => settingsStore.savePublicSettings(settings));
@@ -406,6 +408,7 @@ function registerIpc() {
 }
 
 app.whenReady().then(() => {
+  installPermissionDenyPolicy(session);
   const userDataPath = app.getPath('userData');
   settingsStore = new SettingsStore(userDataPath);
   profileBudgetReservations = createProfileBudgetReservationManager({

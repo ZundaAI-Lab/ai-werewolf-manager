@@ -252,7 +252,7 @@ AI生成中・自動会話中でない場合、「参加者を変更」から現
 
 ## 13. 保存・履歴出力・新しいチャット
 
-最新セッションはElectron Mainの`chat-room-session.json`へ独立自動保存する。schemaVersionは共通`dataCompatibility`を正本とし、製品版1.0.0の基準は1、保存サイズ上限は8MiB。旧schemaは共通Migrationで現行schemaへ変換してから復元し、未来schema・無版schemaは推測して復元しない。
+最新セッションはElectron Mainの`chat-room-session.json`へ独立自動保存する。schemaVersionは共通`dataCompatibility`を正本とし、製品版1.0.0の基準は1、保存サイズ上限は8MiB。対応Migrationがある旧schemaだけを現行schemaへ変換してから復元し、Migrationのない旧schema・未来schema・無版schemaは推測して復元しない。
 
 「履歴JSON出力」は現在のチャットState全体を`chat-room-<sessionId>.json`として出力する。現行UIにはこの履歴JSONを読み込む機能はない。
 

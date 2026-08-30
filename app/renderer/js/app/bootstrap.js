@@ -17,7 +17,8 @@ import { resolveGenerationPlan } from '../services/generationDepthPolicy.js';
 import { runGenerationPipeline } from '../services/generationPipeline.js';
 import { createGenerationPipelineTestTask } from '../services/generationPipelineTestFixture.js';
 import { resolveGenerationStagePromptPolicy } from '../prompts/stages/generationStagePromptPolicy.js';
-import { buildDraftStagePrompt, buildProofreadStagePrompt, buildRenderStagePrompt } from '../prompts/stages/generationStagePromptBuilder.js';
+import { buildDecideStagePrompt, buildAnalyzeStagePrompt, buildCritiqueStagePrompt, buildFinalizeStagePrompt, buildRenderStagePrompt } from '../prompts/stages/generationStagePromptBuilder.js';
+import { projectGenerationStagePromptEnvelope } from '../prompts/stages/generationStageEnvelope.js';
 import { mergeTextPatch, parseTextPatchResponse, validateTextPatchForStage } from '../prompts/stages/generationStageResponse.js';
 import { createRuntimeFacade, publishRuntimeContract } from './runtimeFacade.js';
 import { installGlobalErrorReporter } from './globalErrorReporter.js';
@@ -90,9 +91,12 @@ function startApplication(initialState, { restored = false, appearanceSettings: 
     runGenerationPipeline,
     createGenerationPipelineTestTask,
     resolveGenerationStagePromptPolicy,
-    buildDraftStagePrompt,
+    buildDecideStagePrompt,
+    buildAnalyzeStagePrompt,
+    buildCritiqueStagePrompt,
+    buildFinalizeStagePrompt,
     buildRenderStagePrompt,
-    buildProofreadStagePrompt,
+    projectGenerationStagePromptEnvelope,
     parseTextPatchResponse,
     validateTextPatchForStage,
     mergeTextPatch,

@@ -25,7 +25,7 @@ app/renderer/js/domain/night/nightPlanner.js
   初夜を含む夜処理の計画順序、秘密会話、襲撃、各能力スロット
 
 app/renderer/js/domain/night/actionExecutionPolicy.js
-  なまはげの恐怖付与、恐怖による共同／個人夜行動の阻害、恐怖消費
+  なまはげの恐怖付与、恐怖による共同／個人夜行動の阻害、必須行動に実行可能者がいない`unavailable`判定、恐怖消費
 
 app/renderer/js/domain/night/nightResolution.js
   恐怖、護衛、襲撃、占殺、凍結、後追いを含む夜の調停順序
@@ -186,6 +186,7 @@ app/renderer/js/domain/night/graveyardConversationPolicy.js
 
 人狼襲撃は共同アクションとして扱う。
 
+- 襲撃が必要な状態なのに、訂正・復元などを経た提出済みスロットに対して実行可能な生存襲撃参加者が0人なら、行動実行状態は`unavailable`、襲撃結果は`not-executed`となる。
 - 生存している襲撃参加人狼が**全員恐怖**なら、その夜の襲撃全体を実行しない。
 - 恐怖でない生存人狼が1人でもいれば、襲撃は実行される。
 - 白狼も通常人狼と同じ襲撃参加者として恐怖判定へ含む。
@@ -193,7 +194,7 @@ app/renderer/js/domain/night/graveyardConversationPolicy.js
 
 ### 雪女との相互作用
 
-雪女が恐怖なら、その夜の凍結行動は `not-executed` となり、対象へ凍結効果を与えない。
+凍結が必要な状態なのに実行可能な生存雪女がいない場合は、行動実行状態を`unavailable`として凍結結果を`not-executed`にする。実行可能な雪女が恐怖なら行動実行状態は`blocked`となり、その夜の凍結結果は同じく`not-executed`で、対象へ凍結効果を与えない。
 
 ### 恐怖の消費と維持
 
@@ -206,13 +207,16 @@ app/renderer/js/domain/night/graveyardConversationPolicy.js
 
 ### 凍結の成立条件
 
-凍結は次の優先順で結果を決める。
+提出済みの凍結スロットがある場合、凍結は次の優先順で結果を決める。
 
-1. 雪女が恐怖で行動阻害 → `not-executed`
-2. 雪女本人が同じ夜に死亡予定 → `actor-dead`
-3. 対象が護衛されている → `guarded`
-4. 対象が同じ夜に死亡予定 → `target-dead`
-5. それ以外 → `applied`
+1. 実行可能な生存雪女がいない → `not-executed`（行動実行状態`unavailable`）
+2. 実行可能な雪女が恐怖で行動阻害 → `not-executed`（行動実行状態`blocked`）
+3. 実行開始時は有効だった雪女本人が同じ夜の死亡解決で死亡予定 → `actor-dead`
+4. 対象が護衛されている → `guarded`
+5. 対象が同じ夜に死亡予定 → `target-dead`
+6. それ以外 → `applied`
+
+`applied`は必ず実行済み凍結対象が存在する場合だけ成立し、`frozenPlayerId`はその`freezeTargetId`と一致する。`applied`なのに凍結対象が`null`になる状態は有効な確定結果として扱わない。
 
 ### 凍結された翌日
 

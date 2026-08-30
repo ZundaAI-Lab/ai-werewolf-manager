@@ -1,6 +1,6 @@
 /**
  * 責務: 読み取り専用の組み込みキャラクターと編集可能なユーザーキャラクターを統合し、使用状態・グループ順・キャラクター順・編集可否を付与したRenderer向けカタログを提供する。
- * 変更ルール: 具体的なグループ名・キャラクター名を持たない。Rendererから受け取るユーザーライブラリ全体は共有サイズ上限を超える前に拒否する。組み込みJSONの変更/削除を提供せず、使用状態と並び順だけをユーザー領域のメタデータとして保持する。文字数検証は明示的なキャラクター保存・JSON取込の対象IDだけUserCharacterDataStoreへ委譲し、管理操作では既存データを再検証しない。
+ * 変更ルール: 具体的なグループ名・キャラクター名を持たない。Rendererから受け取るユーザーライブラリ全体は共有サイズ上限を超える前に拒否する。組み込みJSONの変更/削除を提供せず、使用状態と並び順だけをユーザー領域のメタデータとして保持する。組み込みカタログはアプリ同梱の読み取り専用データとしてService単位で初回読込結果を再利用する。文字数検証は明示的なキャラクター保存・JSON取込の対象IDだけUserCharacterDataStoreへ委譲し、管理操作では既存データを再検証しない。
  */
 
 'use strict';
@@ -71,6 +71,8 @@ function normalizeOrderIds(groupOrderIds, groups) {
 }
 
 class CharacterLibraryService {
+  #builtinCatalogCache = null;
+
   constructor({ builtinDataRoot, userStore }) {
     if (!builtinDataRoot) throw new TypeError('組み込みキャラクターデータのパスがありません。');
     if (!userStore) throw new TypeError('ユーザーキャラクターストアがありません。');
@@ -79,7 +81,8 @@ class CharacterLibraryService {
   }
 
   _builtinCatalog() {
-    return readCharacterDataCatalog(this.builtinDataRoot);
+    this.#builtinCatalogCache ??= readCharacterDataCatalog(this.builtinDataRoot);
+    return this.#builtinCatalogCache;
   }
 
   _merge(storedData) {
