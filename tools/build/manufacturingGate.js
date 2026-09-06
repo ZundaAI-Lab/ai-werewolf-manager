@@ -1,6 +1,6 @@
 /**
  * 責務: 正式bundle生成前の製造事前検査と、生成後の鮮度を含む完全製造検査を提供し、開発者・利用者README、本体MIT Licenseの適用範囲注記、bundle済みRendererソースを二重同梱しない配布設定も保証する。製造監査が使用するTypeScript依存は監査モジュール読込前に自己修復する。
- * 変更ルール: 事前検査は生成物へ書き込まず、現行構成・全製品JSの責務ヘッダ・テスト入口・情報境界・Prompt Envelope・README/ライセンス配布契約に加え、型情報を整備済みの限定JS領域へ段階的checkJs監査を適用する。Git管理メタデータの.gitignoreは正規のルートファイルとして許可する。完全検査だけが生成物鮮度を追加検査し、一時パッチ・到達不能モジュール・製品内未使用export・不一致生成物を製造物へ混入させない。TypeScriptを必要とする監査はensureCurrentBuild.jsの共通依存保証後にだけ読み込む。
+ * 変更ルール: 事前検査は生成物へ書き込まず、現行構成・全製品JSの責務ヘッダ・テスト入口・情報境界・Prompt Envelope・README/ライセンス配布契約・Electron Fusesに加え、型情報を整備済みの限定JS領域へ段階的checkJs監査を適用する。Git管理メタデータの.gitignoreは正規のルートファイルとして許可する。完全検査だけが生成物鮮度を追加検査し、一時パッチ・到達不能モジュール・製品内未使用export・不一致生成物を製造物へ混入させない。TypeScriptを必要とする監査はensureCurrentBuild.jsの共通依存保証後にだけ読み込む。
  */
 
 'use strict';
@@ -232,6 +232,18 @@ function validateRuntimeAndPackaging(errors) {
   if (appPackage.main !== 'main/main.js') errors.push('app/package.jsonのMainエントリーが不正です。');
   if (toolsPackage.scripts?.start !== 'node build/ensureCurrentBuild.js && electron ../app') errors.push('toolsの開発版起動前に生成物鮮度保証を実行していません。');
   if (builder.directories?.output !== '../output/dist') errors.push('配布物出力先はoutput/distでなければなりません。');
+  const requiredElectronFuses = {
+    runAsNode: false,
+    enableNodeOptionsEnvironmentVariable: false,
+    enableNodeCliInspectArguments: false,
+    enableEmbeddedAsarIntegrityValidation: true,
+    onlyLoadAppFromAsar: true,
+  };
+  for (const [name, expected] of Object.entries(requiredElectronFuses)) {
+    if (builder.electronFuses?.[name] !== expected) {
+      errors.push(`Electron Fuse設定が製造契約と一致しません: ${name}=${String(expected)}`);
+    }
+  }
   const files = builder.files ?? [];
   const extraFiles = Array.isArray(builder.extraFiles) ? builder.extraFiles : [];
   const includesUserReadme = extraFiles.some((entry) => (
@@ -307,6 +319,7 @@ function validateTargetedCheckJs(errors) {
   const targets = [
     'app/renderer/js/app/globalErrorReporter.js',
     'app/renderer/js/automation/automationRunControl.js',
+    'app/renderer/js/automation/automaticAiRequestScheduler.js',
   ];
   const run = spawnSync(process.execPath, [
     tscPath,

@@ -1,6 +1,6 @@
 /**
  * 責務: Gemini generateContent APIへ固定接頭辞を先頭にした構造化Envelopeを送信し、暗黙キャッシュへ適合させる。
- * 変更ルール: Gemini以外の分岐を追加せず、明示cachedContentのライフサイクルを持たない。systemInstructionにはProvider共通system契約だけを置き、Envelopeの全区画は定義順を維持した単一user入力として送る。Analyze/Critiqueの自由記述要求ではJSON MIMEを強制しない。キャッシュ可否を権限昇格の根拠にせず、固定情報より後ろへ最新タスクを配置する。
+ * 変更ルール: Gemini以外の分岐を追加せず、明示cachedContentのライフサイクルを持たない。systemInstructionにはProvider共通system契約だけを置き、Envelopeの全区画は定義順を維持した単一user入力として送る。Analyze/Critiqueの自由記述要求ではJSON MIMEを強制しない。キャッシュ可否を権限昇格の根拠にせず、固定情報より後ろへ最新タスクを配置する。Provider非依存SchemaはGemini対応範囲へ変換してから送る。
  */
 
 'use strict';
@@ -13,6 +13,7 @@ const {
   trimTrailingSlash,
 } = require('../providerProfilePolicy.js');
 const { isPlainTextRequestPurpose, resolveStructuredOutputMode } = require('../modelStructuredOutputPolicy.js');
+const { toGeminiStructuredSchema } = require('../providerStructuredOutputSchema.js');
 const { requestJson } = require('../providerHttpClient.js');
 const { outputTextFromGemini, usageFromBody } = require('../providerResponseParser.js');
 const { flattenPromptEnvelope } = require('../promptEnvelopeValidator.js');
@@ -31,7 +32,7 @@ async function generateGemini(profile, promptEnvelope, apiKey, signal, requestPu
     generationConfig.responseFormat = {
       text: {
         mimeType: 'application/json',
-        schema: promptEnvelope.structuredOutput.schema,
+        schema: toGeminiStructuredSchema(promptEnvelope.structuredOutput.schema),
       },
     };
   } else if (!isPlainTextRequestPurpose(requestPurpose)) {

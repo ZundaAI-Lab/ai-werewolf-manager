@@ -51,5 +51,12 @@
       "from": "../LICENSE.txt",
       "to": "LICENSE.txt"
     }
-  ]
+  ],
+  "electronFuses": {
+    "runAsNode": false,
+    "enableNodeOptionsEnvironmentVariable": false,
+    "enableNodeCliInspectArguments": false,
+    "enableEmbeddedAsarIntegrityValidation": true,
+    "onlyLoadAppFromAsar": true
+  }
 }

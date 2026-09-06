@@ -1,6 +1,6 @@
 /**
  * 責務: 本人限定情報、正式本人履歴、最新判断、ゲーム状態、公開確定時系列、人口・勝利条件をプロンプト用データへ変換する。
- * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。昼発言用game-state.aliveの表示順だけはdiscussion.queueを優先して射影し、内部の生存者配列を並べ替えず、queue外の生存者は元の生存者順で末尾へ保持する。
+ * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。昼発言用game-state.aliveの表示順だけはdiscussion.queueを優先して射影し、内部の生存者配列を並べ替えず、queue外の生存者は元の生存者順で末尾へ保持する。最新判断は正式投票でもintendedVoteを再提示して再評価対象を明示し、過去理由によるアンカリングを避けるためdecisionReasonは投票時だけ再提示しない。
  */
 
 import {
@@ -319,13 +319,11 @@ export function latestDecisionState(context, decision, { taskType = context.task
   return {
     suspicionCandidateNames: (state.suspicionCandidateIds ?? []).map((id) => playerName(context, id)),
     executionCandidateNames: (state.executionCandidateIds ?? []).map((id) => playerName(context, id)),
-    ...(!isVoteTask ? {
-      intendedVote: state.intendedVoteId === 'abstain'
-        ? '棄権'
-        : state.intendedVoteId
-          ? playerName(context, state.intendedVoteId)
-          : null,
-    } : {}),
+    intendedVote: state.intendedVoteId === 'abstain'
+      ? '棄権'
+      : state.intendedVoteId
+        ? playerName(context, state.intendedVoteId)
+        : null,
     assessmentLevel: state.assessmentLevel ?? 'unresolved',
     evidenceRefs: (state.keyPublicEvidenceEventIds ?? []).map((eventId) => {
       const event = Object.values(context.board.publicTimeline ?? {})

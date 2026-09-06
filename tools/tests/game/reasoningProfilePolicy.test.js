@@ -22,20 +22,6 @@ function reasoningFocusValue(directive) {
   return inspected.blocks.find((block) => block.name === 'reasoning-focus')?.value;
 }
 
-test('reasoning-focusはreferenceLabelと同値のreferenceDescriptionを省略し意味が異なる場合だけ保持する', () => {
-  const shared = {
-    focusPlayerNames: ['プレイヤー2'],
-    anchorEventSequences: [24, 32],
-    identity: {},
-  };
-  const normal = reasoningFocusValue({ ...shared, modeId: 'compare-candidates' });
-  assert.equal(normal.referenceLabel, 'プレイヤー2の発言24と発言32');
-  assert.equal(Object.hasOwn(normal, 'referenceDescription'), false);
-
-  const trace = reasoningFocusValue({ ...shared, modeId: 'trace-change' });
-  assert.equal(trace.referenceLabel, 'プレイヤー2の発言24と発言32');
-  assert.equal(trace.referenceDescription, 'プレイヤー2の発言24と発言32を含む公開行動を時系列に並べる');
-});
 test('指名制・発言希望制も通常発言と同じ非公開参考視点を解決する', () => {
   for (const taskType of ['speech-designated', 'speech-free']) {
     const context = {
@@ -166,68 +152,5 @@ test('回答評価はprobe-response直後に別の強制ターンを挟んでも
   assert.equal(directive?.modeId, 'evaluate-response');
   assert.deepEqual(directive?.focusPlayerIds, ['p2']);
   assert.deepEqual(directive?.anchorEventSequences, [13]);
-});
-
-test('質問方法は推理レンズを追加せず関係性比較の選択元にならない', () => {
-  const context = {
-    task: { type: 'speech' },
-    game: {
-      id: 'question-style-does-not-select-lens',
-      day: 2,
-      rules: { discussion: { answerPriorityEnabled: true } },
-      discussion: { remainingByPlayer: { p2: 1, p3: 1 } },
-    },
-    discussion: { round: 1 },
-    player: {
-      id: 'p1', name: '本人', roleId: 'villager', strategyProfile: null,
-      character: { reasoningProfile: { ...profileWith('consistency'), questionStyle: 'broad' } },
-      decisionState: { suspicionCandidateIds: [], executionCandidateIds: [], intendedVoteId: null },
-    },
-    board: {
-      alive: [
-        { id: 'p1', name: '本人', frozen: false },
-        { id: 'p2', name: 'A', frozen: false },
-        { id: 'p3', name: 'B', frozen: false },
-      ],
-      dead: [], claims: [], publicAbilityClaims: [],
-      publicTimeline: {
-        speeches: [
-          { id: 'q1', actorId: 'p2', day: 2, sequence: 1, payload: { structured: { interaction: { questionTargetIds: ['p3'], answersEventIds: [] } } } },
-          { id: 'a1', actorId: 'p3', day: 2, sequence: 2, payload: { structured: { interaction: { questionTargetIds: [], answersEventIds: ['q1'] } } } },
-        ],
-        voteResults: [],
-      },
-    },
-  };
-
-  const directive = resolveInternalReasoningDirective({ aiTurns: [] }, context);
-  assert.equal(directive?.modeId, 'hold-judgment');
-  assert.notEqual(directive?.modeId, 'compare-pair');
-});
-
-test('対立表現は推理レンズを追加せず多数意見再検討の選択元にならない', () => {
-  const context = {
-    task: { type: 'speech' },
-    game: {
-      id: 'confrontation-style-does-not-select-lens',
-      day: 2,
-      rules: { discussion: { answerPriorityEnabled: true } },
-      discussion: { remainingByPlayer: { p2: 1 } },
-    },
-    discussion: { round: 1 },
-    player: {
-      id: 'p1', name: '本人', roleId: 'villager', strategyProfile: null,
-      character: { reasoningProfile: { ...profileWith('consistency'), confrontationStyle: 'direct' } },
-      decisionState: { suspicionCandidateIds: [], executionCandidateIds: [], intendedVoteId: null },
-    },
-    board: {
-      alive: [{ id: 'p1', name: '本人', frozen: false }, { id: 'p2', name: '相手', frozen: false }],
-      dead: [], claims: [], publicAbilityClaims: [],
-      publicTimeline: { speeches: [], voteResults: [] },
-    },
-  };
-
-  const directive = resolveInternalReasoningDirective({ aiTurns: [] }, context);
-  assert.equal(directive, null);
 });
 

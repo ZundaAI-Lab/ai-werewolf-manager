@@ -177,16 +177,16 @@ export function createSettingsPersistenceCoordinator(context) {
     }
 
   function enqueueAutosaveSnapshot() {
-      const snapshot = runtime().getAutosaveState();
+      const serializedSnapshot = runtime().getAutosaveSerialized();
       const operation = autosaveWriteChain
         .catch(() => {})
-        .then(() => bridge.saveAutosave(snapshot));
+        .then(() => bridge.saveAutosave(serializedSnapshot));
       autosaveWriteChain = operation;
       return operation;
     }
 
   async function flushAutosave({ force = false, reportError = true } = {}) {
-      if (!bridge.isDesktop || typeof runtime().getAutosaveState !== 'function') return;
+      if (!bridge.isDesktop || typeof runtime().getAutosaveSerialized !== 'function') return;
       if (force) autosaveDirty = true;
       try {
         while (autosaveDirty) {
@@ -209,7 +209,7 @@ export function createSettingsPersistenceCoordinator(context) {
     }
 
   function scheduleAutosave() {
-      if (!bridge.isDesktop || typeof runtime().getAutosaveState !== 'function') return;
+      if (!bridge.isDesktop || typeof runtime().getAutosaveSerialized !== 'function') return;
       autosaveDirty = true;
       const now = Date.now();
       if (!autosaveWindowStartedAt) autosaveWindowStartedAt = now;

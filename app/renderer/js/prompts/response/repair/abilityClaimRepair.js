@@ -8,6 +8,7 @@ import {
   getUnlistedAbilityReasonSequences,
 } from '../../../domain/policies/abilityClaimTimelinePolicy.js';
 import { resolvePublicAbilityClaimRequirements } from '../../../domain/policies/publicAbilityClaimPolicy.js';
+import { MAX_EVIDENCE_REFS } from '../evidenceRefPolicy.js';
 import {
   isPlainObject,
   operation,
@@ -52,7 +53,7 @@ function repairAbilityClaims(state, payload, operations) {
         return null;
       }
       normalizeEnumField(claim, 'selectionBasis', path, operations);
-      normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations);
+      normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations, { maxItems: MAX_EVIDENCE_REFS });
       if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceRefs?.length)) {
         claim.selectionBasis = 'no-public-information';
         operation(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
@@ -84,7 +85,7 @@ function repairAbilityClaims(state, payload, operations) {
         operation(operations, 'PLAYER_REFERENCE_CANONICALIZED', `${path}.target`, `${path}.targetを正式表示名へ修正しました。`);
       }
     }
-    normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations);
+    normalizePositiveIntegerRefs(claim, 'evidenceRefs', path, operations, { maxItems: MAX_EVIDENCE_REFS });
     const requiredKeys = ['roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'];
     if (requiredKeys.some((key) => !Object.hasOwn(claim, key) || claim[key] === null || claim[key] === '')) {
       operation(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は騙り能力結果を確定できないため省略しました。`);

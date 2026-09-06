@@ -41,7 +41,7 @@ contextBridge.exposeInMainWorld('desktopWerewolf', Object.freeze({
   setBuiltinCharacterEnabled: (characterId, enabled) => ipcRenderer.invoke('desktop:set-builtin-character-enabled', characterId, enabled),
   setCharacterGroupOrder: (groupIds) => ipcRenderer.invoke('desktop:set-character-group-order', groupIds),
   setCharacterOrder: (groupId, characterIds) => ipcRenderer.invoke('desktop:set-character-order', groupId, characterIds),
-  saveAutosave: (state) => ipcRenderer.invoke('desktop:save-autosave', state),
+  saveAutosave: (serializedState) => ipcRenderer.invoke('desktop:save-autosave', serializedState),
   saveChatRoom: (state) => ipcRenderer.invoke('desktop:save-chat-room', state),
   saveSpectatorRoom: (state) => ipcRenderer.invoke('desktop:save-spectator-room', state),
   registerAutosaveFlushHandler: (handler) => {

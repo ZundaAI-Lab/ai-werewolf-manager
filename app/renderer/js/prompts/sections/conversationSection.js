@@ -1,12 +1,12 @@
 /**
  * 責務: 昼会話の進行、CO機会、能力結果主張、役職別戦術機会をプロンプトへ構成する。
- * 変更ルール: 局面判定と候補抽出は既存ポリシーを正本とし、本文から質問・CO・能力結果を推定しない。昼の発言順はdiscussion.queueを正本とするが、一覧の表示はgame-state.alive側へ一元化し、この区画ではlaterSpeakersと必要時のcanReplyだけを表示する。狂人系不在時の初動補足は公開役職構成と本人可視のknownWolfIdsだけで判定し、最も発言順が早い人狼一人に限定する。役職固有の戦術説明は公開配役に存在する役職・相互作用だけを提示し、偽判定の将来リスクも二値能力役職が存在する場合だけ渡す。対抗CO候補の文章だけは本人roleIdをテンプレートへ渡し、通常人狼と狂人の異なる露呈価値を分離する。
+ * 変更ルール: 局面判定と候補抽出は既存ポリシーを正本とし、本文から質問・CO・能力結果を推定しない。昼の発言順はdiscussion.queueを正本とするが、一覧の表示はgame-state.alive側へ一元化し、この区画ではlaterSpeakersと必要時のcanReplyだけを表示する。狂人系不在時の初動補足は公開役職構成と本人可視のknownWolfIdsだけで判定し、最も発言順が早い人狼一人に限定する。その一人について公開配役上の人狼枠が複数なら騙りを抑える追加の露呈リスク評価を外し、一人なら従来の慎重化を維持する。役職固有の戦術説明は公開配役に存在する役職・相互作用だけを提示し、偽判定の将来リスクも二値能力役職が存在する場合だけ渡す。対抗CO候補の文章だけは本人roleIdをテンプレートへ渡し、通常人狼と狂人の異なる露呈価値を分離する。
  */
 
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 
 import { ROLE_DEFINITIONS } from '../../config/constants.js';
-import { countConfiguredMadmanSlots } from '../../domain/roles/roleAttributes.js';
+import { countConfiguredMadmanSlots, countConfiguredWolves } from '../../domain/roles/roleAttributes.js';
 import {
   renderTwoSeerExecutionInstruction,
   renderWolfBlackResultCrisisInstruction,
@@ -177,9 +177,9 @@ export function isEarliestKnownWolfSpeaker(context) {
   return firstWolfSpeakerId === context.player.id;
 }
 
-export function shouldAddNoMadmanEarlyWolfClaimContext(context) {
-  return countConfiguredMadmanSlots(context.game.roleComposition ?? {}) === 0
-    && isEarliestKnownWolfSpeaker(context);
+export function resolveNoMadmanEarlyWolfClaimMode(context) {
+  if (countConfiguredMadmanSlots(context.game.roleComposition ?? {}) > 0 || !isEarliestKnownWolfSpeaker(context)) return 'none';
+  return countConfiguredWolves(context.game.roleComposition ?? {}) > 1 ? 'multiple-wolves' : 'single-wolf';
 }
 
 export function initialClaimDecisionSection(context, taskType) {
@@ -189,7 +189,7 @@ export function initialClaimDecisionSection(context, taskType) {
     return renderWolfInitialClaimDecisionInstruction({
       sharedClaimPlan: latestWolfClaimPlan(context),
       speakerPosition: currentSpeakerPosition(context),
-      addNoMadmanEarlyWolfContext: shouldAddNoMadmanEarlyWolfClaimContext(context),
+      noMadmanEarlyWolfClaimMode: resolveNoMadmanEarlyWolfClaimMode(context),
     });
   }
   if (context.player.strategyProfile === 'madman') {
@@ -303,7 +303,6 @@ export function wolfDayStrategySection(context, taskType, partnerDispositionPoli
   if (!(isNormalSpeechTask(taskType) || ['priority-answer', 'vote'].includes(taskType)) || context.player.strategyProfile !== 'wolf') return '';
   if (context.player.roleId === 'whiteWolf') {
     return renderWhiteWolfDayStrategyInstruction({
-      voteRequired: taskType === 'vote',
       canClaimBinaryAbilityResult: canClaimBinaryAbilityResult(context),
     });
   }

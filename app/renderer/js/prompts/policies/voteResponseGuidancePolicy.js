@@ -4,6 +4,7 @@
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
+import { MAX_VOTE_EVIDENCE_REFS } from '../response/evidenceRefPolicy.js';
 
 export const VOTE_PROMPT_PRIORITY_DECISION_CHANGE_KEYS = Object.freeze([
   'executionCandidates', 'leaveAliveBenefit', 'misexecutionCost', 'selectionDifference',
@@ -23,7 +24,7 @@ export function buildVoteDecisionPatchGuidanceRows(displayedKeys = []) {
     rows.push(`decisionPatch.assessmentLevelは ${DECISION_ASSESSMENT_LEVELS.join(' / ')} のいずれかです。`);
   }
   if (normalizedDisplayedKeys.includes('correctedSpeechRefs') || normalizedDisplayedKeys.includes('evidenceRefs')) {
-    rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
+    rows.push(`decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。evidenceRefsは投票判断を直接支える主要根拠だけを最大${MAX_VOTE_EVIDENCE_REFS}件、重要度順・重複なしで指定し、根拠一覧の網羅目的では使用しません。`);
   }
   return rows;
 }

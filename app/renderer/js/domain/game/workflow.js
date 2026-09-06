@@ -1,6 +1,6 @@
 /**
  * 責務: 現在の状態から、人間GMが次に行うべき一つのタスクを導出する。
- * 変更ルール: 状態変更を行わず、局面判定に必要な状態参照はstate/selectors.jsと各domainの専用規則モジュールを正本とする。内部メモ整理推奨は通常フェーズを進める前の独立タスクとして一人ずつ返す。
+ * 変更ルール: 状態変更を行わず、局面判定に必要な状態参照はstate/selectors.jsと各domainの専用規則モジュールを正本とする。内部メモ整理推奨は通常フェーズを進める前の独立タスクとして一人ずつ返す。全自動実行が別プレイヤーのメモ整理通信を並行継続する場合に限り、呼び出し側から明示された処理中プレイヤーを候補から除外できるが、既定の手動進行では除外しない。
  */
 
 import { TASK_LABELS } from '../../config/constants.js';
@@ -21,20 +21,22 @@ function task(type, extra = {}) {
   return { type, label: TASK_LABELS[type] ?? type, ...extra };
 }
 
-function getPendingMemoConsolidationPlayerId(state) {
+function getPendingMemoConsolidationPlayerId(state, ignoredPlayerIds = []) {
+  const ignored = new Set((ignoredPlayerIds ?? []).map((playerId) => String(playerId ?? '')));
   return (state.players ?? []).find((player) => (
     player.controller === 'ai'
     && player.internalMemory?.consolidationRecommended === true
+    && !ignored.has(String(player.id ?? ''))
   ))?.id ?? null;
 }
 
-export function getCurrentGmTask(state) {
+export function getCurrentGmTask(state, { ignoredMemoConsolidationPlayerIds = [] } = {}) {
   if (state.game.correctionMode?.enabled) return task('correction');
   const { phase } = state.game;
 
   if (phase === 'setup') return task('setup');
 
-  const memoConsolidationPlayerId = getPendingMemoConsolidationPlayerId(state);
+  const memoConsolidationPlayerId = getPendingMemoConsolidationPlayerId(state, ignoredMemoConsolidationPlayerIds);
   if (memoConsolidationPlayerId) return task('memo-consolidate', { playerId: memoConsolidationPlayerId });
 
   if (phase === 'briefing') {

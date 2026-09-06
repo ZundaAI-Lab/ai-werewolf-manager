@@ -51,7 +51,7 @@ function createHarness({
     },
     usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0, totalTokens: 0, calls: 0, failedCalls: 0, retries: 0 },
   };
-  const counters = { prepare: 0, candidateCommits: 0, fallbackCommits: 0, scheduleFull: 0, bridgeRequests: [] };
+  const counters = { prepare: 0, candidateCommits: 0, fallbackCommits: 0, scheduleFull: 0, bridgeRequests: [], activeRequestEvents: [] };
 
   function taskArtifact(forceFullPublicHistory = false) {
     counters.prepare += 1;
@@ -156,6 +156,7 @@ function createHarness({
     structuredApiError: (error) => error?.apiError ?? { code: 'IPC_ERROR', message: error?.message ?? String(error), retryable: false, deliveryUnknown: false, retryAfterMs: null },
     apiErrorAsException: (apiError) => { const error = new Error(apiError?.message ?? 'api error'); error.apiError = apiError; return error; },
     generationFailureRequiresStop,
+    setAiRequestActive: (playerId, active) => counters.activeRequestEvents.push([playerId, active]),
   });
   return { ...modules, state, controller, counters, executor, taskRequest: { playerId: 'player-B', taskType, slotId: '' } };
 }
@@ -174,6 +175,15 @@ test('API通信中に停止した場合は後から応答しても登録しな�
   await assert.rejects(execution, (error) => error?.code === 'AUTOMATION_STOPPED');
   assert.equal(harness.counters.candidateCommits, 0);
   assert.equal(harness.counters.fallbackCommits, 0);
+});
+
+test('Provider通信中だけ対象プレイヤーをAPI通信中として通知する', async () => {
+  const harness = createHarness({ bridgeGenerate: async () => ({ ok: true, text: 'VALID', usage: {} }) });
+  await harness.executor(harness.taskRequest, harness.runControl.createRunSession());
+  assert.deepEqual(harness.counters.activeRequestEvents, [
+    ['player-B', true],
+    ['player-B', false],
+  ]);
 });
 
 test('delta要求はstate由来Envelopeを現在の要求構造で送る', async () => {
@@ -290,4 +300,15 @@ test('Ollama投票のThinking無効化は同じ工程API要求だけに限定し
     [ollamaProfile.id, 'none'],
     [openAiProfile.id, null],
   ]);
+});
+
+test('generateAiStepはゲーム状態を変更せずcommitAiStepでだけ正式登録する', async () => {
+  const harness = createHarness({ bridgeGenerate: async () => ({ ok: true, text: 'VALID', usage: {} }) });
+  const session = harness.runControl.createRunSession();
+  const generated = await harness.executor.generateAiStep(harness.taskRequest, session);
+  assert.equal(harness.state.revision, 0);
+  assert.equal(harness.counters.candidateCommits, 0);
+  await harness.executor.commitAiStep(generated, session);
+  assert.equal(harness.state.revision, 1);
+  assert.equal(harness.counters.candidateCommits, 1);
 });

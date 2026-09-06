@@ -149,7 +149,7 @@ SHA256SUMS.txt
 build-report.txt
 ```
 
-配布工程では依存関係を固定導入し、bundle生成、製造ゲート、全回帰テスト、Windows x64配布物生成、成果物サイズ検査、ユーザー向けREADME、本体MIT License、Electron/Chromium第三者ライセンスの同梱検査、SHA-256生成を行います。失敗時は不完全な `output/dist` を削除します。
+配布工程では依存関係を固定導入し、bundle生成、製造ゲート、全回帰テスト、Windows x64配布物生成、成果物サイズ検査、ユーザー向けREADME、本体MIT License、Electron/Chromium第三者ライセンスの同梱検査、SHA-256生成を行います。Windows配布版は`tools/build/electron-builder.json`を正本としてElectron Fusesを適用し、RunAsNode、`NODE_OPTIONS`、Node CLI Inspectorを無効化するとともに、埋め込みASAR整合性検証とASAR限定ロードを有効化します。失敗時は不完全な `output/dist` を削除します。
 
 `tools/build/electron-builder.json` の `extraFiles` により、`app/README.txt` は配布版の実行ファイルと同じ階層へ `README.txt` として、プロジェクト直下の `LICENSE.txt` は同じ階層へ `LICENSE.txt` として配置されます。この契約を削除・変更する場合は、製造ゲートと配布回帰テストも同時に更新してください。
 
@@ -201,7 +201,7 @@ autosave-shutdown-warning.json  終了時にゲーム自動保存flushが完了�
 
 APIキーはElectronの`safeStorage`で暗号化し、Rendererへ平文を返しません。ゲームJSON、自由会話セッション、人狼観戦セッション、AI接続設定は別管理です。ログ保存前には認証ヘッダーと既知のAPIキー形式をマスクします。API使用量の永続集計は`profileId`を正本とし、人狼・自由会話・人狼観戦・診断など用途が異なっても同じAIプロファイルへ合算します。
 
-自動保存はRendererの`settingsPersistenceCoordinator.js`が短時間の連続変更を集約し、最大待機時間を設けて専用スナップショットをMainへ送ります。Mainの`AutosaveStore`は受け取った最新状態だけを直列化して原子的に保存し、書込中または書込失敗後に新しい状態を受け取った場合も最新状態を保持して、次回保存または終了時flushで再処理します。Renderer側の集約を変更する場合も、最大待機時間と終了前flushを失わせないでください。
+自動保存はRendererの`settingsPersistenceCoordinator.js`が短時間の連続変更を集約し、最大待機時間を設けます。`autosaveState.js`がゲームStateから専用スナップショットを作成してRenderer側でJSON文字列へ直列化し、Mainの`AutosaveStore`は受け取った最新の直列化済み状態だけを原子的に保存します。書込中または書込失敗後に新しい状態を受け取った場合も最新要求を保持し、次回保存または終了時flushで再処理します。Renderer側の集約・直列化を変更する場合も、Mainで巨大ゲームStateを`JSON.stringify`しない境界、最大待機時間、終了前flushを失わせないでください。
 
 `desktop-settings.json`は候補設定を原子的に保存できた後だけMainの実行中設定へ反映します。保存失敗時にメモリ上の設定だけを先行変更してはいけません。AI全自動開始は準備中を含め単一の開始Promiseへ集約し、同時に複数の実行セッションを作成しません。
 

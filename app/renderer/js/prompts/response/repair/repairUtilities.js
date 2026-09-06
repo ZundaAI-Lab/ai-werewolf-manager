@@ -1,6 +1,6 @@
 /**
  * 責務: 応答項目のキー補正、任意null除去、列挙・配列・参照の正規化に使う共通関数を提供する。
- * 変更ルール: タスク固有の修復判断を持たず、呼び出し元が渡した許可集合だけに従う。
+ * 変更ルール: タスク固有の修復判断を持たず、呼び出し元が渡した許可集合と件数上限だけに従う。参照配列の上限超過は再生成理由にせず、正規化後に先頭から切り詰める。
  */
 
 import { normalizeName } from '../../../shared/utils.js';
@@ -161,7 +161,7 @@ function normalizeStringArray(object, key, path, operations) {
   return object[key];
 }
 
-function normalizePositiveIntegerRefs(object, key, path, operations) {
+function normalizePositiveIntegerRefs(object, key, path, operations, { maxItems = null } = {}) {
   if (!Object.hasOwn(object, key)) return [];
   if (typeof object[key] === 'string' && /^\d+$/u.test(object[key].trim())) {
     object[key] = [Number(object[key])];
@@ -176,6 +176,11 @@ function normalizePositiveIntegerRefs(object, key, path, operations) {
   if (!deepEqual(unique, object[key])) {
     object[key] = unique;
     operation(operations, 'REFERENCE_ARRAY_NORMALIZED', `${path}.${key}`, `${path}.${key}の数値文字列変換・不正参照除外・重複削除を行いました。`);
+  }
+  const normalizedMaxItems = Number.isSafeInteger(maxItems) && maxItems >= 0 ? maxItems : null;
+  if (normalizedMaxItems !== null && object[key].length > normalizedMaxItems) {
+    object[key] = object[key].slice(0, normalizedMaxItems);
+    operation(operations, 'REFERENCE_ARRAY_TRUNCATED', `${path}.${key}`, `${path}.${key}を主要根拠${normalizedMaxItems}件までに制限しました。`);
   }
   return object[key];
 }

@@ -10,7 +10,8 @@ const { estimateTextTokens } = require('./conversationBudget.js');
 const TOKENS_PER_MILLION = 1_000_000;
 const BUDGET_ESTIMATE_SAFETY_FACTOR = 1.25;
 const BUDGET_ESTIMATE_FIXED_OVERHEAD_TOKENS = 128;
-const USD_ROUND_SCALE = 1_000_000_000_000;
+// SettingsStoreの永続料金精度（1e-9 USD）と揃え、設定上限額までsafe integer域で丸める。
+const USD_ROUND_SCALE = 1_000_000_000;
 const BUDGET_EPSILON_USD = 1 / USD_ROUND_SCALE;
 
 function finiteNonNegative(value) {

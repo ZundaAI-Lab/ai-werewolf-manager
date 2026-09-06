@@ -1,6 +1,6 @@
 /**
  * 責務: Anthropic Messages APIの構造化Envelope要求、短期／長期プロンプトキャッシュ、共通応答変換を実装する。
- * 変更ルール: Anthropic以外の分岐を追加せず、全自動向け既定は5分とする。タスク別契約を含む動的末尾へcache_controlを付けない。
+ * 変更ルール: Anthropic以外の分岐を追加せず、全自動向け既定は5分とする。タスク別契約を含む動的末尾へcache_controlを付けない。Provider非依存SchemaはAnthropic対応範囲へ変換してから送る。
  */
 
 'use strict';
@@ -12,6 +12,7 @@ const {
   systemInstructionForRequest,
 } = require('../providerProfilePolicy.js');
 const { resolveStructuredOutputMode } = require('../modelStructuredOutputPolicy.js');
+const { toAnthropicStructuredSchema } = require('../providerStructuredOutputSchema.js');
 const { requestJson } = require('../providerHttpClient.js');
 const { outputTextFromAnthropic, usageFromBody } = require('../providerResponseParser.js');
 const { cacheableEnvelopeBlocks, dynamicEnvelopeText } = require('../promptEnvelopeValidator.js');
@@ -51,7 +52,7 @@ async function generateAnthropic(profile, promptEnvelope, apiKey, signal, reques
     requestBody.output_config = {
       format: {
         type: 'json_schema',
-        schema: promptEnvelope.structuredOutput.schema,
+        schema: toAnthropicStructuredSchema(promptEnvelope.structuredOutput.schema),
       },
     };
   }

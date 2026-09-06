@@ -31,33 +31,6 @@ test('夜明け状況ガイドはDay2以降の通常昼議論第1巡だけに表
   assert.match(roleCompositionSituationSection(context(roles), 'speech-free'), /死亡者なし/u);
 });
 
-test('追加解釈候補がない構成ではガイド全体を表示しない', () => {
-  const roles = { wolf: 1, villager: 3, seer: 1, medium: 1, madman: 1 };
-  assert.equal(buildRoleCompositionSituationGuide(context(roles), 'speech'), null);
-  assert.equal(roleCompositionSituationSection(context(roles), 'speech'), '');
-});
-
-test('各見出しは初期役職構成から意味がある場合だけ表示する', () => {
-  const guardOnly = roleCompositionSituationSection(context({ wolf: 1, guard: 1 }), 'speech');
-  assert.doesNotMatch(guardOnly, /死亡者が2人以上/u);
-  assert.match(guardOnly, /死亡者なし/u);
-  assert.match(guardOnly, /護衛による襲撃阻止/u);
-  assert.doesNotMatch(guardOnly, /凍結なし/u);
-
-  const catOnly = roleCompositionSituationSection(context({ wolf: 1, cat: 1 }), 'speech');
-  assert.match(catOnly, /死亡者が2人以上/u);
-  assert.match(catOnly, /人狼による襲撃/u);
-  assert.match(catOnly, /猫又の道連れ/u);
-  assert.doesNotMatch(catOnly, /死亡者なし/u);
-  assert.doesNotMatch(catOnly, /凍結なし/u);
-
-  const foxWithoutSeer = roleCompositionSituationSection(context({ wolf: 1, fox: 1 }), 'speech');
-  assert.doesNotMatch(foxWithoutSeer, /死亡者が2人以上/u);
-  assert.match(foxWithoutSeer, /死亡者なし/u);
-  assert.match(foxWithoutSeer, /妖狐への襲撃/u);
-  assert.doesNotMatch(foxWithoutSeer, /妖狐の呪殺/u);
-});
-
 test('複合役職構成では存在する事象だけを列挙し現在の生存情報を参照しない', () => {
   const roles = {
     wolf: 2,

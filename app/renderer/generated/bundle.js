@@ -68,7 +68,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     });
     const CURRENT_DATA_SCHEMA_VERSIONS = Object.freeze({
         [DATA_SCHEMA_KIND.GAME_STATE]: 2,
-        [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 2,
+        [DATA_SCHEMA_KIND.DESKTOP_SETTINGS]: 3,
         [DATA_SCHEMA_KIND.APPEARANCE]: 1,
         [DATA_SCHEMA_KIND.CHAT_ROOM]: 1,
         [DATA_SCHEMA_KIND.SPECTATOR_ROOM]: 1,
@@ -129,6 +129,21 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
         const migrated = migrateProfileGenerations(raw);
         return { ...migrated, schemaVersion: 2 };
     }
+    function migrateDesktopSettingsV2ToV3(raw) {
+        const aiOptions = isDocument(raw?.aiOptions) ? raw.aiOptions : raw?.aiOptions;
+        return {
+            ...raw,
+            schemaVersion: 3,
+            aiOptions: isDocument(aiOptions)
+                ? {
+                    ...aiOptions,
+                    parallelExecutionMode: 'auto',
+                    externalMaxConcurrency: 4,
+                    localMaxConcurrency: 1,
+                }
+                : aiOptions,
+        };
+    }
     function migrateAiProfilePackageV1ToV2(raw) {
         const migrated = migrateProfileGenerations(raw);
         return { ...migrated, schemaVersion: 2 };
@@ -187,7 +202,7 @@ var __classPrivateFieldGet = (this && this.__classPrivateFieldGet) || function (
     }
     const DATA_MIGRATIONS = Object.freeze({
         'game-state': Object.freeze({ 1: migrateGameStateV1ToV2 }),
-        'desktop-settings': Object.freeze({ 1: migrateDesktopSettingsV1ToV2 }),
+        'desktop-settings': Object.freeze({ 1: migrateDesktopSettingsV1ToV2, 2: migrateDesktopSettingsV2ToV3 }),
         'ai-profile-package': Object.freeze({ 1: migrateAiProfilePackageV1ToV2 }),
     });
     function migrationFor(kind, fromVersion, registry = DATA_MIGRATIONS) {
@@ -295,14 +310,14 @@ define("js/config/constants", ["require", "exports", "js/config/dataCompatibilit
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.TASK_LABELS = exports.AUDIENCE_LABELS = exports.EVENT_TYPE_LABELS = exports.DEFAULT_RULES = exports.DEFAULT_CHARACTER = exports.DEFAULT_REASONING_PROFILE = exports.REASONING_PROFILE_PROMPT_DESCRIPTIONS = exports.REASONING_PROFILE_OPTION_LABELS = exports.PRESET_NOTES = exports.PRESET_ROLES = exports.ROLE_IDS = exports.ROLE_DEFINITIONS = exports.TEAM_LABELS = exports.PHASE_LABELS = exports.PHASES = exports.VOTE_TIE_RESOLUTIONS = exports.SUPPORTED_PLAYER_COUNTS = exports.MAX_PLAYER_COUNT = exports.MIN_PLAYER_COUNT = exports.MAX_RESTORE_POINTS = exports.MAX_UNDO = exports.MAX_RESULT_IMPRESSION_LENGTH = exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = exports.PROMPT_SPEC_VERSION = exports.SCHEMA_VERSION = exports.APP_VERSION = void 0;
-    exports.APP_VERSION = '1.0.6';
+    exports.APP_VERSION = '1.1.0';
     // SCHEMA_VERSIONは製品版ゲーム保存JSONの項目構造・意味・必須条件を表す。
     // アプリversionとは独立して管理し、旧schemaはdataCompatibilityの一方向migrationを通した後だけ本体へ渡す。
     // 製品版1.0.0の基準schemaは1。項目追加・削除・意味変更・必須条件変更時だけ増やす。
     exports.SCHEMA_VERSION = (0, dataCompatibilityAdapter_js_1.getCurrentDataSchemaVersion)(dataCompatibilityAdapter_js_1.DATA_SCHEMA_KIND.GAME_STATE);
     // PROMPT_SPEC_VERSIONはAIへ渡す情報構成・方針・優先度・生成指示の版を表し、対局状態のruntimeへ記録する。
     // 製品版1.0.0では1を基準とし、正式リリース後はAIへ渡す契約・方針・情報構成を変更した場合だけ単調増加させ、リセットしない。
-    exports.PROMPT_SPEC_VERSION = 4;
+    exports.PROMPT_SPEC_VERSION = 6;
     exports.MAX_NIGHT_ACTION_RATIONALE_LENGTH = 240;
     exports.MAX_FREEZE_ACTION_RATIONALE_LENGTH = 360;
     exports.MAX_RESULT_IMPRESSION_LENGTH = 180;
@@ -692,8 +707,8 @@ define("generated/buildInfo", ["require", "exports"], function (require, exports
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.BUNDLE_SHA256 = exports.BUILD_ID = void 0;
-    exports.BUILD_ID = 'b3f7024c44e150ce14cfe54a1d055fc6dd5d67df46fc40314eca1ab628c73afb';
-    exports.BUNDLE_SHA256 = '9e3649916eac10cf370e2c9e9f55f3954e3eb40af01c24809be62cd1dc11ce25';
+    exports.BUILD_ID = '4600751dbff598fa56ee8dd7222fe818644e444711381cee69536e1633fe43e5';
+    exports.BUNDLE_SHA256 = 'ecc880bd3de189fc1f0678a556fc4bce7018ce92f1d8c9780a6d0273997c1b81';
 });
 /**
  * 責務: 副作用の小さい汎用処理と、出力ファイル名部品のOS非依存な正規化を提供する。
@@ -807,7 +822,7 @@ define("js/shared/utils", ["require", "exports"], function (require, exports) {
         document.body.append(anchor);
         anchor.click();
         anchor.remove();
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
     }
     function downloadJson(filename, value) {
         downloadText(filename, JSON.stringify(value, null, 2), 'application/json;charset=utf-8');
@@ -3976,10 +3991,26 @@ define("js/state/stateStore", ["require", "exports", "js/config/constants", "gen
         const nextPoints = [...withoutReplacedAnchor, restorePointEntry(normalizedLabel, sourceState)];
         if (nextPoints.length <= constants_js_7.MAX_RESTORE_POINTS)
             return nextPoints;
-        const pinned = nextPoints.filter((point) => restorePointPolicy_js_1.PINNED_RESTORE_POINT_LABELS.includes(point.label));
-        const regular = nextPoints.filter((point) => !restorePointPolicy_js_1.PINNED_RESTORE_POINT_LABELS.includes(point.label));
-        const regularLimit = Math.max(0, constants_js_7.MAX_RESTORE_POINTS - pinned.length);
-        return [...pinned.slice(-constants_js_7.MAX_RESTORE_POINTS), ...(regularLimit ? regular.slice(-regularLimit) : [])];
+        let dropCount = nextPoints.length - constants_js_7.MAX_RESTORE_POINTS;
+        const droppedIds = new Set();
+        for (const point of nextPoints) {
+            if (dropCount <= 0)
+                break;
+            if (restorePointPolicy_js_1.PINNED_RESTORE_POINT_LABELS.includes(point.label))
+                continue;
+            droppedIds.add(point.id);
+            dropCount -= 1;
+        }
+        // pinnedだけで上限を超える異常系でも、古いものから落として元の時系列順を維持する。
+        for (const point of nextPoints) {
+            if (dropCount <= 0)
+                break;
+            if (!restorePointPolicy_js_1.PINNED_RESTORE_POINT_LABELS.includes(point.label) || droppedIds.has(point.id))
+                continue;
+            droppedIds.add(point.id);
+            dropCount -= 1;
+        }
+        return nextPoints.filter((point) => !droppedIds.has(point.id));
     }
     function deepFreezeState(value) {
         if (!value || typeof value !== 'object' || Object.isFrozen(value))
@@ -4169,13 +4200,14 @@ define("js/state/stateStore", ["require", "exports", "js/config/constants", "gen
     };
 });
 /**
- * 責務: 現在状態からデスクトップ自動復元に必要な保存スナップショットを作る。
- * 変更ルール: 現在状態と訂正用restorePointsは保持し、セッション内だけで使うUndo／Redo履歴は自動保存へ含めない。完全JSON出力の仕様は変更しない。
+ * 責務: 現在状態からデスクトップ自動復元に必要な保存スナップショットを作り、Renderer側でIPC送信用JSON文字列へ直列化する。
+ * 変更ルール: 現在状態と訂正用restorePointsは保持し、セッション内だけで使うUndo／Redo履歴は自動保存へ含めない。完全JSON出力の仕様は変更しない。Mainスレッドで巨大ゲーム状態をJSON.stringifyしないため、デスクトップ自動保存の直列化はここを正本とする。
  */
 define("js/state/autosaveState", ["require", "exports"], function (require, exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createAutosaveState = createAutosaveState;
+    exports.serializeAutosaveState = serializeAutosaveState;
     function createAutosaveState(state) {
         if (!state || typeof state !== 'object' || Array.isArray(state)) {
             throw new TypeError('自動保存対象のゲーム状態が不正です。');
@@ -4185,6 +4217,19 @@ define("js/state/autosaveState", ["require", "exports"], function (require, expo
             undoStack: [],
             redoStack: [],
         };
+    }
+    function serializeAutosaveState(state) {
+        try {
+            const serialized = JSON.stringify(createAutosaveState(state));
+            if (typeof serialized !== 'string')
+                throw new TypeError('自動保存データをJSONへ直列化できません。');
+            return serialized;
+        }
+        catch (error) {
+            if (error instanceof TypeError && error.message.includes('自動保存'))
+                throw error;
+            throw new TypeError(`自動保存データをJSONへ直列化できません: ${error.message}`);
+        }
     }
 });
 /**
@@ -12405,10 +12450,25 @@ define("js/prompts/response/responseContract", ["require", "exports", "js/domain
     }
 });
 /**
+ * 責務: AI応答のevidenceRefs件数上限を一元管理し、通常判断と投票判断で同じ上限制約をSchema・プロンプト・自動修復へ供給する。
+ * 変更ルール: evidenceRefsのJSONキー名・配列型・公開可視性判定は変更せず、件数上限だけを定義する。投票は短時間で確定すべきため通常判断より厳しい上限を使用する。
+ */
+define("js/prompts/response/evidenceRefPolicy", ["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.MAX_VOTE_EVIDENCE_REFS = exports.MAX_EVIDENCE_REFS = void 0;
+    exports.evidenceRefMaxItemsForMode = evidenceRefMaxItemsForMode;
+    exports.MAX_EVIDENCE_REFS = 5;
+    exports.MAX_VOTE_EVIDENCE_REFS = 3;
+    function evidenceRefMaxItemsForMode(mode = '') {
+        return mode === 'vote' ? exports.MAX_VOTE_EVIDENCE_REFS : exports.MAX_EVIDENCE_REFS;
+    }
+});
+/**
  * 責務: voteでAIへ原則出力させるdecisionPatchの比較項目と説明文を、直接生成・多段候補工程の両方へ同一内容で提供する。
  * 変更ルール: 回答検証上のrequired/optionalを変更しない。ここで列挙する項目は今回JSON例へ表示された任意候補であり、欠落時のエラー条件ではない。機械許可キー集合はresponseContractを正本とし、本モジュールは表示集合だけを説明する。投票時の処刑比較はactionAnswerの投票対象を単一の基準対象とし、別候補の利益・損失を同じ比較欄へ混在させない。ゲーム状態・秘密情報を参照しない。decisionPatchの根拠参照は#公開ログ番号だけに限定し、P#本人限定参照との名前空間を混同させない。
  */
-define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", "js/domain/game/decisionState"], function (require, exports, decisionState_js_6) {
+define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", "js/domain/game/decisionState", "js/prompts/response/evidenceRefPolicy"], function (require, exports, decisionState_js_6, evidenceRefPolicy_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.VOTE_PROMPT_PRIORITY_DECISION_CHANGE_KEYS = void 0;
@@ -12431,7 +12491,7 @@ define("js/prompts/policies/voteResponseGuidancePolicy", ["require", "exports", 
             rows.push(`decisionPatch.assessmentLevelは ${decisionState_js_6.DECISION_ASSESSMENT_LEVELS.join(' / ')} のいずれかです。`);
         }
         if (normalizedDisplayedKeys.includes('correctedSpeechRefs') || normalizedDisplayedKeys.includes('evidenceRefs')) {
-            rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
+            rows.push(`decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。evidenceRefsは投票判断を直接支える主要根拠だけを最大${evidenceRefPolicy_js_1.MAX_VOTE_EVIDENCE_REFS}件、重要度順・重複なしで指定し、根拠一覧の網羅目的では使用しません。`);
         }
         return rows;
     }
@@ -12525,7 +12585,7 @@ define("js/prompts/policies/decisionPromptFieldPolicy", ["require", "exports"], 
  * - 夜行動理由、襲撃評価、雪女推定、初夜共有戦略、失効判断などの動的なAI向け必須性も本モジュールだけで決め、responseContract.jsの回答検証必須性へ逆流させない。
  * - heartVoiceは通常昼発言系とpriority-answerだけで原則出力とし、遺言・墓場会話へ生成指示を追加しない。墓場会話ではmemoAddを機械許可のまま保持してもプロンプト掲載・JSON例から外し、秘密共有・答え合わせ・感想へ誘導する。
  */
-define("js/prompts/response/activeResponseContract", ["require", "exports", "js/domain/game/decisionState", "js/prompts/policies/voteResponseGuidancePolicy", "js/prompts/policies/decisionPromptFieldPolicy", "js/domain/game/factionStrategyState", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_7, voteResponseGuidancePolicy_js_1, decisionPromptFieldPolicy_js_1, factionStrategyState_js_7, publicAbilityClaimPolicy_js_11, responseContract_js_1) {
+define("js/prompts/response/activeResponseContract", ["require", "exports", "js/domain/game/decisionState", "js/prompts/response/evidenceRefPolicy", "js/prompts/policies/voteResponseGuidancePolicy", "js/prompts/policies/decisionPromptFieldPolicy", "js/domain/game/factionStrategyState", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_7, evidenceRefPolicy_js_2, voteResponseGuidancePolicy_js_1, decisionPromptFieldPolicy_js_1, factionStrategyState_js_7, publicAbilityClaimPolicy_js_11, responseContract_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildActiveResponseContractExample = buildActiveResponseContractExample;
@@ -12609,13 +12669,13 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             const truthfulExample = (0, responseContract_js_1.buildAbilityClaimsConditionalExample)(claimRolePolicy, normalizedReferences);
             const deceptionExample = (0, responseContract_js_1.buildDeceptionAbilityClaimsConditionalExample)(claimRolePolicy, normalizedReferences);
             const hasTruthfulSource = Boolean(normalizedReferences.truthfulAbilitySourceRefs.length);
-            rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。abilityClaimsは公開する能力結果を構造化して記録します。');
+            rows.push(`能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。evidenceRefsは判断に直接必要な主要根拠だけを最大${evidenceRefPolicy_js_2.MAX_EVIDENCE_REFS}件、重要度順・重複なしで指定します。abilityClaimsは公開する能力結果を構造化して記録します。`);
             if (hasTruthfulSource && truthfulExample)
                 rows.push(`truthful形式: ${JSON.stringify({ abilityClaims: truthfulExample })}`);
             const resultValuesByRole = claimRolePolicy.abilityClaimRoleIds
                 .map((roleId) => `${roleId}=${((0, publicAbilityClaimPolicy_js_11.getPublicAbilityClaimDefinition)(roleId)?.results ?? []).join(' / ')}`)
                 .join('、');
-            rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・actionDay・actionPhase・availableDay・availablePhase・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。`);
+            rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・actionDay・actionPhase・availableDay・availablePhase・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。evidenceRefsは判断に直接必要な主要根拠だけを最大${evidenceRefPolicy_js_2.MAX_EVIDENCE_REFS}件、重要度順・重複なしで指定します。`);
             if (deceptionExample)
                 rows.push(`deception形式: ${JSON.stringify({ abilityClaims: deceptionExample })}`);
         }
@@ -12703,7 +12763,7 @@ define("js/prompts/response/activeResponseContract", ["require", "exports", "js/
             rows.push('処刑比較ではexecutionCandidatesの先頭を第一処刑候補とし、leaveAliveBenefit / misexecutionCost / selectionDifferenceはその第一候補だけを基準に記録します。intendedVoteを設定する場合は同じ対象を第一処刑候補にしてください。');
         }
         if (shownKeys.includes('correctedSpeechRefs') || shownKeys.includes('evidenceRefs')) {
-            rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
+            rows.push(`decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。evidenceRefsは判断に直接必要な主要根拠だけを最大${(0, evidenceRefPolicy_js_2.evidenceRefMaxItemsForMode)(mode)}件、重要度順・重複なしで指定し、根拠一覧の網羅目的では使用しません。`);
         }
         return rows;
     }
@@ -12967,7 +13027,7 @@ define("js/prompts/policies/taskInstructionPolicy", ["require", "exports"], func
     exports.renderVoteReevaluationRule = renderVoteReevaluationRule;
     /**
      * 責務: 生成深度に依存しない公開発言・回答フェーズ・投票・人狼襲撃の意味ルールを一元定義する。
-     * 変更ルール: 深度1の直接生成で適用する意味ルールを正本とし、深度2～4も必ず同じ本文を参照する。共通発言ルールは直接質問への回答、公開情報による評価更新、他者推理の再提示抑制、同一根拠の証拠増幅防止、公開事実、能力結果を公開する場合のpublicSpeech明示、判断材料不足時の本人傾向に応じた反応・質問・暫定意見を正本とし、新規性のための観点・仮説・疑い先を要求しない。初日の材料不足時だけ短い暫定差ルールへ差し替え、通常時も説明できない差を作らせない。処刑候補の価値は最終巡の通常発言・優先回答と投票で自陣営基準の具体的な勝敗・人数・票・能力・公開情報・誤処刑損失として比較し、役職非公開時は処刑だけで真偽が確定しないことを明示する。村人陣営だけ誤処刑・情報価値・人狼本体削減を追加評価する。最終巡では質問回答と本人発言の順序に関係なく同じ比較粒度を使い、小さな差でも現時点で選べるならintendedVoteを設定し、候補が同程度なら本人の判断傾向・残り議論機会・場の意見を踏まえて暫定候補か保留かを選ぶ。人狼襲撃では公開配役に存在する防御・失敗要因だけを考慮し、生存させた場合に増える確定情報まで含む候補比較として責務を分ける。判断の注目点・比較方法と、誰へ何を質問すれば差が付くかは選択済みの非公開参考視点へ委ねる。工程固有のJSON構造・客観分析・批判的検証・キャラ発言化指示は各stageモジュールへ残し、ここへ混在させない。
+     * 変更ルール: 深度1の直接生成で適用する意味ルールを正本とし、深度2～4も必ず同じ本文を参照する。共通発言ルールは直接質問への回答、公開情報による評価更新、他者推理の再提示抑制、同一根拠の証拠増幅防止、公開事実、能力結果を公開する場合のpublicSpeech明示、判断材料不足時の本人傾向に応じた反応・質問・暫定意見を正本とし、新規性のための観点・仮説・疑い先を要求しない。初日の材料不足時だけ短い暫定差ルールへ差し替え、通常時も説明できない差を作らせない。処刑候補の価値は最終巡の通常発言・優先回答と投票で自陣営基準の具体的な勝敗・人数・票・能力・公開情報・誤処刑損失として比較し、役職非公開時は処刑だけで真偽が確定しないことを明示する。村人陣営だけ誤処刑・情報価値・人狼本体削減を追加評価する。最終巡では質問回答と本人発言の順序に関係なく同じ比較粒度を使い、小さな差でも現時点で選べるならintendedVoteを設定し、候補が同程度なら本人の判断傾向・残り議論機会・場の意見を踏まえて暫定候補か保留かを選ぶ。正式投票では新しい公開情報だけでなく、投票時に初めて提示される処刑後の人数・勝利条件分岐も前回判断の再評価材料とし、再比較後も結論が変わらない場合だけintendedVoteを維持する。人狼襲撃では公開配役に存在する防御・失敗要因だけを考慮し、生存させた場合に増える確定情報まで含む候補比較として責務を分ける。判断の注目点・比較方法と、誰へ何を質問すれば差が付くかは選択済みの非公開参考視点へ委ねる。工程固有のJSON構造・客観分析・批判的検証・キャラ発言化指示は各stageモジュールへ残し、ここへ混在させない。
      */
     function renderPublicSpeechSemanticRules({ firstDaySparseEvidence = false } = {}) {
         return `直接質問への回答と、公開情報によって生じた評価の変更を優先してください。公開情報だけでは判断が進まない場合も、本人の着眼点や議論傾向に応じて、特定人物への質問、気になった点への反応、暫定的な意見などを選べます。質問のために新しい疑い・仮説・論点を作る必要はありません。
@@ -13013,7 +13073,15 @@ COをpublicSpeechへ書いた場合は対応するcoOperationにも必ず記録�
 attackAssessmentを埋め、襲撃理由をrationaleへ1～2文で記載します。他の人狼の襲撃先投票は参照せず、自分の判断だけで選びます。特定役職や発言力の高い人物を固定優先しません。`;
     }
     function renderVoteReevaluationRule() {
-        return '投票前に、前回判断後の新しい公開情報だけを確認してください。intendedVoteが現在も有効で新情報がなければ維持します。未定・無効、または新情報がある場合だけ、現在の有効根拠で候補を再比較してください。失効した根拠を投票理由へ再利用しないでください。';
+        return `投票前に、前回判断後の新しい公開情報と、投票時に初めて提示された処刑後の盤面を確認してください。
+
+新しい公開情報がなくても、前回判断では未評価だった人数・勝利条件の分岐がある場合は、その分岐を現在の判断材料として扱ってください。
+
+特に、候補の正体に関する判断を誤った場合に、処刑直後または次夜の襲撃成功後までに自陣営敗北へ到達し得る分岐がある場合は、前回のintendedVoteを自動的に維持せず、今日その候補を処刑する価値を再比較してください。
+
+新しい公開情報がなく、投票専用の処刑後分岐を踏まえても前回の比較結果が変わらない場合だけ、現在有効なintendedVoteを維持してください。
+
+失効した根拠を投票理由へ再利用しないでください。`;
     }
 });
 /**
@@ -13036,7 +13104,8 @@ attackAssessmentを埋め、襲撃理由をrationaleへ1～2文で記載しま�
  * - 次の通常発言者本人宛ての質問は通常発言内で回答させ、回答イベント番号をspeechInteractionへ記録する指示だけを担当する。
  * - 出力仕様を変更した場合は機械契約・フェーズ契約・解析検証を同時更新する。
  * - 人物名・公開主張・共有作戦など実行時データは命令文へ直接展開せず、必ずJSONの[game-data:...]へ隔離し、静的な判断指示から分離する。
- * - 狂人系不在かつ最早順の人狼へ追加する初動情報は先行COを強制せず、騙りによる露呈リスクと後出し評価を翌日盤面まで比較できる判断材料だけを提示する。
+ * - 狂人系不在かつ最早順の人狼へ追加する初動情報は先行COを強制しない。人狼枠が一人なら露呈リスクと後出し評価を維持し、複数なら騙りを抑える追加の露呈リスク評価を外して「人狼以外に騙りを期待できない」という公開配役上の事実だけを提示する。
+ * - 初夜opening-strategyは狂人系不在かつ複数人狼の場合だけ、発言順を基準に先行CO・潜伏・後手対抗の役割分担を共有させる。先行CO自体は固定せず、通常ケースへこの分担強調を流用しない。
  * - 人狼本人の騙り判断は偽判定だけでなく対抗処刑後のゲーム継続まで評価し、狂人本人は露呈・縄引受け自体が陣営利益になり得るため同じ危険評価を流用しない。
  * - 局面限定の対抗CO候補は役職ごとの目的を維持し、通常人狼と狂人だけ役職別文面へ分離する。雪女・座敷わらし等へ狂人専用の縄引受け方針を自動流用しない。
  */
@@ -13148,7 +13217,7 @@ ${phaseStrategy}`;
             ownActiveClaimRoleName,
         });
         const tacticalOptions = canClaimBinaryAbilityResult
-            ? `狂人枠の昼行動には、黒先への白、別対象または対抗能力者への黒、別対象への白、潜伏・CO保留、自身への縄誘導があります。黒先への白は直接救援になる一方、確認処刑を止められない局面では対象とともに破綻しやすく、別対象への黒は誤爆を伴う一方、新たな処刑候補と対立軸を作れます。
+            ? `狂人枠の昼行動には、別対象または対抗能力者への黒、別対象への白、潜伏・CO保留、自身への縄誘導があります。別対象への黒は誤爆を伴う一方、新たな処刑候補と対立軸を作れます。
 
 選択肢ごとの価値は、動く票、確認役職、誤爆、関係露出、翌日に残る勝ち筋で変化します。`
             : `狂人枠の昼行動には、潜伏・CO・CO保留・擁護・圧力・自身への縄誘導があります。
@@ -13201,13 +13270,13 @@ ${voteRequired
         }
         return common;
     }
-    function renderWhiteWolfDayStrategyInstruction({ voteRequired = false, canClaimBinaryAbilityResult = false } = {}) {
+    function renderWhiteWolfDayStrategyInstruction({ canClaimBinaryAbilityResult = false } = {}) {
         const fakeResultForwardWarning = canClaimBinaryAbilityResult
             ? '偽判定は翌日まで見通し、偽黒先を処刑してゲームが続けば破綻し得る点を考慮してください。'
             : '';
         return `## 白狼としての今回の判断
 
-村人として自然に推理し、占いの非人狼判定を長期的な信用へつなげる潜伏を基本候補とします。無理な騙りや露骨な仲間擁護を避け、${voteRequired ? '公開根拠があれば仲間への投票も含めて比較してください。' : '対抗COや仲間支援は潜伏価値を失う負担も含めて比較してください。'}${fakeResultForwardWarning ? `
+占いで非人狼判定になるため潜伏価値は通常人狼より高めですが、潜伏を固定しません。現在の信用、必要票、仲間数、対抗構造から、潜伏を崩して得る陣営利益が上回るか比較してください。${fakeResultForwardWarning ? `
 
 ${fakeResultForwardWarning}` : ''}`;
     }
@@ -13277,21 +13346,29 @@ ${contextData}
 
 上記データの家主が役職CO中で、同役職の対抗がいます。座敷わらしCOで家主を追認する選択肢があります。信用補強になる一方、家主の襲撃リスクが上がる可能性と、家主死亡時の後追い死亡に注意してください。潜伏も可能です。`;
     }
-    function renderWolfInitialClaimDecisionInstruction({ sharedClaimPlan = '共有作戦に明示なし', speakerPosition = '不明', addNoMadmanEarlyWolfContext = false, } = {}) {
+    function renderWolfInitialClaimDecisionInstruction({ sharedClaimPlan = '共有作戦に明示なし', speakerPosition = '不明', noMadmanEarlyWolfClaimMode = 'none', } = {}) {
         const contextData = (0, promptDataSerializer_js_4.renderPromptDataBlock)('wolf-initial-claim-context', {
             sharedClaimPlan,
             speakerPosition,
         });
-        const noMadmanEarlyWolfContext = addNoMadmanEarlyWolfContext
+        const relaxClaimRisk = noMadmanEarlyWolfClaimMode === 'multiple-wolves';
+        const noMadmanEarlyWolfContext = noMadmanEarlyWolfClaimMode === 'multiple-wolves'
             ? `
 
+この配役には狂人系役職が存在しません。騙りを人狼以外に期待できません。`
+            : noMadmanEarlyWolfClaimMode === 'single-wolf'
+                ? `
+
 この配役には狂人系役職が存在しません。騙りを人狼以外に期待できない一方、人狼自身が騙ると対抗構造から人狼位置が絞られやすくなります。真役職を待つことによる後出し評価と、騙った後の処刑・ゲーム継続で正体が露呈する危険を比較してください。`
-            : '';
+                : '';
+        const claimDecision = relaxClaimRisk
+            ? '他者の公開COなし。共有作戦・仲間との分担・発言順から先行CO、潜伏、後手対抗を比較してください。COする場合は導入より役職・結果・対象を優先し、いずれも固定戦術にしません。'
+            : '他者の公開COなし。共有作戦・仲間との分担・発言順から先行CO、潜伏、後手対抗を比較してください。COは当日の信用だけでなく、対抗出現後の各処刑分岐と翌日の盤面まで評価し、処刑後のゲーム継続などで自分の偽COが確定または強く露呈する経路を重く見てください。COする場合は導入より役職・結果・対象を優先し、いずれも固定戦術にしません。';
         return `## 初動の騙り判断
 
 ${contextData}
 
-他者の公開COなし。共有作戦・仲間との分担・発言順から先行CO、潜伏、後手対抗を比較してください。COは当日の信用だけでなく、対抗出現後の各処刑分岐と翌日の盤面まで評価し、処刑後のゲーム継続などで自分の偽COが確定または強く露呈する経路を重く見てください。COする場合は導入より役職・結果・対象を優先し、いずれも固定戦術にしません。${noMadmanEarlyWolfContext}`;
+${claimDecision}${noMadmanEarlyWolfContext}`;
     }
     function renderMadmanInitialClaimDecisionInstruction({ speakerPosition = '不明' } = {}) {
         const contextData = (0, promptDataSerializer_js_4.renderPromptDataBlock)('madman-initial-claim-context', {
@@ -13301,7 +13378,7 @@ ${contextData}
 
 ${contextData}
 
-初動には先行CO、潜伏、後手対抗があります。先行COは真役職を表へ出しやすい一方で人狼の騙りと衝突し、潜伏は人物推定と投票支援の余地を残し、後手対抗は先行情報を使える一方で後出し視を受けます。`;
+初動では先行CO、潜伏、後手対抗を比較してください。先行COは真役職の露出や単独真視の阻止に有効ですが、人狼の騙りと競合する可能性があります。潜伏や後手対抗では情報を増やせますが、相手に先に盤面を作られる不利もあります。待つ利益だけでなく、今COして盤面を動かす価値も含めて判断してください。`;
     }
     function renderMadmanClaimBranchInstruction({ claimedRoleName, ownClaimSummary, activeClaimSupportsBinaryResult = false, } = {}) {
         const contextData = (0, promptDataSerializer_js_4.renderPromptDataBlock)('madman-claim-context', {
@@ -13319,24 +13396,33 @@ ${contextData}
 
 ${contextData}
 
-公開主張の継続には、黒先への白、別対象または対抗能力者への黒、別対象への白、結果保留、自分が偽視されて縄を引き受ける進行があります。
+公開主張の継続には、別対象または対抗能力者への黒、別対象への白、結果保留、自分が偽視されて縄を引き受ける進行があります。
 
-黒先への白は確認処刑時の連鎖破綻、別対象への黒は誤爆と新たな処刑候補、結果保留は信用維持と情報不足という異なる影響を持ちます。公開済み結果との整合性、今日動く票、対象崩壊後に残る公開世界が選択を分けます。`;
+別対象への黒は誤爆と新たな処刑候補、結果保留は信用維持と情報不足という異なる影響を持ちます。公開済み結果との整合性、今日動く票、対象崩壊後に残る公開世界が選択を分けます。`;
     }
-    function renderOpeningWolfStrategyInstruction({ hasMadmanClass = false, hasBinaryAbilityRole = false } = {}) {
-        const uncertainItems = ['翌日の役職CO数'];
-        if (hasMadmanClass)
-            uncertainItems.push('狂人系役職の行動');
-        uncertainItems.push('能力結果', '発言順', '票分布');
-        const switchItems = [hasBinaryAbilityRole ? '黒結果' : '', '仲間の処刑圏', '騙り崩壊'].filter(Boolean).join('、');
-        const claimsToProtect = hasMadmanClass ? '仲間・狂人系候補' : '仲間';
+    function renderOpeningWolfStrategyInstruction({ noMadmanMultipleWolves = false } = {}) {
+        if (noMadmanMultipleWolves) {
+            return `参加者だけが閲覧できる初夜の秘密会話です。
+
+翌日の発言順を踏まえ、先行CO、潜伏、後手対抗の役割分担を共有してください。公開情報が変化したときに対応できるよう、切替条件も共有してください。
+
+この配役には狂人系役職が存在せず、人狼以外が人狼陣営の役職騙りを担当することは期待できません。人狼同士で同じ判断を重ねるのではなく、発言順を踏まえて役割を分けて検討してください。
+
+特定人物への結果や投票先を早い段階で固定しすぎないでください。
+
+claimPlanには、発言順を踏まえた先行CO・潜伏・後手対抗の役割分担と、公開情報によって変更する条件を簡潔に保存してください。
+
+騙りを含む方針を選んだ場合は、その主張を維持できなくなったときに仲間まで同時に疑われないための切替方針も共有してください。`;
+        }
         return `参加者だけが閲覧できる初夜の秘密会話です。
 
-今夜のルールでは襲撃対象が存在しません。${uncertainItems.join('、')}は未確定です。人物や投票先を固定するより、${switchItems}ごとの切替条件と、discussionPlanで各人の公開役割・説明を重ねる合流条件を共有してください。
+翌日の役職CO数、能力結果、発言順、票分布は未確定です。公開情報が変化したときに対応できるよう、先行CO、潜伏、後手対抗を含む役割分担と切替条件を共有してください。
 
-仲間救出、距離取り、仲間投票はいずれも固定戦術ではありません。仲間が処刑圏へ入った場合は、救出に必要な票数、代替候補へ票を集められる可能性、仲間切りで得る具体的利益、人狼一人を失う損失を比較します。
+特定人物への結果や投票先を早い段階で固定しすぎないでください。
 
-偽COは対抗出現後の各処刑分岐と翌日のゲーム継続まで考え、対抗または自分の処刑で主張が崩れる場合は${claimsToProtect}の全主張を守らず、村側へ採用させる仮定が少ない公開世界へ縮小できるようにしてください。共有作戦は翌日の行動予約ではなく、実際の公開情報に応じて維持・変更・不採用を選べます。`;
+claimPlanには、誰がどの公開役職を主張する可能性があるか、潜伏・先行CO・後手対抗を切り替える条件を簡潔に保存してください。公開情報が未確定な段階では、特定人物への結果や固定した処刑先までは決めないでください。
+
+騙りを含む方針を選んだ場合は、その主張を維持できなくなったときに仲間まで同時に疑われないための切替方針も共有してください。`;
     }
     function renderAttackPlanningInstruction() {
         return `参加者だけが閲覧できる夜の秘密会話です。
@@ -13381,7 +13467,7 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
             ? 'current-task.requiredAnswersの全件へ今回の通常発言内で直接答え、speechInteraction.answerToRefsへ各questionSequenceを記録してください。'
             : '';
         const hasMadmanClass = (0, roleAttributes_js_18.countConfiguredMadmanSlots)(roleComposition) > 0;
-        const hasBinaryAbilityRole = Number(roleComposition?.seer ?? 0) > 0 || Number(roleComposition?.medium ?? 0) > 0;
+        const noMadmanMultipleWolves = !hasMadmanClass && (0, roleAttributes_js_18.countConfiguredWolves)(roleComposition) > 1;
         switch (taskType) {
             case 'briefing':
                 return 'これは役職通知用です。内容を保持し、応答せず次の進行プロンプトを待ってください。';
@@ -13419,7 +13505,7 @@ ${(0, taskInstructionPolicy_js_1.renderPriorityAnswerSemanticRules)({ firstDaySp
                 return '死亡者だけが閲覧できる墓場会話です。墓場会話の主目的は、死亡者同士で生前の秘密を共有し、答え合わせや感想を交わすことです。自分だけが知っていた真役職、能力結果、仲間情報、騙りの意図、行動理由など、墓場でまだ共有されていない情報があれば優先して話してください。他の死亡者から新しい秘密や、自分の死亡後に地上で起きた出来事を聞いた場合は、それに対する驚き、納得、後悔、感想、生前の認識との違いなどを自然に返してください。あなたの公開知識は死亡時点で固定され、死亡後の地上情報は墓場で実際に共有された内容だけ追加で知ります。';
             case 'wolf-conversation':
                 if (wolfConversationPurpose === 'opening-strategy')
-                    return renderOpeningWolfStrategyInstruction({ hasMadmanClass, hasBinaryAbilityRole });
+                    return renderOpeningWolfStrategyInstruction({ noMadmanMultipleWolves });
                 if (wolfConversationPurpose === 'opening-strategy-and-attack')
                     return renderOpeningAndAttackInstruction({ hasMadmanClass });
                 return renderAttackPlanningInstruction();
@@ -13678,7 +13764,7 @@ ${content}`;
 });
 /**
  * 責務: 本人の真の役職・本人限定確定属性と現在タスクに対応する判断原則を文章化する。
- * 変更ルール: 共通ルールを重複定義せず、本人が知る属性だけで分岐する。公開本文への他者未公開情報の漏洩禁止は共通出力契約を正本とし、役職固有指示ではその役職に固有の公開根拠制約だけを示す。特殊役職は実装された効果・公開タイミング・不成立条件を一般的な人狼知識へ委ねず短く明示する。投票ではCO・公開発言・能力結果提出の手順を載せず、投票判断へ影響する本人限定情報と役職効果だけを示す。特殊陣営と複数死亡役職の勝敗判断は削らない。特定行動を必須化せず、状態更新や可視性判定を行わない。本人限定の動的役職データは[game-data:...]へ隔離し、自由文字列を判断指示へ直接展開しない。
+ * 変更ルール: 共通ルールを重複定義せず、本人が知る属性だけで分岐する。公開本文への他者未公開情報の漏洩禁止は共通出力契約を正本とし、役職固有指示ではその役職に固有の公開根拠制約だけを示す。公開役職説明で固定効果を既に提示する役職は、戦術側で全仕様を再掲せず現在判断に必要な差分と効果の非対称性だけを示す。特殊役職の公開タイミング・不成立条件など判断を誤らせる差分は一般的な人狼知識へ委ねず短く明示する。投票ではCO・公開発言・能力結果提出の手順を載せず、投票判断へ影響する本人限定情報と役職効果だけを示す。特殊陣営と複数死亡役職の勝敗判断は削らない。特定行動を必須化せず、状態更新や可視性判定を行わない。本人限定の動的役職データは[game-data:...]へ隔離し、自由文字列を判断指示へ直接展開しない。
  */
 define("js/prompts/templates/rolePromptTemplates", ["require", "exports", "js/domain/roles/roleAttributes", "js/prompts/serialization/promptDataSerializer"], function (require, exports, roleAttributes_js_19, promptDataSerializer_js_5) {
     "use strict";
@@ -13693,7 +13779,7 @@ define("js/prompts/templates/rolePromptTemplates", ["require", "exports", "js/do
 共有者仲間の正体は本人にとって確定情報です。相方を明かすかは盤面から判断し、未公開の相方と共有者会話を漏らさないでください。共有者COを行う場合はcoOperationを明示し、公開発言本文からCOを推定させません。`,
         seer: `## あなたの役職固有の判断材料
 
-正式通知された占い結果は本人の確定情報です。公開時は襲撃危険と対抗比較を考え、COと能力結果主張を明示構造で提出します。公開発言本文からは抽出させません。`,
+正式通知された占い結果は本人の確定情報です。公開時は襲撃危険と対抗比較を考え、COと能力結果主張を明示構造で提出します。`,
         medium: `## あなたの役職固有の判断材料
 
 正式通知された霊能結果は本人の確定情報です。処刑者の結果を投票、CO、能力結果主張と組み合わせてください。公開する場合はCOと結果主張をそれぞれ明示構造で提出します。`,
@@ -13705,16 +13791,13 @@ define("js/prompts/templates/rolePromptTemplates", ["require", "exports", "js/do
 訪問結果は通知されません。「悪い子」だけに恐怖を与え、恐怖によって役職行動全体が阻害された時に恐怖は解除されます。人狼が複数いる場合は一部だけを恐怖にしても襲撃が行われ、その恐怖は維持されます。前夜と同じ相手は選べません。`,
         fox: `## あなたの役職固有の判断材料
 
-妖狐は人狼の襲撃では死亡せず、占われると死亡します。通常陣営の勝利条件成立時に生存していれば勝利するため、占い・処刑危険と両陣営の人数推移を常に比較し、真の役職と耐性を公開発言へ漏らさないでください。`,
-        cat: `## あなたの役職固有の判断材料
-
-処刑時は自分以外の生存者一人を、襲撃死時は生存人狼一人をランダムに道連れにし、対象は選べません。道連れで死亡した猫又の能力は連鎖しません。自分の処刑・襲撃価値と陣営への影響を比較してください。`,
+妖狐は人狼の襲撃では死亡せず、占われると死亡します。通常陣営の勝利条件成立時に生存していれば勝利します。生存日数を伸ばすこと自体を目的にせず、占い・処刑危険とゲームが終了する時点を比較してください。`,
         wolf: `## あなたの役職固有の判断材料
 
 人狼仲間は本人の確定情報です。潜伏中の公開推理・質問・疑いは、仲間を知らない村人にも成立する公開根拠で組み立てます。村側の最有力結論へ自動的に合流せず、成立する公開世界の中から人狼数・必要票・翌日の勝ち筋を最も残すものを選べます。仲間救出・距離取り・仲間投票を固定戦術にしません。正体公開や陣営票合わせを選んだ場合は、その戦術に必要な自分のCO・投票指示を行えます。`,
         whiteWolf: `## あなたの役職固有の判断材料
 
-基本は村人に徹し、占いで「人狼ではない」と判定される強みを長期的な信用へつなげてください。無理な騙りや露骨な仲間擁護を避け、公開根拠があれば仲間を疑い・投票する選択肢もあります。霊能では人狼と判定され、占いの非人狼結果も村人陣営確定ではありません。`,
+占いでは非人狼、霊能では人狼と判定されます。占いで正体が露出しにくいことを、潜伏を続ける価値の一つとして扱ってください。`,
         zashikiWarashi: `## あなたの役職固有の判断材料
 
 家主の名前・正確な役職・所属陣営は本人だけの秘密情報です。家主側はあなたとの関係を知りません。家主が死亡すると自分も後追いしますが、自分や家主の生存自体は独立した勝利条件ではありません。所属陣営の勝利を優先し、未公開の家主情報を公開情報として扱わないでください。`,
@@ -13740,22 +13823,19 @@ define("js/prompts/templates/rolePromptTemplates", ["require", "exports", "js/do
 訪問結果は通知されません。過去の訪問先を人狼または恐怖状態と確定せず、公開情報と投票価値から判断してください。現在の有効投票者と候補は正式なゲーム状態を優先してください。`,
         fox: `## あなたの役職固有の投票材料
 
-妖狐は人狼の襲撃では死亡せず、占われると死亡します。通常陣営の勝利条件成立時に生存していれば勝利するため、今日の処刑、占い危険、処刑後の人数推移を比較し、真の役職と耐性を漏らさないでください。`,
+自分が生存したまま今日ゲームを終えられる処刑も勝ち筋です。生存期間を延ばすことを固定せず、各候補の処刑後の勝敗と自分の処刑危険を比較してください。`,
         cat: `## あなたの役職固有の投票材料
 
-自分が処刑されると自分以外の生存者一人をランダムに道連れにし、対象は選べません。道連れで死亡した猫又の能力は連鎖しません。自分と各候補の処刑が人数・役職・勝利条件へ与える影響を比較してください。`,
+自分の処刑ではランダムな追加死亡が発生します。自分を含む各候補の処刑後の人数と勝利条件まで比較してください。`,
         wolf: `## あなたの役職固有の投票材料
 
 人狼仲間は本人の確定情報です。仲間救出、仲間投票、別候補への票集中を固定戦術にせず、必要票、公開根拠、処刑後の人狼数、翌日の勝ち筋を比較してください。秘密情報を公開根拠として扱わないでください。`,
-        whiteWolf: `## あなたの役職固有の投票材料
-
-占いでは非人狼、霊能では人狼と判定されます。占いの非人狼結果を長期的な信用へつなげつつ、仲間救出・仲間投票・今日の処刑価値を公開根拠と人数条件から比較してください。`,
     });
     const TASK_ROLE_GUIDANCE = Object.freeze({
         seer: Object.freeze({
             inspect: `## あなたの役職固有の判断材料
 
-占い結果を知る前の公開情報だけで対象を比較し、差がなければ任意選択であることを正直に記録してください。今回の選択理由は後から得た結果で書き換えません。`,
+占い結果を知る前の公開情報から、人狼・非人狼のどちらが出ても候補整理やCO評価が進む対象を比較してください。十分な差がなければ任意に選べます。選択理由は結果判明後に書き換えません。`,
         }),
         guard: Object.freeze({
             guard: `## あなたの役職固有の判断材料
@@ -13806,12 +13886,12 @@ current-task.guardRulesに、自己護衛・連続護衛の可否、前夜の護
 非人狼結果は村人陣営確定を意味しません。` : guidance;
     }
     function catDayGuidance(context) {
-        const attackCondition = hasConfiguredRole(context, 'guard')
-            ? '護衛されて死亡しなければ襲撃時の道連れは発動しないため、'
-            : '襲撃時の道連れは襲撃死した場合にのみ発動するため、';
+        const guardRule = hasConfiguredRole(context, 'guard')
+            ? '\n\n護衛で襲撃死しなければ道連れも発動しません。'
+            : '';
         return `## あなたの役職固有の判断材料
 
-処刑時は自分以外の生存者一人を、襲撃死時は生存人狼一人をランダムに道連れにし、対象は選べません。道連れで死亡した猫又の能力は連鎖しません。${attackCondition}自分の処刑・襲撃価値と陣営への影響を比較してください。`;
+処刑死では生存者一人をランダムに、襲撃死では生存人狼一人をランダムに道連れにします。処刑圏では村側を道連れにする危険を避ける利益、非処刑圏では襲撃対象として残る利益を比較してください。${guardRule}`;
     }
     function wolfAttackRoleGuidance(context) {
         const extra = [];
@@ -13980,9 +14060,11 @@ ${ownerRoleGuidance ? `${ownerRoleGuidance}
         if (roleId === 'snowWoman')
             return taskType === 'vote' ? snowWomanVoteGuidance(context) : snowWomanDayGuidance(context);
         if (taskType === 'vote') {
-            const guidance = VOTE_ROLE_GUIDANCE[roleId] ?? '';
+            const guidance = VOTE_ROLE_GUIDANCE[taskRoleId] ?? '';
             if (roleId === 'villager')
                 return appendNonWolfVillageCertaintyWarning(guidance, context);
+            if (roleId === 'seer')
+                return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'seerResult' });
             if (roleId === 'medium')
                 return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'mediumResult' });
             return guidance;
@@ -13992,6 +14074,8 @@ ${ownerRoleGuidance ? `${ownerRoleGuidance}
         const guidance = DAY_ROLE_GUIDANCE[roleId] ?? '';
         if (roleId === 'villager')
             return appendNonWolfVillageCertaintyWarning(guidance, context);
+        if (roleId === 'seer')
+            return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'seerResult' });
         if (roleId === 'medium')
             return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'mediumResult' });
         return guidance;
@@ -14023,7 +14107,7 @@ define("js/prompts/templates/reasoningPolicyTemplates", ["require", "exports"], 
  * - 選択されていない推理モードの一覧や診断用IDをプロンプトへ提示しない。anchorのevent sequenceは内部照合用に保持し、非公開参考視点の自然文では公開発言へ模倣されやすい#n表記を使わない。
  * - hypothesisBreadthはレンズ選択へ介入させず、選択済みレンズから得た材料を何候補まで保持するかという短い内部修飾だけを追加する。compare-candidatesは初日だけ短い暫定差ルールへ差し替える。
  * - 対象人物名と参照イベント番号、およびそれらから作る可読参照ラベルはJSONの[game-data:reasoning-focus]へ隔離し、自由入力可能な表示名を内部検討指示へ直接展開しない。referenceDescriptionはreferenceLabelと意味が異なる場合だけ出力し、同値の再掲を作らない。
- * - 陣営overlayでは公開根拠の有無だけを補助し、factionStrategyの保存先やpublicSpeechへの反映義務など陣営戦略出力の意味規則はpromptTemplates.js側の陣営指示を正本として重複説明しない。
+ * - 陣営overlayでは公開根拠の有無だけを補助し、役職固有の生存・潜伏・能力戦術はrolePromptTemplates.js / promptTemplates.jsを正本として重複説明しない。白狼は通常人狼と同じ公開推理と秘密戦略の分離だけを示し、妖狐は専用overlayを持たない。
  */
 define("js/prompts/templates/characterReasoningDirectiveTemplates", ["require", "exports", "js/prompts/serialization/promptDataSerializer"], function (require, exports, promptDataSerializer_js_6) {
     "use strict";
@@ -14113,17 +14197,11 @@ define("js/prompts/templates/characterReasoningDirectiveTemplates", ["require", 
         }
     }
     function factionOverlayText(directive) {
-        if (directive.factionOverlay === 'whiteWolf') {
-            return '陣営上の参考視点: 白狼は村人として自然に推理し、占いの非人狼判定を長期信用へつなげる潜伏価値を優先できます。仲間への擁護や投票は公開根拠だけで選び、無理な騙りや対抗COを作る必要はありません。';
-        }
-        if (directive.factionOverlay === 'wolf') {
+        if (directive.factionOverlay === 'whiteWolf' || directive.factionOverlay === 'wolf') {
             return '陣営上の参考視点: 公開情報から成立する推理と、本人限定の秘密の勝ち筋を分離できているか。公開根拠のない疑い先や反対意見を作らないでください。';
         }
         if (directive.factionOverlay === 'madman') {
             return '陣営上の参考視点: 正確な人狼位置を知っているような断定を避けたまま、複数の公開上の見方の中に人狼陣営へ有利なものがあるか。採用や公開は任意で、根拠のない対立軸を作る必要はありません。';
-        }
-        if (directive.factionOverlay === 'fox') {
-            return '陣営上の参考視点: どちらかの陣営を公開情報以上に確定せず、自分が処刑・占い対象になりにくい見方が成立するか。採用や公開は任意で、存在しない根拠を補う必要はありません。';
         }
         return '';
     }
@@ -14839,7 +14917,7 @@ define("js/prompts/response/responseExampleReferences", ["require", "exports", "
  * 責務: タスク・本人役職の機械応答契約と現在の有効対象から、Provider非依存の構造化出力Schemaを生成する。
  * 変更ルール: Provider固有のrequest bodyを生成せず、ゲーム状態を更新しない。許可キーと回答検証必須キーはresponseContract.js、役職適合判定はfactionStrategyState.jsを正本とし、Schema.requiredには欠落時にゲーム進行を止める回答検証必須項目だけを入れる。AI向けプロンプトで原則出力するrationale / decisionPatch等を、プロンプト掲載を理由にSchema.requiredへ追加してはならない。投票候補のenumは現在タスクの正式表示名だけから構成する。構造化出力非対応時はプロンプト契約へ委譲できるようnullを返す。
  */
-define("js/prompts/response/structuredOutputContract", ["require", "exports", "js/domain/game/decisionState", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/game/standardRules", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_8, wolfPartnerDispositionPolicy_js_5, standardRules_js_11, responseContract_js_3) {
+define("js/prompts/response/structuredOutputContract", ["require", "exports", "js/domain/game/decisionState", "js/prompts/response/evidenceRefPolicy", "js/domain/game/wolfPartnerDispositionPolicy", "js/domain/game/standardRules", "js/prompts/response/responseContract"], function (require, exports, decisionState_js_8, evidenceRefPolicy_js_3, wolfPartnerDispositionPolicy_js_5, standardRules_js_11, responseContract_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.buildStructuredOutputContract = buildStructuredOutputContract;
@@ -14870,7 +14948,12 @@ define("js/prompts/response/structuredOutputContract", ["require", "exports", "j
         counterSignals: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
         remainingHypotheses: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
         correctedSpeechRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
-        evidenceRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
+        evidenceRefs: Object.freeze({
+            type: 'array',
+            maxItems: evidenceRefPolicy_js_3.MAX_VOTE_EVIDENCE_REFS,
+            uniqueItems: true,
+            items: Object.freeze({ type: 'integer' }),
+        }),
     });
     function voteDecisionPatchSchema() {
         return {
@@ -15848,7 +15931,7 @@ define("js/prompts/policies/promptSectionPolicy", ["require", "exports", "js/con
 });
 /**
  * 責務: 本人限定情報、正式本人履歴、最新判断、ゲーム状態、公開確定時系列、人口・勝利条件をプロンプト用データへ変換する。
- * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。昼発言用game-state.aliveの表示順だけはdiscussion.queueを優先して射影し、内部の生存者配列を並べ替えず、queue外の生存者は元の生存者順で末尾へ保持する。
+ * 変更ルール: promptContext.jsが許可した可視情報だけを使用し、他人の秘密情報や推定役職を混入させない。AIターン履歴・継続アンカー・当日カプセルを参照せず、現在の正式状態を正本とする。公開会話のdeltaとは独立して、処刑・夜明けの確定時系列と本人夜行動直後の公開結果を短く保持する。公開CO・公開能力結果・処刑履歴は自然文へ潰さず、判断時に直接比較できる構造化要約として出力する。昼発言用game-state.aliveの表示順だけはdiscussion.queueを優先して射影し、内部の生存者配列を並べ替えず、queue外の生存者は元の生存者順で末尾へ保持する。最新判断は正式投票でもintendedVoteを再提示して再評価対象を明示し、過去理由によるアンカリングを避けるためdecisionReasonは投票時だけ再提示しない。
  */
 define("js/prompts/sections/privateInformationSection", ["require", "exports", "js/config/constants", "js/config/discussionAiTaskTypes", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/policies/abilityClaimTimingPolicy", "js/prompts/sections/promptFormatters"], function (require, exports, constants_js_25, discussionAiTaskTypes_js_10, publicAbilityClaimPolicy_js_13, abilityClaimTimingPolicy_js_8, promptFormatters_js_2) {
     "use strict";
@@ -16151,13 +16234,11 @@ define("js/prompts/sections/privateInformationSection", ["require", "exports", "
         return {
             suspicionCandidateNames: (state.suspicionCandidateIds ?? []).map((id) => (0, promptFormatters_js_2.playerName)(context, id)),
             executionCandidateNames: (state.executionCandidateIds ?? []).map((id) => (0, promptFormatters_js_2.playerName)(context, id)),
-            ...(!isVoteTask ? {
-                intendedVote: state.intendedVoteId === 'abstain'
-                    ? '棄権'
-                    : state.intendedVoteId
-                        ? (0, promptFormatters_js_2.playerName)(context, state.intendedVoteId)
-                        : null,
-            } : {}),
+            intendedVote: state.intendedVoteId === 'abstain'
+                ? '棄権'
+                : state.intendedVoteId
+                    ? (0, promptFormatters_js_2.playerName)(context, state.intendedVoteId)
+                    : null,
             assessmentLevel: state.assessmentLevel ?? 'unresolved',
             evidenceRefs: (state.keyPublicEvidenceEventIds ?? []).map((eventId) => {
                 const event = Object.values(context.board.publicTimeline ?? {})
@@ -16525,7 +16606,7 @@ ${roundInstruction.join('\n')}`;
 });
 /**
  * 責務: 昼会話の進行、CO機会、能力結果主張、役職別戦術機会をプロンプトへ構成する。
- * 変更ルール: 局面判定と候補抽出は既存ポリシーを正本とし、本文から質問・CO・能力結果を推定しない。昼の発言順はdiscussion.queueを正本とするが、一覧の表示はgame-state.alive側へ一元化し、この区画ではlaterSpeakersと必要時のcanReplyだけを表示する。狂人系不在時の初動補足は公開役職構成と本人可視のknownWolfIdsだけで判定し、最も発言順が早い人狼一人に限定する。役職固有の戦術説明は公開配役に存在する役職・相互作用だけを提示し、偽判定の将来リスクも二値能力役職が存在する場合だけ渡す。対抗CO候補の文章だけは本人roleIdをテンプレートへ渡し、通常人狼と狂人の異なる露呈価値を分離する。
+ * 変更ルール: 局面判定と候補抽出は既存ポリシーを正本とし、本文から質問・CO・能力結果を推定しない。昼の発言順はdiscussion.queueを正本とするが、一覧の表示はgame-state.alive側へ一元化し、この区画ではlaterSpeakersと必要時のcanReplyだけを表示する。狂人系不在時の初動補足は公開役職構成と本人可視のknownWolfIdsだけで判定し、最も発言順が早い人狼一人に限定する。その一人について公開配役上の人狼枠が複数なら騙りを抑える追加の露呈リスク評価を外し、一人なら従来の慎重化を維持する。役職固有の戦術説明は公開配役に存在する役職・相互作用だけを提示し、偽判定の将来リスクも二値能力役職が存在する場合だけ渡す。対抗CO候補の文章だけは本人roleIdをテンプレートへ渡し、通常人狼と狂人の異なる露呈価値を分離する。
  */
 define("js/prompts/sections/conversationSection", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "js/domain/roles/roleAttributes", "js/prompts/templates/promptTemplates", "js/prompts/serialization/promptDataSerializer", "js/prompts/policies/openingSpeechPolicy", "js/prompts/sections/promptFormatters"], function (require, exports, discussionAiTaskTypes_js_11, constants_js_27, roleAttributes_js_21, promptTemplates_js_1, promptDataSerializer_js_8, openingSpeechPolicy_js_4, promptFormatters_js_4) {
     "use strict";
@@ -16537,7 +16618,7 @@ define("js/prompts/sections/conversationSection", ["require", "exports", "js/con
     exports.currentSpeakerPosition = currentSpeakerPosition;
     exports.latestWolfClaimPlan = latestWolfClaimPlan;
     exports.isEarliestKnownWolfSpeaker = isEarliestKnownWolfSpeaker;
-    exports.shouldAddNoMadmanEarlyWolfClaimContext = shouldAddNoMadmanEarlyWolfClaimContext;
+    exports.resolveNoMadmanEarlyWolfClaimMode = resolveNoMadmanEarlyWolfClaimMode;
     exports.initialClaimDecisionSection = initialClaimDecisionSection;
     exports.wolfBlackResultCrisisSection = wolfBlackResultCrisisSection;
     exports.guardClaimTimingSection = guardClaimTimingSection;
@@ -16696,9 +16777,10 @@ ${instruction}`;
         const firstWolfSpeakerId = (context.game.discussion?.queue ?? []).find((playerId) => knownWolfIds.has(playerId));
         return firstWolfSpeakerId === context.player.id;
     }
-    function shouldAddNoMadmanEarlyWolfClaimContext(context) {
-        return (0, roleAttributes_js_21.countConfiguredMadmanSlots)(context.game.roleComposition ?? {}) === 0
-            && isEarliestKnownWolfSpeaker(context);
+    function resolveNoMadmanEarlyWolfClaimMode(context) {
+        if ((0, roleAttributes_js_21.countConfiguredMadmanSlots)(context.game.roleComposition ?? {}) > 0 || !isEarliestKnownWolfSpeaker(context))
+            return 'none';
+        return (0, roleAttributes_js_21.countConfiguredWolves)(context.game.roleComposition ?? {}) > 1 ? 'multiple-wolves' : 'single-wolf';
     }
     function initialClaimDecisionSection(context, taskType) {
         if (!((0, discussionAiTaskTypes_js_11.isNormalSpeechTask)(taskType) || taskType === 'priority-answer') || !(0, openingSpeechPolicy_js_4.isInitialClaimDecisionSituation)(context))
@@ -16709,7 +16791,7 @@ ${instruction}`;
             return (0, promptTemplates_js_1.renderWolfInitialClaimDecisionInstruction)({
                 sharedClaimPlan: latestWolfClaimPlan(context),
                 speakerPosition: currentSpeakerPosition(context),
-                addNoMadmanEarlyWolfContext: shouldAddNoMadmanEarlyWolfClaimContext(context),
+                noMadmanEarlyWolfClaimMode: resolveNoMadmanEarlyWolfClaimMode(context),
             });
         }
         if (context.player.strategyProfile === 'madman') {
@@ -16828,7 +16910,6 @@ ${(0, promptDataSerializer_js_8.renderPromptDataBlock)('wolf-partner-public-posi
             return '';
         if (context.player.roleId === 'whiteWolf') {
             return (0, promptTemplates_js_1.renderWhiteWolfDayStrategyInstruction)({
-                voteRequired: taskType === 'vote',
                 canClaimBinaryAbilityResult: canClaimBinaryAbilityResult(context),
             });
         }
@@ -17908,6 +17989,7 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
     const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
     const MAX_JSON_NESTING_DEPTH = 64;
     const MAX_KEY_SUGGESTION_DISTANCE = 2;
+    const JSON_NUMBER_PATTERN = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/uy;
     const FACTION_STRATEGY_KEYS = new Set([
         'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
         'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
@@ -17975,11 +18057,11 @@ define("js/prompts/response/responseParser", ["require", "exports", "js/domain/g
             fail('文字列が閉じられていません', 'JSON_UNTERMINATED_STRING');
         }
         function parseNumber() {
-            const rest = text.slice(index);
-            const match = rest.match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/u);
+            JSON_NUMBER_PATTERN.lastIndex = index;
+            const match = JSON_NUMBER_PATTERN.exec(text);
             if (!match)
                 fail('数値を解析できません');
-            index += match[0].length;
+            index = JSON_NUMBER_PATTERN.lastIndex;
             const value = Number(match[0]);
             if (!Number.isFinite(value))
                 fail('有限でない数値は使用できません');
@@ -19837,7 +19919,7 @@ define("js/prompts/response/repair/jsonObjectRecovery", ["require", "exports"], 
 });
 /**
  * 責務: 応答項目のキー補正、任意null除去、列挙・配列・参照の正規化に使う共通関数を提供する。
- * 変更ルール: タスク固有の修復判断を持たず、呼び出し元が渡した許可集合だけに従う。
+ * 変更ルール: タスク固有の修復判断を持たず、呼び出し元が渡した許可集合と件数上限だけに従う。参照配列の上限超過は再生成理由にせず、正規化後に先頭から切り詰める。
  */
 define("js/prompts/response/repair/repairUtilities", ["require", "exports", "js/shared/utils", "js/prompts/response/repair/jsonObjectRecovery"], function (require, exports, utils_js_15, jsonObjectRecovery_js_1) {
     "use strict";
@@ -20015,7 +20097,7 @@ define("js/prompts/response/repair/repairUtilities", ["require", "exports", "js/
         }
         return object[key];
     }
-    function normalizePositiveIntegerRefs(object, key, path, operations) {
+    function normalizePositiveIntegerRefs(object, key, path, operations, { maxItems = null } = {}) {
         if (!Object.hasOwn(object, key))
             return [];
         if (typeof object[key] === 'string' && /^\d+$/u.test(object[key].trim())) {
@@ -20032,6 +20114,11 @@ define("js/prompts/response/repair/repairUtilities", ["require", "exports", "js/
         if (!deepEqual(unique, object[key])) {
             object[key] = unique;
             (0, jsonObjectRecovery_js_1.operation)(operations, 'REFERENCE_ARRAY_NORMALIZED', `${path}.${key}`, `${path}.${key}の数値文字列変換・不正参照除外・重複削除を行いました。`);
+        }
+        const normalizedMaxItems = Number.isSafeInteger(maxItems) && maxItems >= 0 ? maxItems : null;
+        if (normalizedMaxItems !== null && object[key].length > normalizedMaxItems) {
+            object[key] = object[key].slice(0, normalizedMaxItems);
+            (0, jsonObjectRecovery_js_1.operation)(operations, 'REFERENCE_ARRAY_TRUNCATED', `${path}.${key}`, `${path}.${key}を主要根拠${normalizedMaxItems}件までに制限しました。`);
         }
         return object[key];
     }
@@ -20242,7 +20329,7 @@ define("js/prompts/response/repair/coOperationRepair", ["require", "exports", "j
  * 責務: 任意能力結果主張のキー、対象名、根拠参照、時点理由を公開可能範囲へ補正する。
  * 変更ルール: 能力結果そのものを推定・生成せず、入力済み主張の形式と参照だけを扱う。
  */
-define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, abilityClaimTimelinePolicy_js_5, publicAbilityClaimPolicy_js_16, jsonObjectRecovery_js_4, repairUtilities_js_2) {
+define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "js/domain/policies/abilityClaimTimelinePolicy", "js/domain/policies/publicAbilityClaimPolicy", "js/prompts/response/evidenceRefPolicy", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, abilityClaimTimelinePolicy_js_5, publicAbilityClaimPolicy_js_16, evidenceRefPolicy_js_4, jsonObjectRecovery_js_4, repairUtilities_js_2) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairAbilityClaims = repairAbilityClaims;
@@ -20276,7 +20363,7 @@ define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "
                     return null;
                 }
                 (0, repairUtilities_js_2.normalizeEnumField)(claim, 'selectionBasis', path, operations);
-                (0, repairUtilities_js_2.normalizePositiveIntegerRefs)(claim, 'evidenceRefs', path, operations);
+                (0, repairUtilities_js_2.normalizePositiveIntegerRefs)(claim, 'evidenceRefs', path, operations, { maxItems: evidenceRefPolicy_js_4.MAX_EVIDENCE_REFS });
                 if (claim.selectionBasis === 'public-evidence' && !(claim.evidenceRefs?.length)) {
                     claim.selectionBasis = 'no-public-information';
                     (0, jsonObjectRecovery_js_4.operation)(operations, 'SELECTION_BASIS_NORMALIZED', `${path}.selectionBasis`, '有効な公開参照がないためselectionBasisをno-public-informationへ修正しました。');
@@ -20307,7 +20394,7 @@ define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "
                     (0, jsonObjectRecovery_js_4.operation)(operations, 'PLAYER_REFERENCE_CANONICALIZED', `${path}.target`, `${path}.targetを正式表示名へ修正しました。`);
                 }
             }
-            (0, repairUtilities_js_2.normalizePositiveIntegerRefs)(claim, 'evidenceRefs', path, operations);
+            (0, repairUtilities_js_2.normalizePositiveIntegerRefs)(claim, 'evidenceRefs', path, operations, { maxItems: evidenceRefPolicy_js_4.MAX_EVIDENCE_REFS });
             const requiredKeys = ['roleId', 'actionDay', 'actionPhase', 'availableDay', 'availablePhase', 'target', 'result'];
             if (requiredKeys.some((key) => !Object.hasOwn(claim, key) || claim[key] === null || claim[key] === '')) {
                 (0, jsonObjectRecovery_js_4.operation)(operations, 'INCOMPLETE_OPTIONAL_ITEM_REMOVED', path, `${path}は騙り能力結果を確定できないため省略しました。`);
@@ -20365,7 +20452,7 @@ define("js/prompts/response/repair/abilityClaimRepair", ["require", "exports", "
  * 責務: 任意判断差分の対象者名・列挙値・参照配列の構文を現在の候補集合へ正規化する。
  * 変更ルール: 判断内容を新規生成しない。decisionPatch.correctedSpeechRefs / evidenceRefs の公開可視性・イベント種別は意味を持つ根拠なので黙って削除せず、responseValidator.jsへ渡して再生成対象として検証する。推理モード固有の配列項目は任意回答として文字列配列だけへ正規化し、空なら省略する。
  */
-define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports", "js/domain/game/decisionTargetPolicy", "js/prompts/response/responseContract", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, decisionTargetPolicy_js_4, responseContract_js_8, jsonObjectRecovery_js_5, repairUtilities_js_3) {
+define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports", "js/domain/game/decisionTargetPolicy", "js/prompts/response/responseContract", "js/prompts/response/evidenceRefPolicy", "js/prompts/response/repair/jsonObjectRecovery", "js/prompts/response/repair/repairUtilities"], function (require, exports, decisionTargetPolicy_js_4, responseContract_js_8, evidenceRefPolicy_js_5, jsonObjectRecovery_js_5, repairUtilities_js_3) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.repairDecisionUpdate = repairDecisionUpdate;
@@ -20438,7 +20525,9 @@ define("js/prompts/response/repair/decisionUpdateRepair", ["require", "exports",
             }
         }
         (0, repairUtilities_js_3.normalizePositiveIntegerRefs)(patch, 'correctedSpeechRefs', 'decisionPatch', operations);
-        (0, repairUtilities_js_3.normalizePositiveIntegerRefs)(patch, 'evidenceRefs', 'decisionPatch', operations);
+        (0, repairUtilities_js_3.normalizePositiveIntegerRefs)(patch, 'evidenceRefs', 'decisionPatch', operations, {
+            maxItems: (0, evidenceRefPolicy_js_5.evidenceRefMaxItemsForMode)(responseMode),
+        });
         if (!Object.keys(patch).length) {
             delete payload.decisionPatch;
             (0, jsonObjectRecovery_js_5.operation)(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'decisionPatch', '有効な判断変更がないdecisionPatchを省略しました。');
@@ -23160,7 +23249,7 @@ define("js/domain/discussion/discussionRuntime", ["require", "exports", "js/conf
 });
 /**
  * 責務: 現在の状態から、人間GMが次に行うべき一つのタスクを導出する。
- * 変更ルール: 状態変更を行わず、局面判定に必要な状態参照はstate/selectors.jsと各domainの専用規則モジュールを正本とする。内部メモ整理推奨は通常フェーズを進める前の独立タスクとして一人ずつ返す。
+ * 変更ルール: 状態変更を行わず、局面判定に必要な状態参照はstate/selectors.jsと各domainの専用規則モジュールを正本とする。内部メモ整理推奨は通常フェーズを進める前の独立タスクとして一人ずつ返す。全自動実行が別プレイヤーのメモ整理通信を並行継続する場合に限り、呼び出し側から明示された処理中プレイヤーを候補から除外できるが、既定の手動進行では除外しない。
  */
 define("js/domain/game/workflow", ["require", "exports", "js/config/constants", "js/config/discussionAiTaskTypes", "js/domain/discussion/discussionRuntime", "js/domain/result/resultImpressions", "js/state/selectors"], function (require, exports, constants_js_35, discussionAiTaskTypes_js_20, discussionRuntime_js_1, resultImpressions_js_2, selectors_js_1) {
     "use strict";
@@ -23169,17 +23258,19 @@ define("js/domain/game/workflow", ["require", "exports", "js/config/constants", 
     function task(type, extra = {}) {
         return { type, label: constants_js_35.TASK_LABELS[type] ?? type, ...extra };
     }
-    function getPendingMemoConsolidationPlayerId(state) {
+    function getPendingMemoConsolidationPlayerId(state, ignoredPlayerIds = []) {
+        const ignored = new Set((ignoredPlayerIds ?? []).map((playerId) => String(playerId ?? '')));
         return (state.players ?? []).find((player) => (player.controller === 'ai'
-            && player.internalMemory?.consolidationRecommended === true))?.id ?? null;
+            && player.internalMemory?.consolidationRecommended === true
+            && !ignored.has(String(player.id ?? ''))))?.id ?? null;
     }
-    function getCurrentGmTask(state) {
+    function getCurrentGmTask(state, { ignoredMemoConsolidationPlayerIds = [] } = {}) {
         if (state.game.correctionMode?.enabled)
             return task('correction');
         const { phase } = state.game;
         if (phase === 'setup')
             return task('setup');
-        const memoConsolidationPlayerId = getPendingMemoConsolidationPlayerId(state);
+        const memoConsolidationPlayerId = getPendingMemoConsolidationPlayerId(state, ignoredMemoConsolidationPlayerIds);
         if (memoConsolidationPlayerId)
             return task('memo-consolidate', { playerId: memoConsolidationPlayerId });
         if (phase === 'briefing') {
@@ -28721,7 +28812,7 @@ define("js/ui/views/human/humanTaskView", ["require", "exports", "js/domain/clai
 });
 /**
  * 責務: 進行卓のフェーズ表示、現在タスク、参加者状態、人間入力フォーム、夜・投票・結果操作のHTMLを生成する。
- * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。機密会話の既定話者は各会話ポリシーのround-robinを使用し、GMが別参加者を選んだ場合も連続発言禁止を満たす選択だけを保持する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。
+ * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。機密会話の既定話者は各会話ポリシーのround-robinを使用し、GMが別参加者を選んだ場合も連続発言禁止を満たす選択だけを保持する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。API通信中プレイヤーは並列時に複数アクティブ表示するが、夜フェーズでは機密情報表示中だけ行動者マーカーを表示する。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在のvoteSessionだけに限定し、正式登録済み票に加えて同一セッションでAPI応答取得まで完了したAI投票も表示根拠にする。API応答済みはAutomation表示状態だけを参照し、ゲームstateへ混ぜない。
  */
 define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js/config/discussionAiTaskTypes", "js/config/constants", "js/domain/claims/claimRolePolicy", "js/domain/roles/roleComposition", "js/domain/policies/publicAbilityClaimPolicy", "js/domain/night/graveyardConversationPolicy", "js/domain/night/wolfConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/game/standardRules", "js/state/selectors", "js/domain/game/playerStatus", "js/domain/discussion/priorityAnswerPolicy", "js/domain/game/workflow", "js/shared/utils", "js/ui/components/components", "js/ui/views/workbench/workbenchView", "js/ui/views/human/humanTaskView", "js/ui/controllers/uiStateFormatters"], function (require, exports, discussionAiTaskTypes_js_21, constants_js_48, claimRolePolicy_js_8, roleComposition_js_8, publicAbilityClaimPolicy_js_22, graveyardConversationPolicy_js_3, wolfConversationPolicy_js_2, masonConversationPolicy_js_3, standardRules_js_29, selectors_js_3, playerStatus_js_14, priorityAnswerPolicy_js_5, workflow_js_1, utils_js_43, components_js_5, workbenchView_js_1, humanTaskView_js_1, uiStateFormatters_js_2) {
     "use strict";
@@ -28791,15 +28882,25 @@ define("js/ui/views/workbench/workbenchTaskRenderer", ["require", "exports", "js
         }
         playerStatusList(state) {
             const task = (0, workflow_js_1.getCurrentGmTask)(state);
+            const showConfidential = this.host.showConfidential();
+            const activeRequestPlayerIds = new Set(this.host.activeAiRequestPlayerIds?.() ?? []);
+            const voteResponsePlayerIds = new Set(this.host.voteResponsePlayerIds?.() ?? []);
+            const voteResponseSessionId = String(this.host.voteResponseSessionId?.() ?? '');
+            const hideNightActorMarker = state.game.phase === 'night' && !showConfidential;
             return `<div class="status-list">${state.players.map((player) => {
-                const active = task.playerId === player.id;
+                const active = !hideNightActorMarker && (activeRequestPlayerIds.size > 0
+                    ? activeRequestPlayerIds.has(player.id)
+                    : task.playerId === player.id);
                 const remaining = state.discussion?.remainingByPlayer?.[player.id];
-                const voteDone = ['vote', 'runoff'].includes(state.game.phase)
+                const currentVoteSession = ['vote', 'runoff'].includes(state.game.phase)
                     && state.voteSession?.day === state.game.day
-                    && Boolean(state.voteSession?.votes && player.id in state.voteSession.votes);
+                    ? state.voteSession
+                    : null;
+                const voteDone = Boolean(currentVoteSession) && (Boolean(currentVoteSession.votes && player.id in currentVoteSession.votes)
+                    || (String(currentVoteSession.id ?? '') === voteResponseSessionId && voteResponsePlayerIds.has(player.id)));
                 const claim = state.claims.find((item) => item.actorId === player.id && item.status === 'active');
                 const frozen = (0, uiStateFormatters_js_2.shouldHighlightFrozenPlayerPanel)(state, player.id);
-                return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${(0, utils_js_43.escapeHtml)(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(claim.roleId))}CO` : ''}</small></span>${this.host.showConfidential() ? `<span class="secret-role">${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(player.roleId))}</span>` : ''}</button>`;
+                return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${(0, utils_js_43.escapeHtml)(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${(0, utils_js_43.escapeHtml)(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(claim.roleId))}CO` : ''}</small></span>${showConfidential ? `<span class="secret-role">${(0, utils_js_43.escapeHtml)((0, selectors_js_3.getRoleName)(player.roleId))}</span>` : ''}</button>`;
             }).join('')}</div>`;
         }
         renderTask(state, task) {
@@ -40185,7 +40286,7 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             const toastRegion = document.querySelector('#toast-region');
             this.activeTab = 'workbench';
             this.registeredTabViews = new Map();
-            this.automationUiState = { mode: 'idle', mutationLocked: false };
+            this.automationUiState = { mode: 'idle', mutationLocked: false, activeAiRequestPlayerIds: [], voteResponseSessionId: '', voteResponsePlayerIds: [] };
             this.showConfidential = false;
             this.promptCache = new Map();
             this.drafts = new Map();
@@ -40305,6 +40406,9 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
                 showConfidential: () => this.showConfidential,
                 executionMode: () => this.aiExecutionSettings.executionMode,
                 automationMode: () => this.automationUiState.mode,
+                activeAiRequestPlayerIds: () => this.automationUiState.activeAiRequestPlayerIds,
+                voteResponseSessionId: () => this.automationUiState.voteResponseSessionId,
+                voteResponsePlayerIds: () => this.automationUiState.voteResponsePlayerIds,
                 drafts: () => this.drafts,
                 selectedWolfSpeakerId: () => this.selectedWolfSpeakerId,
                 setSelectedWolfSpeakerId: (playerId) => { this.selectedWolfSpeakerId = playerId; },
@@ -40472,11 +40576,26 @@ define("js/ui/AppUI", ["require", "exports", "js/config/discussionAiTaskTypes", 
             return this.tabController.setTab(...args);
         }
         setAutomationUiState(state = {}) {
+            const activeAiRequestPlayerIds = [...new Set((state?.activeAiRequestPlayerIds ?? []).map((playerId) => String(playerId ?? '')).filter(Boolean))];
+            const voteResponsePlayerIds = [...new Set((state?.voteResponsePlayerIds ?? []).map((playerId) => String(playerId ?? '')).filter(Boolean))];
             const next = {
                 mode: String(state?.mode ?? 'idle'),
                 mutationLocked: Boolean(state?.mutationLocked),
+                activeAiRequestPlayerIds,
+                voteResponseSessionId: String(state?.voteResponseSessionId ?? '').trim(),
+                voteResponsePlayerIds,
             };
-            const changed = next.mode !== this.automationUiState.mode || next.mutationLocked !== this.automationUiState.mutationLocked;
+            const previousActiveIds = this.automationUiState.activeAiRequestPlayerIds ?? [];
+            const activeIdsChanged = activeAiRequestPlayerIds.length !== previousActiveIds.length
+                || activeAiRequestPlayerIds.some((playerId, index) => playerId !== previousActiveIds[index]);
+            const previousVoteResponseIds = this.automationUiState.voteResponsePlayerIds ?? [];
+            const voteResponseIdsChanged = voteResponsePlayerIds.length !== previousVoteResponseIds.length
+                || voteResponsePlayerIds.some((playerId, index) => playerId !== previousVoteResponseIds[index]);
+            const changed = next.mode !== this.automationUiState.mode
+                || next.mutationLocked !== this.automationUiState.mutationLocked
+                || next.voteResponseSessionId !== this.automationUiState.voteResponseSessionId
+                || activeIdsChanged
+                || voteResponseIdsChanged;
             this.automationUiState = next;
             document.body.classList.toggle('automation-session-locked', next.mutationLocked);
             if (changed)
@@ -42007,12 +42126,12 @@ define("js/app/runtimeFacade", ["require", "exports"], function (require, export
     exports.RUNTIME_REQUIRED_METHODS = exports.RUNTIME_CONTRACT_VERSION = void 0;
     exports.createRuntimeFacade = createRuntimeFacade;
     exports.publishRuntimeContract = publishRuntimeContract;
-    exports.RUNTIME_CONTRACT_VERSION = 1;
+    exports.RUNTIME_CONTRACT_VERSION = 3;
     exports.RUNTIME_REQUIRED_METHODS = Object.freeze([
-        'getState', 'getAutosaveState', 'getCurrentWorkbenchTask', 'getPublicSnapshot', 'getRoleDisplayName', 'isWorkbenchPlayerFrozen', 'toast', 'dismissToast', 'beginAutomaticNotifications', 'endAutomaticNotifications',
+        'getState', 'getAutosaveSerialized', 'getCurrentWorkbenchTask', 'getPublicSnapshot', 'getRoleDisplayName', 'isWorkbenchPlayerFrozen', 'toast', 'dismissToast', 'beginAutomaticNotifications', 'endAutomaticNotifications',
         'beginNightActorPrivacy', 'endNightActorPrivacy', 'setTab', 'getActiveTab', 'registerTabView',
         'refreshTab', 'setAutomationUiState', 'setPublicHistoryTransmissionMode', 'setAiExecutionSettings', 'setPostgameAnalysisAdapter',
-        'scheduleFullPublicHistory', 'getAiHistoryStatus', 'getCurrentAiTaskRequest', 'resolveAutomaticAction', 'executeAutomaticAction', 'prepareAiTask',
+        'scheduleFullPublicHistory', 'getAiHistoryStatus', 'getCurrentAiTaskRequest', 'resolveAutomaticAction', 'resolveAutomaticAiBatch', 'executeAutomaticAction', 'prepareAiTask',
         'evaluateAiTaskCandidate', 'commitAiTaskCandidate', 'commitAiTaskFallback', 'resolveGenerationPlan',
         'runGenerationPipeline', 'createGenerationPipelineTestTask', 'resolveGenerationStagePromptPolicy',
         'buildDecideStagePrompt', 'buildAnalyzeStagePrompt', 'buildCritiqueStagePrompt', 'buildFinalizeStagePrompt', 'buildRenderStagePrompt', 'projectGenerationStagePromptEnvelope', 'parseTextPatchResponse',
@@ -42108,7 +42227,7 @@ define("js/app/globalErrorReporter", ["require", "exports"], function (require, 
 });
 /**
  * 責務: 現在のゲーム状態だけから、全自動進行が次に実行する一つの操作を純粋導出する。
- * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、機密会話の通常次話者も各会話ポリシーのround-robin導出を使用する。AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。
+ * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、機密会話の通常次話者も各会話ポリシーのround-robin導出を使用する。AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。全自動実行で通信中の内部メモ整理を一時的にworkflow候補から除外する場合も、除外対象は呼び出しオプションとして受け取りゲームstateへ保存しない。
  */
 define("js/domain/game/automaticActionPolicy", ["require", "exports", "js/config/generationTaskCategories", "js/domain/game/workflow", "js/domain/game/standardRules", "js/domain/game/playerStatus", "js/state/selectors", "js/domain/night/graveyardConversationPolicy", "js/domain/night/masonConversationPolicy", "js/domain/night/wolfConversationPolicy"], function (require, exports, generationTaskCategories_js_4, workflow_js_3, standardRules_js_34, playerStatus_js_15, selectors_js_8, graveyardConversationPolicy_js_5, masonConversationPolicy_js_5, wolfConversationPolicy_js_4) {
     "use strict";
@@ -42178,12 +42297,12 @@ define("js/domain/game/automaticActionPolicy", ["require", "exports", "js/config
     function deterministicCommand(command, label, extra = {}) {
         return result('command', { command, label, ...extra });
     }
-    function resolveAutomaticAction(state, { autoPublish = true } = {}) {
+    function resolveAutomaticAction(state, { autoPublish = true, ignoredMemoConsolidationPlayerIds = [] } = {}) {
         if (!state?.game)
             return result('stopped', { reason: 'ゲーム状態を取得できません。' });
         if (state.game.correctionMode?.enabled)
             return result('stopped', { reason: '訂正モード中です。' });
-        const task = (0, workflow_js_3.getCurrentGmTask)(state);
+        const task = (0, workflow_js_3.getCurrentGmTask)(state, { ignoredMemoConsolidationPlayerIds });
         let action = null;
         if (GENERATED_AI_TASK_TYPES.has(task.type)) {
             action = aiTaskAction(state, task);
@@ -42262,6 +42381,175 @@ define("js/domain/game/automaticActionPolicy", ["require", "exports", "js/config
         privateAiTaskTypes: Object.freeze([...PRIVATE_AI_TASK_TYPES]),
         publicationCommands: Object.freeze([...PUBLICATION_COMMANDS]),
     });
+});
+/**
+ * 責務: 現在のゲーム状態から、同一状態を基準に並列生成または一括処理しても既存ワークフロー順を壊さない連続AIタスク群を純粋導出する。
+ * 変更ルール: DOM・AIプロファイル・通信先・並列数設定を参照しない。公開逐次投票、秘密会話、昼発言、家主選択など先行入力へ依存する処理は並列対象にしない。発言希望制の開始時希望と勝敗後感想は人間入力境界を越えて先行生成しない。内部メモ整理は通信中プレイヤーを呼び出し側から明示的に除外できるが、その一時状態をゲームstateへ保存しない。初期役職通知はAPI生成を伴わないため共有stateへ同時書き込みせず、連続AI分を同一自動実行ステップ群として一括処理する。実際の状態登録順は既存workflowと各domain runtimeを正本とする。
+ */
+define("js/domain/game/automaticAiBatchPolicy", ["require", "exports", "js/domain/game/workflow", "js/domain/game/playerStatus", "js/domain/result/resultImpressions", "js/state/selectors"], function (require, exports, workflow_js_4, playerStatus_js_16, resultImpressions_js_4, selectors_js_9) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.resolveAutomaticAiBatch = resolveAutomaticAiBatch;
+    const PARALLEL_NIGHT_TASK_TYPES = new Set(['inspect', 'guard', 'visit', 'freeze']);
+    const COMPLETED_BRIEFING_STATUSES = new Set(['acknowledged', 'gm-forced']);
+    function noBatch(reason = '') {
+        return Object.freeze({ kind: 'none', reason });
+    }
+    function aiPlayer(state, playerId) {
+        return (state.players ?? []).find((player) => String(player?.id ?? '') === String(playerId ?? '') && player.controller === 'ai') ?? null;
+    }
+    function taskRequest(playerId, taskType, slotId = '') {
+        return Object.freeze({
+            playerId: String(playerId ?? ''),
+            taskType: String(taskType ?? ''),
+            slotId: String(slotId ?? ''),
+        });
+    }
+    function commandRequest(command, label, playerId = '') {
+        return Object.freeze({
+            command: String(command ?? ''),
+            label: String(label ?? command ?? ''),
+            playerId: String(playerId ?? ''),
+        });
+    }
+    function aiBatch(taskRequests, source) {
+        if (taskRequests.length < 2)
+            return noBatch('並列生成できる連続AIタスクが2件未満です。');
+        return Object.freeze({
+            kind: 'ai-task-batch',
+            source,
+            taskRequests: Object.freeze(taskRequests),
+        });
+    }
+    function commandBatch(commandRequests, source) {
+        if (commandRequests.length < 2)
+            return noBatch('一括処理できる連続AIコマンドが2件未満です。');
+        return Object.freeze({
+            kind: 'command-batch',
+            source,
+            commandRequests: Object.freeze(commandRequests),
+        });
+    }
+    function memoConsolidationBatch(state, ignoredPlayerIds = []) {
+        const ignored = new Set((ignoredPlayerIds ?? []).map((playerId) => String(playerId ?? '')));
+        const requests = (state.players ?? [])
+            .filter((player) => player.controller === 'ai'
+            && player.internalMemory?.consolidationRecommended === true
+            && !ignored.has(String(player.id ?? '')))
+            .map((player) => taskRequest(player.id, 'memo-consolidate'));
+        return aiBatch(requests, 'memo-consolidation');
+    }
+    function briefingBatch(state) {
+        if (state.game?.phase !== 'briefing' || !state.briefing)
+            return noBatch();
+        const requests = [];
+        for (const playerId of state.briefing.eligiblePlayerIds ?? []) {
+            if (COMPLETED_BRIEFING_STATUSES.has(state.briefing.noticeStatusByPlayerId?.[playerId]))
+                continue;
+            if (!aiPlayer(state, playerId))
+                break;
+            requests.push(commandRequest('complete-ai-briefing', 'AI役職通知', playerId));
+        }
+        return commandBatch(requests, 'briefing');
+    }
+    function discussionOpeningPreferenceBatch(state) {
+        const discussion = state.discussion;
+        if (state.game?.phase !== 'discussion'
+            || discussion?.mode !== 'free'
+            || discussion.modeControl?.type !== 'free'
+            || discussion.modeControl.stage !== 'opening-preference')
+            return noBatch();
+        const submitted = discussion.modeControl.openingPreferenceByPlayerId ?? {};
+        const requests = [];
+        for (const playerId of (0, playerStatus_js_16.getDiscussionEligiblePlayerIds)(state)) {
+            if (Object.hasOwn(submitted, playerId))
+                continue;
+            if (!aiPlayer(state, playerId))
+                break;
+            requests.push(taskRequest(playerId, 'discussion-opening-preference'));
+        }
+        return aiBatch(requests, 'discussion-opening-preference');
+    }
+    function resultImpressionBatch(state) {
+        if (state.game?.phase !== 'result' || state.result?.status !== 'published')
+            return noBatch();
+        const completed = new Set((0, resultImpressions_js_4.getPublishedResultImpressions)(state).map((event) => String(event.actorId ?? '')));
+        const requests = [];
+        for (const player of state.players ?? []) {
+            if (completed.has(String(player.id ?? '')))
+                continue;
+            if (player.controller !== 'ai')
+                break;
+            requests.push(taskRequest(player.id, 'result-impression'));
+        }
+        return aiBatch(requests, 'result-impression');
+    }
+    function secretVoteBatch(state) {
+        const session = state.voteSession;
+        if (!session || session.status !== 'input' || session.inputMode !== 'sequential')
+            return noBatch();
+        if (state.game?.rules?.vote?.visibilityDuringInput !== 'secret')
+            return noBatch('逐次公開投票は先行票へ依存するため並列生成しません。');
+        const startIndex = Math.max(0, Number(session.currentVoterIndex ?? 0));
+        const requests = [];
+        for (let index = startIndex; index < session.eligibleVoterIds.length; index += 1) {
+            const voterId = session.eligibleVoterIds[index];
+            if (Object.hasOwn(session.votes ?? {}, voterId))
+                continue;
+            if (!aiPlayer(state, voterId))
+                break;
+            requests.push(taskRequest(voterId, 'vote'));
+        }
+        return aiBatch(requests, 'secret-vote');
+    }
+    function wolfAttackBatch(state) {
+        const attack = state.night?.wolfAttack;
+        if (!attack || attack.status !== 'voting')
+            return noBatch();
+        const requests = [];
+        for (const wolfId of attack.voterWolfIds ?? []) {
+            if (attack.voteByWolfId?.[wolfId])
+                continue;
+            if (!aiPlayer(state, wolfId))
+                break;
+            requests.push(taskRequest(wolfId, 'wolf-attack'));
+        }
+        return aiBatch(requests, 'wolf-attack');
+    }
+    function nightActionBatch(state) {
+        const requests = [];
+        for (const slot of (0, selectors_js_9.getPendingNightSlots)(state)) {
+            if (!PARALLEL_NIGHT_TASK_TYPES.has(slot.type))
+                break;
+            if (!aiPlayer(state, slot.actorId))
+                break;
+            requests.push(taskRequest(slot.actorId, slot.type, slot.id));
+        }
+        return aiBatch(requests, 'night-actions');
+    }
+    function resolveAutomaticAiBatch(state, { ignoredMemoConsolidationPlayerIds = [] } = {}) {
+        if (!state?.game)
+            return noBatch('ゲーム状態を取得できません。');
+        if (state.game.correctionMode?.enabled)
+            return noBatch('訂正モード中です。');
+        const memoBatch = memoConsolidationBatch(state, ignoredMemoConsolidationPlayerIds);
+        if (memoBatch.kind !== 'none')
+            return memoBatch;
+        const currentTask = (0, workflow_js_4.getCurrentGmTask)(state, { ignoredMemoConsolidationPlayerIds });
+        if (currentTask.type === 'briefing')
+            return briefingBatch(state);
+        if (currentTask.type === 'discussion-opening-preference')
+            return discussionOpeningPreferenceBatch(state);
+        if (currentTask.type === 'result-impression')
+            return resultImpressionBatch(state);
+        if (currentTask.type === 'vote')
+            return secretVoteBatch(state);
+        if (currentTask.type === 'wolf-attack')
+            return wolfAttackBatch(state);
+        if (PARALLEL_NIGHT_TASK_TYPES.has(currentTask.type))
+            return nightActionBatch(state);
+        return noBatch('現在タスクは並列生成または一括処理の対象ではありません。');
+    }
 });
 /**
  * 責務: 構造化されたAPIエラーとユーザー設定から、停止・同一要求再試行・最新状態・公開履歴全文での再試行を決定する。
@@ -42366,8 +42654,8 @@ define("js/automation/runtimeAccess", ["require", "exports"], function (require,
     }
 });
 /**
- * 責務: 1回の自動実行セッションについて停止状態、実行中API要求ID、中断可能な待機、終了完了通知を一元管理する。
- * 変更ルール: 停止状態と終了待機を画面制御の個別フラグへ分散させない。API要求開始前・応答直後・登録直前はassertRunningを通し、停止済みセッションから新規要求や状態更新を開始しない。一時停止・明示停止ではwaitForCompletionまで待ってから競合操作を解禁する。
+ * 責務: 1回の自動実行セッションについて停止状態、同時実行中の全API要求ID、中断可能な待機、終了完了通知を一元管理する。
+ * 変更ルール: 停止状態と終了待機を画面制御の個別フラグへ分散させない。並列実行中のrequestIdはactiveRequestIdsへ全件登録し、停止時に一括キャンセルできる状態を維持する。API要求開始前・応答直後・登録直前はassertRunningを通し、停止済みセッションから新規要求や状態更新を開始しない。一時停止・明示停止ではwaitForCompletionまで待ってから競合操作を解禁する。
  */
 define("js/automation/automationRunControl", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -42379,6 +42667,7 @@ define("js/automation/automationRunControl", ["require", "exports"], function (r
     exports.requestStop = requestStop;
     exports.beginRequest = beginRequest;
     exports.endRequest = endRequest;
+    exports.activeRequestIds = activeRequestIds;
     exports.delayWithAbort = delayWithAbort;
     exports.completeSession = completeSession;
     exports.waitForCompletion = waitForCompletion;
@@ -42398,7 +42687,7 @@ define("js/automation/automationRunControl", ["require", "exports"], function (r
         return {
             id: `automation-run-${randomId}`,
             abortController: new AbortController(),
-            currentRequestId: null,
+            activeRequestIds: new Set(),
             stopped: false,
             completed: false,
             completion,
@@ -42421,13 +42710,17 @@ define("js/automation/automationRunControl", ["require", "exports"], function (r
     }
     function beginRequest(session, requestId) {
         assertRunning(session);
-        session.currentRequestId = String(requestId ?? '');
+        const normalizedId = String(requestId ?? '');
+        if (normalizedId)
+            session.activeRequestIds.add(normalizedId);
     }
     function endRequest(session, requestId) {
         if (!session)
             return;
-        if (session.currentRequestId === String(requestId ?? ''))
-            session.currentRequestId = null;
+        session.activeRequestIds?.delete(String(requestId ?? ''));
+    }
+    function activeRequestIds(session) {
+        return session?.activeRequestIds ? [...session.activeRequestIds] : [];
     }
     function delayWithAbort(milliseconds, session) {
         assertRunning(session);
@@ -42470,8 +42763,8 @@ define("js/automation/automationRunControl", ["require", "exports"], function (r
     }
 });
 /**
- * 責務: 1件のAIタスクについて生成深度ごとの既存直接生成・判断・客観分析・批判的検証・最終回答・発言化API要求、通信再試行、全履歴再同期、応答修復、正式登録または項目代替までを実行する。
- * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一工程API要求内で一度だけThinkingを無効化し、後続工程や別プロフィールへ引き継がない。
+ * 責務: 1件のAIタスクについて生成深度ごとのAPI生成と、正式登録または項目代替を分離して実行し、単発実行では従来どおり生成直後に登録まで完了する。実際のProvider通信開始・終了を表示用のAI要求状態へ通知し、投票タスクは最終生成結果がAPIから得られた時点で表示専用の応答済み状態を通知する。
+ * 変更ルール: DOM画面構築と全自動ループを担当しない。並列バッチではgenerateAiStepがゲームstateを変更せず、commitAiStepだけが正式登録する。投票API応答済み通知はゲームstateへ書き込まず、生成開始時のvoteSession.idを添えてAutomation表示状態へだけ渡す。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一工程API要求内で一度だけThinkingを無効化し、後続工程や別プロフィールへ引き継がない。
  */
 define("js/automation/automaticAiExecutor", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -42496,10 +42789,10 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
         throw new Error(`完成候補生成の対象外です: ${stageId}`);
     }
     function createAutomaticAiExecutor(dependencies) {
-        const { apiRetryPolicy, responseRetryPolicy, runControl, controller, bridge, runtime, currentGameState, profileForPlayer, profileById, playerName, addUsage, refreshUsageSummary, setStatus, structuredApiError, apiErrorAsException, generationFailureRequiresStop, } = dependencies;
+        const { apiRetryPolicy, responseRetryPolicy, runControl, controller, bridge, runtime, currentGameState, profileForPlayer, profileById, playerName, addUsage, refreshUsageSummary, setStatus, structuredApiError, apiErrorAsException, generationFailureRequiresStop, requestScheduler = null, setAiRequestActive = null, setVoteResponseReceived = null, } = dependencies;
         if (!apiRetryPolicy || !responseRetryPolicy || !runControl)
             throw new Error('AI自動実行の必須ポリシーを初期化できません。');
-        return async function executeAiStep(taskRequest, session) {
+        async function generateAiStep(taskRequest, session) {
             runControl.assertRunning(session);
             const playerId = String(taskRequest?.playerId ?? '');
             const taskType = String(taskRequest?.taskType ?? '');
@@ -42517,6 +42810,9 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                 taskType,
             });
             const deltaRequested = controller.settings.aiOptions?.publicHistoryMode === 'delta';
+            const voteResponseSessionId = taskType === 'vote'
+                ? String(currentGameState()?.voteSession?.id ?? '').trim()
+                : '';
             await runControl.delayWithAbort(0, session);
             const taskArtifact = runtimeApi.prepareAiTask({
                 playerId,
@@ -42529,6 +42825,11 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
             runtimeApi.dismissToast?.(responseRetryToastKey);
             let taskApiCallCount = 0;
             let regenerationRecorded = false;
+            function notifyVoteResponseReceived() {
+                if (taskType !== 'vote' || !voteResponseSessionId)
+                    return;
+                setVoteResponseReceived?.(playerId, voteResponseSessionId);
+            }
             function addStageUsage(target, usage) {
                 for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens', 'costUsd']) {
                     const value = Number(usage?.[key] ?? 0);
@@ -42661,7 +42962,7 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                         regenerationRecorded = true;
                     runControl.beginRequest(session, requestId);
                     try {
-                        const response = await bridge.generate({
+                        const requestPayload = {
                             requestId,
                             profileId: executorProfile.id,
                             promptEnvelope: requestPromptEnvelope(stage.stageId, currentPrompt, requestPurpose),
@@ -42674,7 +42975,19 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                             publicHistoryMode,
                             thinkingLevelOverride: ollamaThinkingFallbackUsed ? 'none' : null,
                             ...usageFlags,
-                        });
+                        };
+                        const generateWithActivity = async () => {
+                            setAiRequestActive?.(playerId, true);
+                            try {
+                                return await bridge.generate(requestPayload);
+                            }
+                            finally {
+                                setAiRequestActive?.(playerId, false);
+                            }
+                        };
+                        const response = requestScheduler
+                            ? await requestScheduler.run(executorProfile, session, generateWithActivity)
+                            : await generateWithActivity();
                         runControl.assertRunning(session);
                         if (response?.ok === false)
                             throw apiErrorAsException(response.error ?? {});
@@ -42925,10 +43238,7 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                     publicHistoryMode: 'full',
                 });
             }
-            const beforeRevision = Number(currentGameState()?.revision ?? 0);
             let pipelineResult = null;
-            let commitResult = null;
-            let automaticFallbackUsed = false;
             try {
                 pipelineResult = await runtimeApi.runGenerationPipeline({
                     plan,
@@ -42945,6 +43255,75 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                     buildRenderPrompt: runtimeApi.buildRenderStagePrompt,
                 });
                 runControl.assertRunning(session);
+                notifyVoteResponseReceived();
+                return {
+                    kind: 'candidate',
+                    taskRequest: Object.freeze({ playerId, taskType, slotId }),
+                    playerId,
+                    taskType,
+                    taskArtifact,
+                    plan,
+                    pipelineResult,
+                    responseRetryToastKey,
+                };
+            }
+            catch (error) {
+                if (runControl.isStopped(session))
+                    runControl.assertRunning(session);
+                if (error?.apiResponseUnavailable === true || generationFailureRequiresStop?.(error, pipelineResult))
+                    throw error;
+                const fallbackRawResponse = String(error?.rawResponse ?? pipelineResult?.rawResponse ?? '');
+                const fallbackEvaluation = error?.evaluation
+                    ?? pipelineResult?.evaluation
+                    ?? runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: fallbackRawResponse });
+                notifyVoteResponseReceived();
+                return {
+                    kind: 'fallback',
+                    taskRequest: Object.freeze({ playerId, taskType, slotId }),
+                    playerId,
+                    taskType,
+                    taskArtifact,
+                    plan,
+                    pipelineResult,
+                    responseRetryToastKey,
+                    fallbackRawResponse,
+                    fallbackEvaluation,
+                    fallbackGenerationRun: error?.generationRun ?? pipelineResult?.generationRun ?? null,
+                    fallbackReason: `AI生成失敗: ${String(error?.message ?? error ?? '原因不明')}`,
+                    sourceError: error,
+                };
+            }
+        }
+        async function commitAiStep(generated, session) {
+            runControl.assertRunning(session);
+            const runtimeApi = runtime();
+            const playerId = String(generated?.playerId ?? generated?.taskRequest?.playerId ?? '');
+            const taskType = String(generated?.taskType ?? generated?.taskRequest?.taskType ?? '');
+            const taskArtifact = generated?.taskArtifact;
+            const plan = generated?.plan;
+            if (!playerId || !taskType || !taskArtifact || !plan)
+                throw new Error('AI生成結果に登録情報がありません。');
+            const beforeRevision = Number(currentGameState()?.revision ?? 0);
+            let commitResult = null;
+            let automaticFallbackUsed = generated.kind === 'fallback';
+            runControl.assertRunning(session);
+            if (automaticFallbackUsed) {
+                commitResult = runtimeApi.commitAiTaskFallback({
+                    taskArtifact,
+                    rawResponse: generated.fallbackRawResponse,
+                    evaluation: generated.fallbackEvaluation,
+                    generationRun: generated.fallbackGenerationRun,
+                    reason: generated.fallbackReason,
+                });
+                if (!commitResult?.ok) {
+                    const fallbackError = new Error(`AI自動代替にも失敗しました。${commitResult?.message ? ` ${commitResult.message}` : ''}`);
+                    fallbackError.cause = generated.sourceError;
+                    fallbackError.issues = commitResult?.issues ?? [];
+                    throw fallbackError;
+                }
+            }
+            else {
+                const pipelineResult = generated.pipelineResult;
                 commitResult = runtimeApi.commitAiTaskCandidate({
                     taskArtifact,
                     rawResponse: pipelineResult.rawResponse,
@@ -42962,32 +43341,6 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                     throw error;
                 }
             }
-            catch (error) {
-                if (runControl.isStopped(session))
-                    runControl.assertRunning(session);
-                if (error?.apiResponseUnavailable === true || generationFailureRequiresStop?.(error, pipelineResult))
-                    throw error;
-                const fallbackRawResponse = String(error?.rawResponse ?? pipelineResult?.rawResponse ?? '');
-                const fallbackEvaluation = error?.evaluation
-                    ?? pipelineResult?.evaluation
-                    ?? runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: fallbackRawResponse });
-                const fallbackReason = `AI生成失敗: ${String(error?.message ?? error ?? '原因不明')}`;
-                runControl.assertRunning(session);
-                commitResult = runtimeApi.commitAiTaskFallback({
-                    taskArtifact,
-                    rawResponse: fallbackRawResponse,
-                    evaluation: fallbackEvaluation,
-                    generationRun: error?.generationRun ?? pipelineResult?.generationRun ?? null,
-                    reason: fallbackReason,
-                });
-                if (!commitResult?.ok) {
-                    const fallbackError = new Error(`AI自動代替にも失敗しました。${commitResult?.message ? ` ${commitResult.message}` : ''}`);
-                    fallbackError.cause = error;
-                    fallbackError.issues = commitResult?.issues ?? [];
-                    throw fallbackError;
-                }
-                automaticFallbackUsed = true;
-            }
             const afterRevision = Number(currentGameState()?.revision ?? beforeRevision);
             if (afterRevision === beforeRevision) {
                 throw new Error(automaticFallbackUsed
@@ -42995,7 +43348,7 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
                     : 'AI応答の登録成功後にゲーム状態が更新されませんでした。');
             }
             runControl.assertRunning(session);
-            runtimeApi.dismissToast?.(responseRetryToastKey);
+            runtimeApi.dismissToast?.(generated.responseRetryToastKey);
             if (automaticFallbackUsed) {
                 const scopeLabel = commitResult?.fallbackScope === 'field' ? '必須項目だけを代替' : '現在タスクを代替';
                 setStatus(`${playerName(playerId)}の${taskType}は${scopeLabel}して進行しました。`, 'working');
@@ -43003,7 +43356,316 @@ define("js/automation/automaticAiExecutor", ["require", "exports"], function (re
             else {
                 setStatus(`${playerName(playerId)}の${taskType}を深度${plan.depth}で登録しました。`, 'working');
             }
+            return { ok: true, commitResult, automaticFallbackUsed };
+        }
+        async function executeAiStep(taskRequest, session) {
+            const generated = await generateAiStep(taskRequest, session);
+            return commitAiStep(generated, session);
+        }
+        executeAiStep.generateAiStep = generateAiStep;
+        executeAiStep.commitAiStep = commitAiStep;
+        return executeAiStep;
+    }
+});
+/**
+ * 責務: domainが並列可能と判定した連続AIタスクを同時生成し、既存workflowが示す順序を毎commit直前に再確認しながら決定論的に直列登録する。
+ * 変更ルール: 並列対象のゲーム規則を独自判定しない。生成完了順では登録せず、batch policyのtaskRequests順だけでcommitする。先行commitにより内部メモ整理など別タスクが割り込んだ場合は残り生成結果を破棄し、次ループで最新状態から再生成する。Automationが別プレイヤーの内部メモ整理を通信中としてworkflowから一時除外している場合は、その除外条件をcommit直前の自動操作再判定にも同じく適用する。
+ */
+define("js/automation/automaticAiBatchExecutor", ["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.createAutomaticAiBatchExecutor = createAutomaticAiBatchExecutor;
+    function sameTaskRequest(action, request) {
+        if (action?.kind !== 'ai-task')
+            return false;
+        const actual = action.taskRequest ?? {};
+        return String(actual.playerId ?? '') === String(request.playerId ?? '')
+            && String(actual.taskType ?? '') === String(request.taskType ?? '')
+            && String(actual.slotId ?? '') === String(request.slotId ?? '');
+    }
+    function createAutomaticAiBatchExecutor({ automationRunControl, controller, executeAiStep, runtime, setStatus, automaticActionOptions = null, }) {
+        if (!automationRunControl || !executeAiStep?.generateAiStep || !executeAiStep?.commitAiStep) {
+            throw new Error('AIバッチ実行の必須依存を初期化できません。');
+        }
+        return async function executeAiBatch(batch, session) {
+            automationRunControl.assertRunning(session);
+            const taskRequests = [...(batch?.taskRequests ?? [])];
+            if (taskRequests.length < 2)
+                return { status: 'invalidated', advancedCount: 0 };
+            setStatus?.(`独立AI行動を並列生成中（${taskRequests.length}件）`, 'working');
+            const generated = await Promise.allSettled(taskRequests.map((request) => executeAiStep.generateAiStep(request, session)));
+            automationRunControl.assertRunning(session);
+            let advancedCount = 0;
+            for (let index = 0; index < generated.length; index += 1) {
+                automationRunControl.assertRunning(session);
+                const settled = generated[index];
+                if (settled.status === 'rejected') {
+                    const error = settled.reason instanceof Error ? settled.reason : new Error(String(settled.reason ?? 'AI生成に失敗しました。'));
+                    error.advancedCount = advancedCount;
+                    throw error;
+                }
+                const request = taskRequests[index];
+                const nextAction = runtime().resolveAutomaticAction({
+                    autoPublish: controller.settings.autoRun.autoPublish,
+                    ...(automaticActionOptions?.() ?? {}),
+                });
+                if (!sameTaskRequest(nextAction, request)) {
+                    return { status: advancedCount > 0 ? 'advanced' : 'invalidated', advancedCount };
+                }
+                await executeAiStep.commitAiStep(settled.value, session);
+                advancedCount += 1;
+            }
+            return { status: 'advanced', advancedCount };
         };
+    }
+});
+/**
+ * 責務: AI API要求の同時実行数を実行環境別に制御し、外部APIの全体並列数と同一ローカルLLMサーバーの並列数を一元管理する。
+ * 変更ルール: ゲーム規則・タスク依存関係・応答再試行判断を持たない。並列可否はdomainのbatch policy、再試行可否は既存retry policyを正本とする。待機要求は登録時のAbortSignalとrunControlをgate内で保持し、停止時も枠解放と後続要求の解決を阻害しない。自動モードは外部4並列・同一ローカル接続先1並列を固定既定とし、有効モードだけ保存された上限値を使用する。
+ */
+define("js/automation/automaticAiRequestScheduler", ["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.createAutomaticAiRequestScheduler = createAutomaticAiRequestScheduler;
+    const AUTO_EXTERNAL_CONCURRENCY = 4;
+    const AUTO_LOCAL_CONCURRENCY = 1;
+    function normalizedPositiveInteger(value, fallback, maximum) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric))
+            return fallback;
+        return Math.min(maximum, Math.max(1, Math.trunc(numeric)));
+    }
+    function localEndpointKey(profile) {
+        const endpoint = String(profile?.endpoint ?? '').trim();
+        if (!endpoint)
+            return `profile:${String(profile?.id ?? '')}`;
+        try {
+            const parsed = new URL(endpoint);
+            return `${parsed.protocol}//${parsed.host}`;
+        }
+        catch {
+            return endpoint;
+        }
+    }
+    class ConcurrencyGate {
+        constructor(limit, runControl) {
+            this.limit = limit;
+            this.runControl = runControl;
+            this.active = 0;
+            this.queue = [];
+        }
+        async acquire(session) {
+            this.runControl.assertRunning(session);
+            if (this.active < this.limit) {
+                this.active += 1;
+                return;
+            }
+            await new Promise((resolve, reject) => {
+                const signal = session?.abortController?.signal;
+                const entry = { resolve, reject, signal, onAbort: null };
+                this.queue.push(entry);
+                if (!signal)
+                    return;
+                entry.onAbort = () => {
+                    const index = this.queue.indexOf(entry);
+                    if (index < 0)
+                        return;
+                    this.queue.splice(index, 1);
+                    signal.removeEventListener('abort', entry.onAbort);
+                    reject(new this.runControl.AutomationStoppedError());
+                };
+                signal.addEventListener('abort', entry.onAbort, { once: true });
+                if (signal.aborted)
+                    entry.onAbort();
+            });
+        }
+        release() {
+            this.active = Math.max(0, this.active - 1);
+            while (this.queue.length) {
+                const entry = this.queue.shift();
+                const signal = entry.signal;
+                if (entry.onAbort && signal)
+                    signal.removeEventListener('abort', entry.onAbort);
+                if (signal?.aborted) {
+                    entry.reject(new this.runControl.AutomationStoppedError());
+                    continue;
+                }
+                this.active += 1;
+                entry.resolve();
+                break;
+            }
+        }
+    }
+    function createAutomaticAiRequestScheduler({ controller, runControl, localProviderId }) {
+        if (!controller || !runControl)
+            throw new Error('AI要求Schedulerの必須依存を初期化できません。');
+        const gates = new Map();
+        function effectiveLimit(profile) {
+            const options = controller.settings.aiOptions ?? {};
+            const mode = ['auto', 'enabled', 'disabled'].includes(options.parallelExecutionMode)
+                ? options.parallelExecutionMode
+                : 'auto';
+            const local = profile?.provider === localProviderId;
+            if (mode !== 'enabled')
+                return local ? AUTO_LOCAL_CONCURRENCY : AUTO_EXTERNAL_CONCURRENCY;
+            return local
+                ? normalizedPositiveInteger(options.localMaxConcurrency, AUTO_LOCAL_CONCURRENCY, 8)
+                : normalizedPositiveInteger(options.externalMaxConcurrency, AUTO_EXTERNAL_CONCURRENCY, 16);
+        }
+        function gateKey(profile) {
+            return profile?.provider === localProviderId
+                ? `local:${localEndpointKey(profile)}`
+                : 'external';
+        }
+        function gateFor(profile) {
+            const key = gateKey(profile);
+            const limit = effectiveLimit(profile);
+            const existing = gates.get(key);
+            if (existing?.limit === limit)
+                return existing;
+            if (existing && (existing.active > 0 || existing.queue.length > 0))
+                return existing;
+            const gate = new ConcurrencyGate(limit, runControl);
+            gates.set(key, gate);
+            return gate;
+        }
+        async function run(profile, session, operation) {
+            runControl.assertRunning(session);
+            const gate = gateFor(profile);
+            await gate.acquire(session);
+            try {
+                runControl.assertRunning(session);
+                return await operation();
+            }
+            finally {
+                gate.release();
+            }
+        }
+        return Object.freeze({ run });
+    }
+});
+/**
+ * 責務: 全自動実行中の内部メモ整理だけをプレイヤー単位のバックグラウンド処理として管理し、異なるAI同士は並列生成、同一AIは排他、API完了後は即commitする。本人の次AI生成前に未完了整理を待機できるbarrierと、停止時の全処理収束待ちも提供する。
+ * 変更ルール: ゲーム規則や整理対象判定を独自に持たず、automaticAiBatchPolicyが渡したmemo-consolidate要求だけを開始する。処理中状態・失敗状態はAutomationメモリ内だけに保持しゲームstateへ追加しない。整理結果の正式反映はautomaticAiExecutor.commitAiStepを唯一の入口とし、同一プレイヤーへ複数整理を同時実行しない。
+ */
+define("js/automation/automaticMemoConsolidationScheduler", ["require", "exports"], function (require, exports) {
+    "use strict";
+    Object.defineProperty(exports, "__esModule", { value: true });
+    exports.createAutomaticMemoConsolidationScheduler = createAutomaticMemoConsolidationScheduler;
+    function createAutomaticMemoConsolidationScheduler({ automationRunControl, executeAiStep, setStatus, }) {
+        if (!automationRunControl || !executeAiStep?.generateAiStep || !executeAiStep?.commitAiStep) {
+            throw new Error('内部メモ並列整理の必須依存を初期化できません。');
+        }
+        const pendingByPlayerId = new Map();
+        const failures = [];
+        function recordsForSession(session) {
+            return [...pendingByPlayerId.values()].filter((record) => record.session === session);
+        }
+        function pendingPlayerIds(session) {
+            return recordsForSession(session).map((record) => record.playerId);
+        }
+        function takeFailure(session) {
+            const index = failures.findIndex((item) => item.session === session);
+            if (index < 0)
+                return null;
+            return failures.splice(index, 1)[0]?.error ?? null;
+        }
+        function assertHealthy(session) {
+            const error = takeFailure(session);
+            if (error)
+                throw error;
+        }
+        function startRequest(request, session) {
+            const playerId = String(request?.playerId ?? '').trim();
+            if (!playerId || String(request?.taskType ?? '') !== 'memo-consolidate')
+                return false;
+            const existing = pendingByPlayerId.get(playerId);
+            if (existing?.session === session)
+                return false;
+            if (existing)
+                throw new Error(`別セッションの内部メモ整理が残っています: ${playerId}`);
+            const record = { playerId, session, promise: null };
+            record.promise = (async () => {
+                try {
+                    automationRunControl.assertRunning(session);
+                    const generated = await executeAiStep.generateAiStep(request, session);
+                    automationRunControl.assertRunning(session);
+                    await executeAiStep.commitAiStep(generated, session);
+                    return { ok: true };
+                }
+                catch (error) {
+                    const normalized = error instanceof Error ? error : new Error(String(error ?? '内部メモ整理に失敗しました。'));
+                    if (!automationRunControl.isStopped(session))
+                        failures.push({ session, error: normalized });
+                    return { ok: false, error: normalized };
+                }
+                finally {
+                    if (pendingByPlayerId.get(playerId) === record)
+                        pendingByPlayerId.delete(playerId);
+                }
+            })();
+            pendingByPlayerId.set(playerId, record);
+            return true;
+        }
+        function startBatch(batch, session) {
+            automationRunControl.assertRunning(session);
+            if (batch?.source !== 'memo-consolidation')
+                throw new Error('内部メモ整理以外のバッチは開始できません。');
+            let startedCount = 0;
+            for (const request of batch.taskRequests ?? []) {
+                if (startRequest(request, session))
+                    startedCount += 1;
+            }
+            if (startedCount > 0)
+                setStatus?.(`内部メモ整理を並列実行中（${startedCount}件）`, 'working');
+            return { status: startedCount > 0 ? 'advanced' : 'invalidated', advancedCount: startedCount };
+        }
+        async function waitForPlayer(playerId, session) {
+            assertHealthy(session);
+            const record = pendingByPlayerId.get(String(playerId ?? ''));
+            if (record?.session === session)
+                await record.promise;
+            automationRunControl.assertRunning(session);
+            assertHealthy(session);
+        }
+        async function waitForPlayers(playerIds, session) {
+            const ids = [...new Set((playerIds ?? []).map((playerId) => String(playerId ?? '')).filter(Boolean))];
+            assertHealthy(session);
+            const promises = ids
+                .map((playerId) => pendingByPlayerId.get(playerId))
+                .filter((record) => record?.session === session)
+                .map((record) => record.promise);
+            if (promises.length)
+                await Promise.all(promises);
+            automationRunControl.assertRunning(session);
+            assertHealthy(session);
+        }
+        async function waitForAll(session) {
+            assertHealthy(session);
+            const records = recordsForSession(session);
+            if (records.length)
+                await Promise.all(records.map((record) => record.promise));
+            automationRunControl.assertRunning(session);
+            assertHealthy(session);
+        }
+        async function settleAll(session) {
+            const records = recordsForSession(session);
+            if (records.length)
+                await Promise.all(records.map((record) => record.promise));
+            for (let index = failures.length - 1; index >= 0; index -= 1) {
+                if (failures[index].session === session)
+                    failures.splice(index, 1);
+            }
+        }
+        return Object.freeze({
+            assertHealthy,
+            pendingPlayerIds,
+            settleAll,
+            startBatch,
+            waitForAll,
+            waitForPlayer,
+            waitForPlayers,
+        });
     }
 });
 /**
@@ -43278,7 +43940,7 @@ define("js/automation/desktopAutomationConfig", ["require", "exports"], function
                 schemaVersion: SETTINGS_SCHEMA_VERSION,
                 executionMode: 'automatic',
                 autoRun: { intervalMs: 450, maxConsecutiveSteps: 500, autoConfirmWarnings: true, autoPublish: true },
-                aiOptions: { publicHistoryMode: 'delta', apiErrorAction: 'retry', responseRecoveryMode: 'repair-regenerate', apiLogScope: 'errors' },
+                aiOptions: { publicHistoryMode: 'delta', apiErrorAction: 'retry', responseRecoveryMode: 'repair-regenerate', apiLogScope: 'errors', parallelExecutionMode: 'auto', externalMaxConcurrency: 4, localMaxConcurrency: 1 },
                 profiles: [{
                         id: 'profile-demo',
                         label: 'デモAI',
@@ -43780,7 +44442,8 @@ define("js/automation/desktopAutomationManagementView", ["require", "exports"], 
         function optionSummary() {
             const actionLabels = { retry: '同じ内容で再試行', 'full-history-retry': '公開履歴全文で再試行', stop: '停止' };
             const recoveryLabels = { stop: '手動停止', repair: '部分修復', 'repair-regenerate': '修復＋再生成' };
-            return `操作間隔 ${formatUsage(controller.settings.autoRun.intervalMs)}ms / 最大 ${formatUsage(controller.settings.autoRun.maxConsecutiveSteps)}ステップ / API ${actionLabels[controller.settings.aiOptions.apiErrorAction] ?? '停止'} / 回答 ${recoveryLabels[controller.settings.aiOptions.responseRecoveryMode] ?? '修復＋再生成'}`;
+            const parallelLabels = { auto: '並列 自動', enabled: '並列 有効', disabled: '並列 無効' };
+            return `操作間隔 ${formatUsage(controller.settings.autoRun.intervalMs)}ms / 最大 ${formatUsage(controller.settings.autoRun.maxConsecutiveSteps)}ステップ / ${parallelLabels[controller.settings.aiOptions.parallelExecutionMode] ?? '並列 自動'} / API ${actionLabels[controller.settings.aiOptions.apiErrorAction] ?? '停止'} / 回答 ${recoveryLabels[controller.settings.aiOptions.responseRecoveryMode] ?? '修復＋再生成'}`;
         }
         function readinessHtml(state) {
             const validation = assignmentValidation(state);
@@ -43874,7 +44537,7 @@ define("js/automation/desktopAutomationManagementView", ["require", "exports"], 
               <span class="ai-settings-summary-value" data-ai-options-summary>${escapeHtml(optionSummary())}</span>
             </summary>
             <div class="ai-settings-body ai-option-groups">
-              <section class="ai-option-group" aria-labelledby="ai-auto-run-options-heading"><div class="ai-option-group-head"><h4 id="ai-auto-run-options-heading">自動実行</h4><p>操作間隔は各処理の待ち時間、連続ステップ上限は1回の自動実行で進める最大回数です。</p></div><div class="form-grid ai-options-grid"><label class="field"><span>操作間隔（ミリ秒）</span><input name="intervalMs" type="number" min="100" max="10000" value="${controller.settings.autoRun.intervalMs}"></label><label class="field"><span>連続ステップ上限</span><input name="maxConsecutiveSteps" type="number" min="1" max="5000" value="${controller.settings.autoRun.maxConsecutiveSteps}"></label></div></section>
+              <section class="ai-option-group" aria-labelledby="ai-auto-run-options-heading"><div class="ai-option-group-head"><h4 id="ai-auto-run-options-heading">自動実行</h4><p>操作間隔は各処理または並列バッチ間の待ち時間、連続ステップ上限は1回の自動実行で登録する最大AI行動数です。</p></div><div class="form-grid ai-options-grid"><label class="field"><span>操作間隔（ミリ秒）</span><input name="intervalMs" type="number" min="100" max="10000" value="${controller.settings.autoRun.intervalMs}"></label><label class="field"><span>連続ステップ上限</span><input name="maxConsecutiveSteps" type="number" min="1" max="5000" value="${controller.settings.autoRun.maxConsecutiveSteps}"></label><label class="field"><span>独立AI行動の並列処理</span><select name="parallelExecutionMode"><option value="auto" ${controller.settings.aiOptions.parallelExecutionMode === 'auto' ? 'selected' : ''}>自動（推奨）</option><option value="enabled" ${controller.settings.aiOptions.parallelExecutionMode === 'enabled' ? 'selected' : ''}>有効</option><option value="disabled" ${controller.settings.aiOptions.parallelExecutionMode === 'disabled' ? 'selected' : ''}>無効（完全直列）</option></select><small>自動では外部APIを最大4並列、同一ローカルLLM接続先を1並列にします。公開逐次投票・会話・昼発言など依存関係がある処理は常に直列です。</small></label><label class="field"><span>外部API最大並列数</span><input name="externalMaxConcurrency" type="number" min="1" max="16" value="${controller.settings.aiOptions.externalMaxConcurrency ?? 4}"><small>「有効」のときだけ使用します。</small></label><label class="field"><span>ローカルLLM最大並列数</span><input name="localMaxConcurrency" type="number" min="1" max="8" value="${controller.settings.aiOptions.localMaxConcurrency ?? 1}"><small>同一接続先ごとの上限です。「有効」のときだけ使用します。</small></label></div></section>
               <section class="ai-option-group" aria-labelledby="ai-history-options-heading"><div class="ai-option-group-head"><h4 id="ai-history-options-heading">履歴・エラー処理</h4><p>AIへ送る履歴、失敗時の再試行、ログ保存を設定します。</p></div><div class="form-grid ai-options-grid">
                 <label class="field full"><span>公開履歴の送信方式</span><select name="publicHistoryMode"><option value="full" ${controller.settings.aiOptions.publicHistoryMode === 'full' ? 'selected' : ''}>全公開履歴を無圧縮で送信</option><option value="compact" ${controller.settings.aiOptions.publicHistoryMode === 'compact' ? 'selected' : ''}>過去履歴を圧縮し、前回正常回答後は全文で送信</option><option value="delta" ${controller.settings.aiOptions.publicHistoryMode === 'delta' ? 'selected' : ''}>前回の正常回答後に増えた公開履歴だけを送信</option></select><small>通常は「前回の正常回答後に増えた公開履歴だけを送信」を使用します。文脈不足を感じる場合は「過去履歴を圧縮」、さらに必要な場合は「全公開履歴」を選んでください。</small></label>
                 <label class="field"><span>APIエラー時</span><select name="apiErrorAction"><option value="retry" ${controller.settings.aiOptions.apiErrorAction === 'retry' ? 'selected' : ''}>同じ内容で1回再試行</option><option value="full-history-retry" ${controller.settings.aiOptions.apiErrorAction === 'full-history-retry' ? 'selected' : ''}>最新状態を再取得し、公開履歴全文で1回再試行</option><option value="stop" ${controller.settings.aiOptions.apiErrorAction === 'stop' ? 'selected' : ''}>停止して手動対応</option></select></label>
@@ -43964,6 +44627,9 @@ define("js/automation/desktopAutomationManagementView", ["require", "exports"], 
                     apiErrorAction: form.elements.apiErrorAction.value,
                     responseRecoveryMode: responseRetryPolicy.normalizeRecoveryMode(form.elements.responseRecoveryMode.value),
                     apiLogScope: form.elements.apiLogScope.value,
+                    parallelExecutionMode: ['auto', 'enabled', 'disabled'].includes(form.elements.parallelExecutionMode.value) ? form.elements.parallelExecutionMode.value : 'auto',
+                    externalMaxConcurrency: Number(form.elements.externalMaxConcurrency.value),
+                    localMaxConcurrency: Number(form.elements.localMaxConcurrency.value),
                 },
                 profiles,
                 assignments: collectVisibleAssignments(),
@@ -43979,8 +44645,8 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createAutomationStatusController = createAutomationStatusController;
     /**
-     * 責務: 自動実行の一時状態、全画面共通ステータス表示、実行中の競合操作ロック状態を所有する。
-     * 変更ルール: 表示中タブと自動実行状態を結合しない。自動API実行方式が選択されている間はidleを含め共通ヘッダーステータスを常時表示し、idle時はそこから全自動開始できる導線を提供する。人間操作待ちはエラーと区別した介入待ち表示として、対象プレイヤー・操作種別・入力導線をヘッダーへ明示し、待機へ遷移した瞬間だけ注意喚起アニメーションを行う。エラー停止はerror状態を保持したまま、自動API実行方式では既存の開始経路から再開できる導線を提供する。手動プロンプト方式のidle時だけ非表示にする。ゲーム状態を直接変更せず、running / waiting-human / waiting-manual-ai の間だけ競合する設定・復元操作をロックする。AI生成リソースを使う診断操作はrunning中だけロックし、一時停止・各待機・エラー停止では再び許可する。
+     * 責務: 自動実行の一時状態、全画面共通ステータス表示、実行中の競合操作ロック状態、現在API通信中のAIプレイヤー集合、および現在の投票セッションでAPI応答取得まで完了したAIプレイヤー集合を所有する。
+     * 変更ルール: 表示中タブと自動実行状態を結合しない。自動API実行方式が選択されている間はidleを含め共通ヘッダーステータスを常時表示し、idle時はそこから全自動開始できる導線を提供する。人間操作待ちはエラーと区別した介入待ち表示として、対象プレイヤー・操作種別・入力導線をヘッダーへ明示し、待機へ遷移した瞬間だけ注意喚起アニメーションを行う。エラー停止はerror状態を保持したまま、自動API実行方式では既存の開始経路から再開できる導線を提供する。手動プロンプト方式のidle時だけ非表示にする。ゲーム状態を直接変更せず、running / waiting-human / waiting-manual-ai の間だけ競合する設定・復元操作をロックする。AI生成リソースを使う診断操作はrunning中だけロックし、一時停止・各待機・エラー停止では再び許可する。API通信中プレイヤー集合と投票API応答済み集合は表示専用の一時状態として管理し、正式投票はvoteSession.votesを正本とする。投票API応答済み集合はvoteSession.id単位で分離し、決選投票へ持ち越さない。夜フェーズでの公開可否は各UIの機密表示条件を正本とする。
      */
     const AUTOMATION_MODES = Object.freeze(['idle', 'running', 'paused', 'waiting-human', 'waiting-manual-ai', 'error']);
     const LOCKED_MODES = new Set(['running', 'waiting-human', 'waiting-manual-ai']);
@@ -44008,6 +44674,27 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
     });
     function createAutomationStatusController(context) {
         const { controller, currentGameState, refreshLiveView, runtime, } = context;
+        const activeAiRequestPlayerIds = new Set();
+        const voteResponsePlayerIds = new Set();
+        let voteResponseSessionId = '';
+        function activeAiRequestSnapshot() {
+            return [...activeAiRequestPlayerIds];
+        }
+        function voteResponseSnapshot() {
+            return [...voteResponsePlayerIds];
+        }
+        function syncVoteResponseSession() {
+            const state = currentGameState();
+            const currentSessionId = ['vote', 'runoff'].includes(state?.game?.phase)
+                ? String(state?.voteSession?.id ?? '').trim()
+                : '';
+            if (currentSessionId === voteResponseSessionId)
+                return;
+            voteResponseSessionId = currentSessionId;
+            voteResponsePlayerIds.clear();
+            controller.voteResponseSessionId = voteResponseSessionId;
+            controller.voteResponsePlayerIds = voteResponseSnapshot();
+        }
         function normalizeMode(mode) {
             return AUTOMATION_MODES.includes(mode) ? mode : 'idle';
         }
@@ -44065,6 +44752,7 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
             button.textContent = label;
         }
         function refreshAutomationStatus() {
+            syncVoteResponseSession();
             const mode = normalizeMode(controller.automationMode);
             controller.automationMode = mode;
             const presentation = headerPresentation();
@@ -44088,6 +44776,9 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
             runtime().setAutomationUiState({
                 mode,
                 mutationLocked: isAutomationMutationLocked(),
+                activeAiRequestPlayerIds: activeAiRequestSnapshot(),
+                voteResponseSessionId,
+                voteResponsePlayerIds: voteResponseSnapshot(),
             });
         }
         function setAutomationMode(mode, detail = null) {
@@ -44104,6 +44795,39 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
                     window.setTimeout(() => panel.classList.remove('automation-human-wait-enter'), 1500);
                 }
             }
+        }
+        function setAiRequestActive(playerId, active) {
+            const normalizedPlayerId = String(playerId ?? '').trim();
+            if (!normalizedPlayerId)
+                return;
+            const changed = active
+                ? !activeAiRequestPlayerIds.has(normalizedPlayerId)
+                : activeAiRequestPlayerIds.has(normalizedPlayerId);
+            if (!changed)
+                return;
+            if (active)
+                activeAiRequestPlayerIds.add(normalizedPlayerId);
+            else
+                activeAiRequestPlayerIds.delete(normalizedPlayerId);
+            controller.activeAiRequestPlayerIds = activeAiRequestSnapshot();
+            refreshAutomationStatus();
+            refreshLiveView();
+        }
+        function setVoteResponseReceived(playerId, sessionId) {
+            const normalizedPlayerId = String(playerId ?? '').trim();
+            const normalizedSessionId = String(sessionId ?? '').trim();
+            if (!normalizedPlayerId || !normalizedSessionId)
+                return;
+            syncVoteResponseSession();
+            if (!voteResponseSessionId || normalizedSessionId !== voteResponseSessionId)
+                return;
+            if (voteResponsePlayerIds.has(normalizedPlayerId))
+                return;
+            voteResponsePlayerIds.add(normalizedPlayerId);
+            controller.voteResponseSessionId = voteResponseSessionId;
+            controller.voteResponsePlayerIds = voteResponseSnapshot();
+            refreshAutomationStatus();
+            refreshLiveView();
         }
         function setStatus(message, type = 'idle') {
             controller.statusMessage = maskAutomaticNightActorNames(message);
@@ -44123,6 +44847,8 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
             isAutomationMutationLocked,
             maskAutomaticNightActorNames,
             refreshAutomationStatus,
+            setAiRequestActive,
+            setVoteResponseReceived,
             setAutomationMode,
             setStatus,
         });
@@ -44130,7 +44856,7 @@ define("js/automation/automationStatusController", ["require", "exports"], funct
 });
 /**
  * 責務: 自動API実行方式の進行卓で、手動進行卓と同じ3パネル骨格を保ちながら中央パネルへ公開ログだけを表示し、表示更新とスクロール位置を管理する。
- * 変更ルール: 進行卓の通常表示方式はexecutionModeを正本とし、automatic選択時は実行開始前・一時停止中も自動実行用進行卓を表示する。人間操作待ちは通常進行卓へ遷移させず公開ログ末尾へHuman Task Cardを差し込み、役職通知だけ共通ダイアログへ委譲する。自動実行ステータスと実行操作は共通ヘッダーへ委譲し、中央パネルへ重複表示しない。機密情報非表示中の夜フェーズでは現在行動者をプレイヤー状態へ強調表示せず、処理順から役職を推測できないようにする。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。ゲーム状態を直接変更しない。
+ * 変更ルール: 進行卓の通常表示方式はexecutionModeを正本とし、automatic選択時は実行開始前・一時停止中も自動実行用進行卓を表示する。人間操作待ちは通常進行卓へ遷移させず公開ログ末尾へHuman Task Cardを差し込み、役職通知だけ共通ダイアログへ委譲する。自動実行ステータスと実行操作は共通ヘッダーへ委譲し、中央パネルへ重複表示しない。機密情報非表示中の夜フェーズでは現在行動者をプレイヤー状態へ強調表示せず、処理順から役職を推測できないようにする。投票済表示は現在のvoteSessionだけに限定し、正式登録済み票に加えて同一セッションでAPI応答取得まで完了したAI投票も表示根拠にする。API応答済みはAutomation表示状態だけを参照し、ゲームstateへ混ぜない。ゲーム状態を直接変更しない。
  */
 define("js/automation/liveProgressController", ["require", "exports"], function (require, exports) {
     "use strict";
@@ -44213,13 +44939,21 @@ define("js/automation/liveProgressController", ["require", "exports"], function 
         }
         function playerStatusList(state) {
             const currentTask = runtime().getCurrentWorkbenchTask();
+            const activeRequestPlayerIds = new Set(controller.activeAiRequestPlayerIds ?? []);
+            const voteResponsePlayerIds = new Set(controller.voteResponsePlayerIds ?? []);
+            const voteResponseSessionId = String(controller.voteResponseSessionId ?? '');
             const hideNightActorMarker = state?.game?.phase === 'night' && !controller.showConfidential;
             return `<div class="status-list">${(state?.players ?? []).map((player) => {
-                const active = !hideNightActorMarker && currentTask?.playerId === player.id;
+                const active = !hideNightActorMarker && (activeRequestPlayerIds.size > 0
+                    ? activeRequestPlayerIds.has(player.id)
+                    : currentTask?.playerId === player.id);
                 const remaining = state?.discussion?.remainingByPlayer?.[player.id];
-                const voteDone = ['vote', 'runoff'].includes(state?.game?.phase)
+                const currentVoteSession = ['vote', 'runoff'].includes(state?.game?.phase)
                     && state?.voteSession?.day === state?.game?.day
-                    && Boolean(state?.voteSession?.votes && player.id in state.voteSession.votes);
+                    ? state.voteSession
+                    : null;
+                const voteDone = Boolean(currentVoteSession) && (Boolean(currentVoteSession.votes && player.id in currentVoteSession.votes)
+                    || (String(currentVoteSession.id ?? '') === voteResponseSessionId && voteResponsePlayerIds.has(player.id)));
                 const claim = (state?.claims ?? []).find((item) => item.actorId === player.id && item.status === 'active');
                 const frozen = runtime().isWorkbenchPlayerFrozen(player.id);
                 return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${escapeHtml(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${escapeHtml(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${escapeHtml(runtime().getRoleDisplayName(claim.roleId))}CO` : ''}</small></span>${controller.showConfidential ? `<span class="secret-role">${escapeHtml(runtime().getRoleDisplayName(player.roleId))}</span>` : ''}</button>`;
@@ -44360,15 +45094,15 @@ define("js/automation/liveProgressController", ["require", "exports"], function 
     }
 });
 /**
- * 責務: 状態駆動の一手実行、自動進行ループ、停止完了待機と、AIプロファイル利用上限到達時の再開可能な一時停止を所有する。
- * 変更ルール: 自動実行ループは表示中タブを変更しない。DOM、data-action、ボタン表示文字列をゲーム進行APIとして使用せず、次の操作はruntimeの純粋ポリシーで導出して正式コマンドAPIを直接実行する。全自動開始は単一の実行Promiseへ集約し、準備中を含めて実行セッションを重複生成しない。PROFILE_BUDGET_EXCEEDEDだけはゲーム状態を進めずpausedへ移し、設定変更後に同じ未処理タスクから再開できる状態を保つ。
+ * 責務: 状態駆動の一手実行、独立AIタスクの全自動バッチ実行、AI役職通知の一括処理、自動進行ループ、停止完了待機と、AIプロファイル利用上限到達時の再開可能な一時停止を所有する。
+ * 変更ルール: 単発のperformOneStepは従来どおり一つの操作だけを進め、並列化・一括化は全自動ループだけで使用する。並列対象はruntimeの純粋batch policyを正本とし、Automation側でゲーム規則を複製しない。内部メモ整理だけは専用Schedulerへ委譲し、異なるAIの通信を並行継続しつつ本人の次AI生成前に必ず完了を待つ。処理中メモ整理はAutomation状態としてworkflow候補から一時除外し、ゲームstateへ進行中フラグを追加しない。自動実行ループは表示中タブを変更しない。DOM、data-action、ボタン表示文字列をゲーム進行APIとして使用せず、正式コマンドAPIを直接実行する。全自動開始は単一の実行Promiseへ集約し、準備中を含めて実行セッションを重複生成しない。PROFILE_BUDGET_EXCEEDEDだけはゲーム状態を進めずpausedへ移し、設定変更後に同じ未処理タスクから再開できる状態を保つ。
  */
 define("js/automation/automaticRunCoordinator", ["require", "exports"], function (require, exports) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     exports.createAutomaticRunCoordinator = createAutomaticRunCoordinator;
     function createAutomaticRunCoordinator(context) {
-        const { apiRetryPolicy, automationRunControl, bridge, controller, currentGameState, dialogError, enableLiveView, executeAiStep, openManualAiTask, playerName, refreshLiveView, runtime, setAutomationMode, setStatus, updateButtons, usesManualAiGeneration, } = context;
+        const { apiRetryPolicy, automationRunControl, automaticMemoConsolidationScheduler, bridge, controller, currentGameState, dialogError, enableLiveView, executeAiStep, executeAiBatch, openManualAiTask, playerName, refreshLiveView, runtime, setAutomationMode, setStatus, updateButtons, usesManualAiGeneration, } = context;
         let activeRunPromise = null;
         function delay(ms) {
             return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -44438,8 +45172,29 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
                 throw new Error(`${label}後にゲーム状態が更新されませんでした。`);
             setStatus(`${label}を完了しました。`, 'working');
         }
+        function automaticActionOptions(session = controller.runSession) {
+            return {
+                ignoredMemoConsolidationPlayerIds: automaticMemoConsolidationScheduler?.pendingPlayerIds(session) ?? [],
+            };
+        }
+        function resolveAutomaticAction(runtimeApi, session) {
+            return runtimeApi.resolveAutomaticAction({
+                autoPublish: controller.settings.autoRun.autoPublish,
+                ...automaticActionOptions(session),
+            });
+        }
+        async function resolveActionAfterPlayerMemoBarrier(runtimeApi, action, session) {
+            if (action?.kind !== 'ai-task')
+                return action;
+            const playerId = String(action.taskRequest?.playerId ?? '');
+            if (!playerId)
+                return action;
+            await automaticMemoConsolidationScheduler?.waitForPlayer(playerId, session);
+            return resolveAutomaticAction(runtimeApi, session);
+        }
         async function performOneStep(session) {
             automationRunControl.assertRunning(session);
+            automaticMemoConsolidationScheduler?.assertHealthy(session);
             if (controller.stepping)
                 return { status: 'busy' };
             controller.stepping = true;
@@ -44452,9 +45207,8 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
                 if (typeof runtimeApi.resolveAutomaticAction !== 'function' || typeof runtimeApi.executeAutomaticAction !== 'function') {
                     throw new Error('状態駆動の全自動進行APIを利用できません。');
                 }
-                const action = runtimeApi.resolveAutomaticAction({
-                    autoPublish: controller.settings.autoRun.autoPublish,
-                });
+                let action = resolveAutomaticAction(runtimeApi, session);
+                action = await resolveActionAfterPlayerMemoBarrier(runtimeApi, action, session);
                 if (action.kind === 'ai-task') {
                     const request = action.taskRequest;
                     if (usesManualAiGeneration(request.playerId)) {
@@ -44468,14 +45222,17 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
                     return { status: 'advanced' };
                 }
                 if (action.kind === 'command') {
-                    const beforeRevision = Number(state.revision ?? 0);
+                    const beforeRevision = Number(currentGameState()?.revision ?? 0);
                     const response = runtimeApi.executeAutomaticAction(action);
                     assertCommandAdvanced(beforeRevision, response, action.label || action.command);
                     return { status: 'advanced' };
                 }
-                if (action.kind === 'ended')
+                if (action.kind === 'ended') {
+                    await automaticMemoConsolidationScheduler?.waitForAll(session);
                     return { status: 'ended', reason: action.reason };
+                }
                 if (action.kind === 'human-public' || action.kind === 'human-private') {
+                    await automaticMemoConsolidationScheduler?.waitForAll(session);
                     return {
                         status: action.kind,
                         reason: action.reason,
@@ -44492,6 +45249,87 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
                 controller.stepping = false;
                 updateButtons();
             }
+        }
+        function sameCommandRequest(action, request) {
+            return action?.kind === 'command'
+                && String(action.command ?? '') === String(request.command ?? '')
+                && String(action.playerId ?? '') === String(request.playerId ?? '');
+        }
+        async function performCommandBatch(session, batch) {
+            automationRunControl.assertRunning(session);
+            const requests = [...(batch?.commandRequests ?? [])];
+            if (requests.length < 2)
+                return { status: 'invalidated', advancedCount: 0 };
+            const runtimeApi = runtime();
+            setStatus(`AI役職通知を一括処理中（${requests.length}件）`, 'working');
+            let advancedCount = 0;
+            for (const request of requests) {
+                automationRunControl.assertRunning(session);
+                const action = resolveAutomaticAction(runtimeApi, session);
+                if (!sameCommandRequest(action, request)) {
+                    return { status: advancedCount > 0 ? 'advanced' : 'invalidated', advancedCount };
+                }
+                const beforeRevision = Number(currentGameState()?.revision ?? 0);
+                const response = runtimeApi.executeAutomaticAction(action);
+                assertCommandAdvanced(beforeRevision, response, action.label || action.command);
+                advancedCount += 1;
+            }
+            return { status: 'advanced', advancedCount };
+        }
+        async function performParallelBatch(session, batch) {
+            automationRunControl.assertRunning(session);
+            automaticMemoConsolidationScheduler?.assertHealthy(session);
+            if (controller.stepping)
+                return { status: 'busy', advancedCount: 0 };
+            controller.stepping = true;
+            updateButtons();
+            try {
+                if (batch?.kind === 'command-batch')
+                    return performCommandBatch(session, batch);
+                if (batch?.source === 'memo-consolidation') {
+                    return automaticMemoConsolidationScheduler.startBatch(batch, session);
+                }
+                await automaticMemoConsolidationScheduler?.waitForPlayers((batch?.taskRequests ?? []).map((request) => request.playerId), session);
+                return await executeAiBatch(batch, session);
+            }
+            finally {
+                controller.stepping = false;
+                updateButtons();
+            }
+        }
+        function automaticBatchForCurrentState(session = controller.runSession) {
+            if (typeof executeAiBatch !== 'function')
+                return null;
+            if (controller.settings.aiOptions?.parallelExecutionMode === 'disabled')
+                return null;
+            const runtimeApi = runtime();
+            if (typeof runtimeApi.resolveAutomaticAiBatch !== 'function')
+                return null;
+            const batch = runtimeApi.resolveAutomaticAiBatch(automaticActionOptions(session));
+            if (!['ai-task-batch', 'command-batch'].includes(batch?.kind))
+                return null;
+            const remainingSteps = Math.max(0, Number(controller.settings.autoRun.maxConsecutiveSteps ?? 0) - controller.completedSteps);
+            if (remainingSteps < 2)
+                return null;
+            if (batch.kind === 'command-batch') {
+                const executable = [...(batch.commandRequests ?? [])].slice(0, remainingSteps);
+                if (executable.length < 2)
+                    return null;
+                return { ...batch, commandRequests: executable };
+            }
+            if (!Array.isArray(batch.taskRequests) || batch.taskRequests.length < 2)
+                return null;
+            const executable = [];
+            for (const request of batch.taskRequests) {
+                if (executable.length >= remainingSteps)
+                    break;
+                if (usesManualAiGeneration(request.playerId))
+                    break;
+                executable.push(request);
+            }
+            if (executable.length < 2)
+                return null;
+            return { ...batch, taskRequests: executable };
         }
         async function executeRunLoop() {
             if (controller.settings.executionMode !== 'automatic')
@@ -44512,16 +45350,23 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
             setStatus('全自動進行を開始しました。画面を移動しても自動実行は継続します。', 'working');
             try {
                 while (!automationRunControl.isStopped(session)) {
+                    automaticMemoConsolidationScheduler?.assertHealthy(session);
                     if (controller.completedSteps >= controller.settings.autoRun.maxConsecutiveSteps) {
                         throw new Error('自動実行の連続ステップ上限に達しました。');
                     }
-                    const result = await performOneStep(session);
+                    const batch = automaticBatchForCurrentState(session);
+                    let result = batch
+                        ? await performParallelBatch(session, batch)
+                        : await performOneStep(session);
+                    if (result.status === 'invalidated')
+                        result = await performOneStep(session);
                     if (result.status === 'advanced') {
-                        controller.completedSteps += 1;
+                        controller.completedSteps += Math.max(1, Number(result.advancedCount ?? 1));
                         await automationRunControl.delayWithAbort(controller.settings.autoRun.intervalMs, session);
                         continue;
                     }
                     if (result.status === 'manual-ai') {
+                        await automaticMemoConsolidationScheduler?.waitForAll(session);
                         setAutomationMode('waiting-manual-ai', { playerId: result.playerId, taskType: result.taskType, slotId: result.slotId ?? '' });
                         setStatus(result.reason ?? 'AIプロファイル未設定の参加者を手動生成します。', 'idle');
                         await openManualAiTask({ resume: true, request: result });
@@ -44543,6 +45388,7 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
                         refreshLiveView();
                         break;
                     }
+                    await automaticMemoConsolidationScheduler?.waitForAll(session);
                     setAutomationMode('idle');
                     setStatus(result.reason ?? '自動実行を停止しました。', result.status === 'ended' ? 'success' : 'idle');
                     if (result.status === 'ended') {
@@ -44583,6 +45429,7 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
             }
             finally {
                 try {
+                    await automaticMemoConsolidationScheduler?.settleAll(session);
                     controller.running = false;
                     if (controller.runSession === session)
                         controller.runSession = null;
@@ -44618,8 +45465,9 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
             controller.pendingHumanTask = null;
             if (!preserveMode)
                 setAutomationMode('idle');
-            if (session?.currentRequestId) {
-                await settleWithin(bridge.cancelRequest(session.currentRequestId).catch(() => { }), 2000);
+            const requestIds = automationRunControl.activeRequestIds(session);
+            if (requestIds.length) {
+                await settleWithin(Promise.allSettled(requestIds.map((requestId) => bridge.cancelRequest(requestId).catch(() => { }))), 2000);
             }
             setStatus('停止要求を受け付けました。', 'idle');
             if (!waitForCompletion || !session)
@@ -44634,6 +45482,7 @@ define("js/automation/automaticRunCoordinator", ["require", "exports"], function
             waitFor,
             waitForRevisionChange,
             performOneStep,
+            performParallelBatch,
             runLoop,
             stopLoop,
         });
@@ -44809,15 +45658,15 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
                 indicator.textContent = `自動保存 ${new Date().toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`;
         }
         function enqueueAutosaveSnapshot() {
-            const snapshot = runtime().getAutosaveState();
+            const serializedSnapshot = runtime().getAutosaveSerialized();
             const operation = autosaveWriteChain
                 .catch(() => { })
-                .then(() => bridge.saveAutosave(snapshot));
+                .then(() => bridge.saveAutosave(serializedSnapshot));
             autosaveWriteChain = operation;
             return operation;
         }
         async function flushAutosave({ force = false, reportError = true } = {}) {
-            if (!bridge.isDesktop || typeof runtime().getAutosaveState !== 'function')
+            if (!bridge.isDesktop || typeof runtime().getAutosaveSerialized !== 'function')
                 return;
             if (force)
                 autosaveDirty = true;
@@ -44844,7 +45693,7 @@ define("js/automation/settingsPersistenceCoordinator", ["require", "exports"], f
             }
         }
         function scheduleAutosave() {
-            if (!bridge.isDesktop || typeof runtime().getAutosaveState !== 'function')
+            if (!bridge.isDesktop || typeof runtime().getAutosaveSerialized !== 'function')
                 return;
             autosaveDirty = true;
             const now = Date.now();
@@ -46797,7 +47646,7 @@ ${renderPromptDataBlock('postgame-response-contract', { completeExample: EXAMPLE
  * 責務: デスクトップ自動化の起動、ES Moduleとして静的に解決した正式依存の生成、各Coordinator／Controllerの接続だけを所有する。
  * 変更ルール: 自動進行、手動生成、人間入力、設定保存、AI管理、進行表示の処理本体はautomation配下の専用モジュールを正本とし、このFacadeへ戻さない。観戦画面から人狼卓を1手進める場合もAI管理ControllerのrunSingleAutomaticStepへ委譲する公開橋だけを提供し、進行規則をFacadeへ複製しない。初期設定読込後の進行卓表示方式もliveProgressControllerへ委譲し、executionModeと表示方式を同期する。循環する生成時依存だけを単一の遅延解決レジストリで接続し、automation内部をwindowグローバル経由で参照しない。個別APIごとの代理関数を追加しない。機密表示はAppUIの専用イベントから表示フラグだけを受け取り、完全状態の秘密情報をFacadeで加工しない。ゲーム準備の局所入力通知は自動保存と明示要求された装飾だけを処理し、割り当て整合・実況・全体ステータス再計算を起動しない。
  */
-define("js/automation/desktopAutomation", ["require", "exports", "js/shared/utils", "js/automation/runtimeAccess", "js/automation/automationRunControl", "js/automation/automaticAiExecutor", "js/automation/desktopAutomationConfig", "js/automation/desktopAutomationManagementView", "js/automation/automationStatusController", "js/automation/liveProgressController", "js/automation/automaticRunCoordinator", "js/automation/settingsPersistenceCoordinator", "js/automation/humanTaskCoordinator", "js/automation/manualTaskCoordinator", "js/automation/profileEditorController", "js/automation/aiProfileTransferController", "js/automation/assignmentController", "js/automation/generationTestController", "js/automation/aiManagementController", "js/automation/setupDecorationController", "js/automation/postgameAnalysisAdapter"], function (require, exports, utils_js_63, runtimeAccess, automationRunControl, automaticAiExecutorApi, desktopAutomationConfig_js_1, desktopAutomationManagementView_js_1, automationStatusController_js_1, liveProgressController_js_1, automaticRunCoordinator_js_1, settingsPersistenceCoordinator_js_1, humanTaskCoordinator_js_1, manualTaskCoordinator_js_1, profileEditorController_js_1, aiProfileTransferController_js_1, assignmentController_js_1, generationTestController_js_1, aiManagementController_js_1, setupDecorationController_js_1, postgameAnalysisAdapter_js_1) {
+define("js/automation/desktopAutomation", ["require", "exports", "js/shared/utils", "js/automation/runtimeAccess", "js/automation/automationRunControl", "js/automation/automaticAiExecutor", "js/automation/automaticAiBatchExecutor", "js/automation/automaticAiRequestScheduler", "js/automation/automaticMemoConsolidationScheduler", "js/automation/desktopAutomationConfig", "js/automation/desktopAutomationManagementView", "js/automation/automationStatusController", "js/automation/liveProgressController", "js/automation/automaticRunCoordinator", "js/automation/settingsPersistenceCoordinator", "js/automation/humanTaskCoordinator", "js/automation/manualTaskCoordinator", "js/automation/profileEditorController", "js/automation/aiProfileTransferController", "js/automation/assignmentController", "js/automation/generationTestController", "js/automation/aiManagementController", "js/automation/setupDecorationController", "js/automation/postgameAnalysisAdapter"], function (require, exports, utils_js_63, runtimeAccess, automationRunControl, automaticAiExecutorApi, automaticAiBatchExecutor_js_1, automaticAiRequestScheduler_js_1, automaticMemoConsolidationScheduler_js_1, desktopAutomationConfig_js_1, desktopAutomationManagementView_js_1, automationStatusController_js_1, liveProgressController_js_1, automaticRunCoordinator_js_1, settingsPersistenceCoordinator_js_1, humanTaskCoordinator_js_1, manualTaskCoordinator_js_1, profileEditorController_js_1, aiProfileTransferController_js_1, assignmentController_js_1, generationTestController_js_1, aiManagementController_js_1, setupDecorationController_js_1, postgameAnalysisAdapter_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     (function startDesktopAutomation() {
@@ -46887,6 +47736,9 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             showConfidential: false,
             automationMode: 'idle',
             automationDetail: null,
+            activeAiRequestPlayerIds: [],
+            voteResponseSessionId: '',
+            voteResponsePlayerIds: [],
             waitingHuman: false,
             pendingHumanTask: null,
             resumeAfterHuman: false,
@@ -46926,6 +47778,8 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
         const waitFor = lateControllerMethod('automaticRunCoordinator', 'waitFor');
         const waitForRevisionChange = lateControllerMethod('automaticRunCoordinator', 'waitForRevisionChange');
         const refreshLiveView = lateControllerMethod('liveProgressController', 'refreshLiveView');
+        const setAiRequestActive = lateControllerMethod('automationStatusController', 'setAiRequestActive');
+        const setVoteResponseReceived = lateControllerMethod('automationStatusController', 'setVoteResponseReceived');
         const enableLiveView = lateControllerMethod('liveProgressController', 'enableLiveView');
         const syncExecutionModeWorkbenchView = lateControllerMethod('liveProgressController', 'syncExecutionModeWorkbenchView');
         const hideLiveView = lateControllerMethod('liveProgressController', 'hideLiveView');
@@ -46979,6 +47833,11 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
         function isManagementTabActive() {
             return activeTab() === 'ai-management';
         }
+        const automaticAiRequestScheduler = (0, automaticAiRequestScheduler_js_1.createAutomaticAiRequestScheduler)({
+            controller,
+            runControl: automationRunControl,
+            localProviderId: LOCAL_OPENAI_PROVIDER,
+        });
         const executeAiStep = automaticAiExecutorApi.createAutomaticAiExecutor({
             apiRetryPolicy,
             responseRetryPolicy,
@@ -46997,6 +47856,24 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             structuredApiError,
             apiErrorAsException,
             generationFailureRequiresStop,
+            requestScheduler: automaticAiRequestScheduler,
+            setAiRequestActive,
+            setVoteResponseReceived,
+        });
+        const automaticMemoConsolidationScheduler = (0, automaticMemoConsolidationScheduler_js_1.createAutomaticMemoConsolidationScheduler)({
+            automationRunControl,
+            executeAiStep,
+            setStatus,
+        });
+        const executeAiBatch = (0, automaticAiBatchExecutor_js_1.createAutomaticAiBatchExecutor)({
+            automationRunControl,
+            controller,
+            executeAiStep,
+            runtime,
+            setStatus,
+            automaticActionOptions: () => ({
+                ignoredMemoConsolidationPlayerIds: automaticMemoConsolidationScheduler.pendingPlayerIds(controller.runSession),
+            }),
         });
         function responseRecoveryModeOptions(selectedValue) {
             const selected = responseRetryPolicy.normalizeRecoveryMode(selectedValue);
@@ -47088,6 +47965,7 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             assignmentSummary,
             assignmentValidation,
             automationRunControl,
+            automaticMemoConsolidationScheduler,
             bridge,
             bulkAssignmentProfileId,
             captureManagementSectionState,
@@ -47106,6 +47984,7 @@ define("js/automation/desktopAutomation", ["require", "exports", "js/shared/util
             enableLiveView,
             syncExecutionModeWorkbenchView,
             executeAiStep,
+            executeAiBatch,
             firstEnabledProfileId,
             handleManualAiCommitResult,
             hideLiveView,
@@ -47347,7 +48226,7 @@ define("js/automation/automationEntry", ["require", "exports", "js/ai/apiRetryPo
  * 責務: アプリ起動、モジュール接続、Renderer未捕捉エラー監視、外観設定の初期読込とdialog接続、正式タブ登録、グローバルUI操作、ゲームデータJSON入出力、新規ゲームと設定引継ぎ再開始の確認、デスクトップ自動保存、自動進行通知制御、AI項目単位回収後の自動代替登録APIの公開窓口を担当する。
  * 変更ルール: ゲーム規則・AI代替規則・画面描画・通知表示ポリシー・インポート参照検査・設定引継ぎ対象の選別は各専用モジュールへ委譲する。ゲームデータ転送の実処理は本モジュールを正本とし、ゲーム準備／記録・管理の表示層から送られる要求だけを受ける。破棄確認は同期ブラウザモーダルを使わず専用dialogを閉じた次フレームで初期化する。自動夜進行の通知秘匿スコープもAppUIへ委譲し、進行層へ人物名置換規則を複製しない。ゲーム準備の局所入力変更はイベント詳細を付け、不要な自動化側の全体更新を起動しない。ブラウザストレージへは読み書きしない。デスクトップ自動保存もゲームデータ読込と同じ製品schema互換ポリシーを通し、旧schemaは一方向migration、未来schemaは拒否する。現在扱えないゲーム事実は補修せず拒否し、利用不能な履歴エントリだけは個別除外して警告する。
  */
-define("js/app/bootstrap", ["require", "exports", "js/config/constants", "generated/buildInfo", "js/state/stateStore", "js/state/autosaveState", "js/state/stateImport", "js/ui/AppUI", "js/appearance/appearanceModel", "js/appearance/appearanceTheme", "js/ui/appearance/appearanceController", "js/shared/utils", "js/services/generationDepthPolicy", "js/services/generationPipeline", "js/services/generationPipelineTestFixture", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/stages/generationStageEnvelope", "js/prompts/stages/generationStageResponse", "js/app/runtimeFacade", "js/app/globalErrorReporter", "js/domain/game/automaticActionPolicy", "js/privacy/dataTransmissionNotice", "js/automation/automationEntry"], function (require, exports, constants_js_62, buildInfo_js_6, stateStore_js_4, autosaveState_js_1, stateImport_js_1, AppUI_js_1, appearanceModel_js_6, appearanceTheme_js_4, appearanceController_js_1, utils_js_64, generationDepthPolicy_js_2, generationPipeline_js_1, generationPipelineTestFixture_js_1, generationStagePromptPolicy_js_2, generationStagePromptBuilder_js_2, generationStageEnvelope_js_2, generationStageResponse_js_2, runtimeFacade_js_1, globalErrorReporter_js_1, automaticActionPolicy_js_1) {
+define("js/app/bootstrap", ["require", "exports", "js/config/constants", "generated/buildInfo", "js/state/stateStore", "js/state/autosaveState", "js/state/stateImport", "js/ui/AppUI", "js/appearance/appearanceModel", "js/appearance/appearanceTheme", "js/ui/appearance/appearanceController", "js/shared/utils", "js/services/generationDepthPolicy", "js/services/generationPipeline", "js/services/generationPipelineTestFixture", "js/prompts/stages/generationStagePromptPolicy", "js/prompts/stages/generationStagePromptBuilder", "js/prompts/stages/generationStageEnvelope", "js/prompts/stages/generationStageResponse", "js/app/runtimeFacade", "js/app/globalErrorReporter", "js/domain/game/automaticActionPolicy", "js/domain/game/automaticAiBatchPolicy", "js/privacy/dataTransmissionNotice", "js/automation/automationEntry"], function (require, exports, constants_js_62, buildInfo_js_6, stateStore_js_4, autosaveState_js_1, stateImport_js_1, AppUI_js_1, appearanceModel_js_6, appearanceTheme_js_4, appearanceController_js_1, utils_js_64, generationDepthPolicy_js_2, generationPipeline_js_1, generationPipelineTestFixture_js_1, generationStagePromptPolicy_js_2, generationStagePromptBuilder_js_2, generationStageEnvelope_js_2, generationStageResponse_js_2, runtimeFacade_js_1, globalErrorReporter_js_1, automaticActionPolicy_js_1, automaticAiBatchPolicy_js_1) {
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     function resolveInitialState() {
@@ -47384,7 +48263,7 @@ define("js/app/bootstrap", ["require", "exports", "js/config/constants", "genera
         (0, runtimeFacade_js_1.publishRuntimeContract)(window);
         window.__AI_WEREWOLF_RUNTIME__ = (0, runtimeFacade_js_1.createRuntimeFacade)({
             getState: () => store.getState(),
-            getAutosaveState: () => (0, autosaveState_js_1.createAutosaveState)(store.getState()),
+            getAutosaveSerialized: () => (0, autosaveState_js_1.serializeAutosaveState)(store.getState()),
             getCurrentWorkbenchTask: () => ui.getCurrentWorkbenchTask(),
             getPublicSnapshot: (options) => ui.getPublicSnapshot(options),
             getRoleDisplayName: (roleId) => ui.getRoleDisplayName(roleId),
@@ -47407,6 +48286,7 @@ define("js/app/bootstrap", ["require", "exports", "js/config/constants", "genera
             getAiHistoryStatus: () => ui.getAiHistoryStatus(),
             getCurrentAiTaskRequest: () => ui.getCurrentAiTaskRequest(),
             resolveAutomaticAction: (options) => (0, automaticActionPolicy_js_1.resolveAutomaticAction)(store.getState(), options),
+            resolveAutomaticAiBatch: (options) => (0, automaticAiBatchPolicy_js_1.resolveAutomaticAiBatch)(store.getState(), options),
             executeAutomaticAction: (action) => ui.executeAutomaticAction(action),
             prepareAiTask: (request) => ui.prepareAiTask(request),
             evaluateAiTaskCandidate: (request) => ui.evaluateAiTaskCandidate(request),

@@ -21,7 +21,7 @@
   const SETTINGS_SCHEMA_VERSION = versions.getCurrentDataSchemaVersion(versions.DATA_SCHEMA_KIND.DESKTOP_SETTINGS);
   const SETTINGS_STORAGE_KEYS = Object.freeze(['schemaVersion', 'executionMode', 'autoRun', 'aiOptions', 'profiles', 'assignments']);
   const AUTO_RUN_KEYS = Object.freeze(['intervalMs', 'maxConsecutiveSteps', 'autoConfirmWarnings', 'autoPublish']);
-  const AI_OPTION_KEYS = Object.freeze(['publicHistoryMode', 'apiErrorAction', 'responseRecoveryMode', 'apiLogScope']);
+  const AI_OPTION_KEYS = Object.freeze(['publicHistoryMode', 'apiErrorAction', 'responseRecoveryMode', 'apiLogScope', 'parallelExecutionMode', 'externalMaxConcurrency', 'localMaxConcurrency']);
   const PROFILE_STORAGE_KEYS = Object.freeze([
     'id', 'label', 'provider', 'model', 'endpoint', 'enabled', 'hasApiKey', 'apiKeyEncrypted',
     'timeoutMs', 'maxOutputTokens', 'chatTokenLimitField', 'contextWindowTokens', 'promptCacheMode',

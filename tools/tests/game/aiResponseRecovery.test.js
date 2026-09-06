@@ -209,3 +209,43 @@ test('投票必須項目の代替は投票予定、処刑価値候補、ラン�
   assert.equal(fallback.fallbackFields[0].strategy, 'random-valid-target');
   assert.equal(fallback.fallbackFields[0].targetId, second.id);
 });
+
+
+test('投票evidenceRefsの重複と上限超過は再生成せず主要3件へ正規化する', async () => {
+  const { repairAiResponseCandidate } = await import('../../../app/renderer/js/prompts/response/responseAutoRepair.js');
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  const target = state.players[1];
+  const raw = JSON.stringify({
+    actionAnswer: target.name,
+    decisionPatch: {
+      evidenceRefs: [1, 2, 2, 3, 4, 5, 6],
+    },
+  });
+  const repaired = repairAiResponseCandidate(state, {
+    mode: 'vote', taskType: 'vote', playerId: actor.id, validTargetIds: [target.id],
+  }, raw);
+  const candidate = JSON.parse(repaired.repairedRawResponse);
+  assert.deepEqual(candidate.decisionPatch.evidenceRefs, [1, 2, 3]);
+  assert.equal(repaired.operations.some((item) => item.code === 'REFERENCE_ARRAY_NORMALIZED'), true);
+  assert.equal(repaired.operations.some((item) => item.code === 'REFERENCE_ARRAY_TRUNCATED'), true);
+});
+
+
+test('通常判断のevidenceRefs上限超過は主要5件へ正規化する', async () => {
+  const { repairAiResponseCandidate } = await import('../../../app/renderer/js/prompts/response/responseAutoRepair.js');
+  const state = createInitialState(6);
+  const actor = state.players[0];
+  const raw = JSON.stringify({
+    publicSpeech: '公開情報を整理する。',
+    decisionPatch: {
+      evidenceRefs: [1, 2, 3, 4, 5, 6, 7],
+    },
+  });
+  const repaired = repairAiResponseCandidate(state, {
+    mode: 'speech', taskType: 'speech', playerId: actor.id, validTargetIds: [],
+  }, raw);
+  const candidate = JSON.parse(repaired.repairedRawResponse);
+  assert.deepEqual(candidate.decisionPatch.evidenceRefs, [1, 2, 3, 4, 5]);
+  assert.equal(repaired.operations.some((item) => item.code === 'REFERENCE_ARRAY_TRUNCATED'), true);
+});

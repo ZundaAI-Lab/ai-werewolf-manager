@@ -298,7 +298,7 @@ export function createDesktopAutomationConfig({
       schemaVersion: SETTINGS_SCHEMA_VERSION,
       executionMode: 'automatic',
       autoRun: { intervalMs: 450, maxConsecutiveSteps: 500, autoConfirmWarnings: true, autoPublish: true },
-      aiOptions: { publicHistoryMode: 'delta', apiErrorAction: 'retry', responseRecoveryMode: 'repair-regenerate', apiLogScope: 'errors' },
+      aiOptions: { publicHistoryMode: 'delta', apiErrorAction: 'retry', responseRecoveryMode: 'repair-regenerate', apiLogScope: 'errors', parallelExecutionMode: 'auto', externalMaxConcurrency: 4, localMaxConcurrency: 1 },
       profiles: [{
         id: 'profile-demo',
         label: 'デモAI',

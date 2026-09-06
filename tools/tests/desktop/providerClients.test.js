@@ -13,6 +13,7 @@ const {
   readProviderResponseText,
   requestJson,
   normalizeEndpoint,
+  parseRetryAfter,
 } = require('../../../app/main/providerClients.js');
 
 function promptEnvelope({
@@ -51,7 +52,10 @@ function voteStructuredOutput() {
         memoAdd: { type: 'string' },
         decisionPatch: {
           type: 'object',
-          properties: { uncertainty: { type: 'string' } },
+          properties: {
+            uncertainty: { type: 'string' },
+            evidenceRefs: { type: 'array', maxItems: 3, uniqueItems: true, items: { type: 'integer' } },
+          },
           required: [],
           additionalProperties: false,
         },
@@ -114,8 +118,10 @@ test('OpenAI Responses APIは投票Schemaをstrict text.formatへ変換し任意
   assert.deepEqual(format.schema.required, ['actionAnswer', 'memoAdd', 'decisionPatch']);
   assert.deepEqual(format.schema.properties.memoAdd.type, ['string', 'null']);
   assert.deepEqual(format.schema.properties.decisionPatch.type, ['object', 'null']);
-  assert.deepEqual(format.schema.properties.decisionPatch.required, ['uncertainty']);
+  assert.deepEqual(format.schema.properties.decisionPatch.required, ['uncertainty', 'evidenceRefs']);
   assert.deepEqual(format.schema.properties.decisionPatch.properties.uncertainty.type, ['string', 'null']);
+  assert.equal(Object.hasOwn(format.schema.properties.decisionPatch.properties.evidenceRefs, 'maxItems'), false);
+  assert.equal(Object.hasOwn(format.schema.properties.decisionPatch.properties.evidenceRefs, 'uniqueItems'), false);
 });
 test('Anthropicは既定5分キャッシュを安定区画だけへ設定する', async () => {
   const { result, requests } = await withMockFetch({
@@ -146,6 +152,8 @@ test('Anthropicの対応モデルは投票Schemaをoutput_config.formatへ渡す
   assert.equal(supported.result.providerDiagnostics.structuredOutputMode, 'json-schema');
   assert.equal(supported.requests[0].body.output_config.format.type, 'json_schema');
   assert.deepEqual(supported.requests[0].body.output_config.format.schema.required, ['actionAnswer']);
+  assert.equal(Object.hasOwn(supported.requests[0].body.output_config.format.schema.properties.decisionPatch.properties.evidenceRefs, 'maxItems'), false);
+  assert.equal(Object.hasOwn(supported.requests[0].body.output_config.format.schema.properties.decisionPatch.properties.evidenceRefs, 'uniqueItems'), false);
 });
 
 test('Anthropicはキャッシュ可能接頭辞が1024トークン未満ならcache_controlを送らない', async () => {
@@ -208,6 +216,8 @@ test('Gemini 2.5以降は投票SchemaをgenerationConfig.responseFormatへ渡す
   assert.equal(result.providerDiagnostics.structuredOutputMode, 'json-schema');
   assert.equal(requests[0].body.generationConfig.responseFormat.text.mimeType, 'application/json');
   assert.deepEqual(requests[0].body.generationConfig.responseFormat.text.schema.required, ['actionAnswer']);
+  assert.equal(requests[0].body.generationConfig.responseFormat.text.schema.properties.decisionPatch.properties.evidenceRefs.maxItems, 3);
+  assert.equal(Object.hasOwn(requests[0].body.generationConfig.responseFormat.text.schema.properties.decisionPatch.properties.evidenceRefs, 'uniqueItems'), false);
   assert.equal(Object.hasOwn(requests[0].body.generationConfig, 'responseMimeType'), false);
 });
 
@@ -331,6 +341,8 @@ test('Ollamaのjson-object要求は投票Schemaをformatへ直接渡す', async 
     promptEnvelope: promptEnvelope({ stablePlayerContext: '本人固定', structuredOutput: schema }),
   }));
   assert.deepEqual(requests[0].body.format, schema.schema);
+  assert.equal(requests[0].body.format.properties.decisionPatch.properties.evidenceRefs.maxItems, 3);
+  assert.equal(requests[0].body.format.properties.decisionPatch.properties.evidenceRefs.uniqueItems, true);
 });
 
 test('ローカルLLMの不正なコンテキスト予算を分類済み設定エラーとして返す', async () => {
@@ -355,6 +367,16 @@ test('API応答はContent-Lengthと実受信バイト数の両方でサイズ上
   await assert.rejects(() => readProviderResponseText(new Response('12345'), { provider: 'test', maxBytes: 4 }), (error) => error instanceof ProviderRequestError && error.code === 'PROVIDER_RESPONSE_TOO_LARGE');
 });
 
+test('Retry-Afterは10進整数秒またはHTTP-dateだけを受理する', () => {
+  const now = Date.parse('Wed, 21 Oct 2015 07:27:50 GMT');
+  assert.equal(parseRetryAfter('5', now), 5000);
+  assert.equal(parseRetryAfter(' 5 ', now), 5000);
+  assert.equal(parseRetryAfter('1e3', now), null);
+  assert.equal(parseRetryAfter('0x1F', now), null);
+  assert.equal(parseRetryAfter('+5', now), null);
+  assert.equal(parseRetryAfter('Wed, 21 Oct 2015 07:28:00 GMT', now), 10000);
+});
+
 test('HTTPエラー応答本文を公開エラーメッセージへ混入させない', async () => {
   const secretDetail = 'project-private-123 prompt=家族の実名';
   const originalFetch = global.fetch;
@@ -370,7 +392,8 @@ test('HTTPエラー応答本文を公開エラーメッセージへ混入させ�
         assert.equal(error.code, 'INVALID_REQUEST');
         assert.doesNotMatch(error.message, /project-private-123|家族の実名/u);
         assert.match(error.message, /HTTP 400/u);
-        assert.match(error.responseBody, /project-private-123/u, '生本文は非公開の内部診断フィールドだけへ保持する');
+        assert.equal(Object.hasOwn(error, 'responseBody'), false, '生のProvider応答本文を例外オブジェクトへ保持しない');
+        assert.doesNotMatch(JSON.stringify(error), /project-private-123|家族の実名/u);
         return true;
       },
     );

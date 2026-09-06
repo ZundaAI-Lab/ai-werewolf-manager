@@ -5,9 +5,10 @@
 
 'use strict';
 
-const { app, BrowserWindow, clipboard, ipcMain, MessageChannelMain, session, shell } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, MessageChannelMain, session, shell } = require('electron');
 const { createHash, randomUUID } = require('node:crypto');
 const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { AutosaveStore } = require('./autosaveStore.js');
 const { ChatRoomStore } = require('./chatRoomStore.js');
 const { SpectatorRoomStore } = require('./spectatorRoomStore.js');
@@ -15,6 +16,7 @@ const { SettingsStore } = require('./settingsStore.js');
 const { AppearanceStore } = require('./appearanceStore.js');
 const { PrivacyNoticeStore } = require('./privacyNoticeStore.js');
 const { generateWithProvider, isLocalProvider, ProviderRequestError } = require('./providerClients.js');
+const { serializeProviderError } = require('./providerErrorSerializer.js');
 const { normalizePromptEnvelope } = require('./llm/promptEnvelopeValidator.js');
 const { promptHashForNormalizedEnvelope } = require('./llm/promptHashPolicy.js');
 const { calculateUsageCostUsd } = require('./llm/usageCostCalculator.js');
@@ -29,6 +31,7 @@ const { UserCharacterDataStore } = require('./userCharacterDataStore.js');
 const { CharacterLibraryService } = require('./characterLibraryService.js');
 const { runExternalDataOperation } = require('./externalDataNoticeGate.js');
 const { installPermissionDenyPolicy } = require('./permissionPolicy.js');
+const { installWebContentsNavigationPolicy } = require('./webContentsNavigationPolicy.js');
 
 let mainWindow = null;
 let settingsStore = null;
@@ -45,33 +48,14 @@ const activeRequests = new Map();
 const CHAT_ROOM_FLUSH_TIMEOUT_MS = 5000;
 const SPECTATOR_ROOM_FLUSH_TIMEOUT_MS = 5000;
 const MAX_CLIPBOARD_BYTES = 8 * 1024 * 1024;
+const RENDERER_INDEX_PATH = join(__dirname, '..', 'renderer', 'index.html');
+const RENDERER_INDEX_URL = pathToFileURL(RENDERER_INDEX_PATH).href;
 
 function requestHash(value) {
   return createHash('sha256').update(String(value ?? '')).digest('hex');
 }
 
-function serializeProviderError(error, provider = '') {
-  if (error instanceof ProviderRequestError) {
-    return {
-      code: error.code,
-      message: error.message,
-      provider: error.provider ?? provider,
-      status: error.status,
-      retryable: error.retryable === true,
-      deliveryUnknown: error.deliveryUnknown === true,
-      retryAfterMs: Number.isFinite(error.retryAfterMs) ? error.retryAfterMs : null,
-    };
-  }
-  return {
-    code: error instanceof RangeError ? 'CONFIGURATION_ERROR' : 'UNKNOWN',
-    message: error?.message ?? String(error),
-    provider,
-    status: null,
-    retryable: false,
-    deliveryUnknown: false,
-    retryAfterMs: null,
-  };
-}
+
 
 function safeRecordRequest(entry) {
   try {
@@ -116,30 +100,9 @@ function createMainWindow() {
     },
   });
 
-  mainWindow.loadFile(join(__dirname, '..', 'renderer', 'index.html'));
+  mainWindow.loadFile(RENDERER_INDEX_PATH);
   mainWindow.once('ready-to-show', () => mainWindow?.show());
   mainWindow.on('closed', () => { mainWindow = null; });
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url === 'about:blank') {
-      return {
-        action: 'allow',
-        overrideBrowserWindowOptions: {
-          webPreferences: {
-            preload: undefined,
-            contextIsolation: true,
-            nodeIntegration: false,
-            sandbox: true,
-            webSecurity: true,
-          },
-        },
-      };
-    }
-    if (/^https:\/\//u.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  mainWindow.webContents.on('will-navigate', (event, url) => {
-    if (url !== event.sender.getURL()) event.preventDefault();
-  });
 }
 
 function registerIpc() {
@@ -195,8 +158,8 @@ function registerIpc() {
     return characterLibraryService.setCharacterOrder(groupId, characterIds);
   });
 
-  trustedIpc.handle('desktop:save-autosave', async (_event, state) => {
-    await autosaveStore.save(state);
+  trustedIpc.handle('desktop:save-autosave', async (_event, serializedState) => {
+    await autosaveStore.save(serializedState);
     return { ok: true };
   });
 
@@ -409,7 +372,29 @@ function registerIpc() {
   });
 }
 
-app.whenReady().then(() => {
+app.on('web-contents-created', (_event, contents) => {
+  installWebContentsNavigationPolicy(contents, {
+    isMainContents: (candidate) => mainWindow?.webContents === candidate,
+    rendererIndexUrl: RENDERER_INDEX_URL,
+    openExternal: (url) => shell.openExternal(url),
+    reportExternalOpenError: (error, url) => console.error(`外部URL「${url}」を開けませんでした。`, error),
+  });
+});
+
+function showUserCharacterRecoveryNotice(recovery) {
+  if (!recovery) return;
+  const backupDetail = recovery.backupPath
+    ? `元データは次の場所へ退避しました。\n${recovery.backupPath}`
+    : '元データを退避できなかったため、この起動中はユーザーキャラクターデータの保存を禁止しています。';
+  void dialog.showMessageBox({
+    type: 'warning',
+    title: 'ユーザーキャラクターデータの復旧',
+    message: 'ユーザーキャラクターデータを読み込めなかったため、空のライブラリで起動しました。',
+    detail: `${backupDetail}\n\n原因: ${recovery.cause}`,
+  }).catch((error) => console.error('ユーザーキャラクターデータ復旧通知を表示できませんでした。', error));
+}
+
+function initializeApplication() {
   installPermissionDenyPolicy(session);
   const userDataPath = app.getPath('userData');
   settingsStore = new SettingsStore(userDataPath);
@@ -421,16 +406,36 @@ app.whenReady().then(() => {
   autosaveStore = new AutosaveStore(userDataPath);
   chatRoomStore = new ChatRoomStore(userDataPath);
   spectatorRoomStore = new SpectatorRoomStore(userDataPath);
+  const userCharacterStore = new UserCharacterDataStore(userDataPath);
+  const userCharacterRecovery = userCharacterStore.consumeLoadRecovery();
   characterLibraryService = new CharacterLibraryService({
     builtinDataRoot: join(__dirname, '..', 'renderer', 'data', 'characters'),
-    userStore: new UserCharacterDataStore(userDataPath),
+    userStore: userCharacterStore,
   });
+  // 組み込み/ユーザー両カタログの不整合は同期IPCまで遅延させず、起動失敗として一度だけ明示する。
+  characterLibraryService.loadCatalog();
   registerIpc();
   createMainWindow();
+  showUserCharacterRecoveryNotice(userCharacterRecovery);
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
-});
+}
+
+function handleFatalStartupError(error) {
+  console.error('アプリケーションの初期化に失敗しました。', error);
+  try {
+    dialog.showErrorBox(
+      '起動エラー',
+      `アプリケーションの初期化に失敗しました。\n${String(error?.message ?? error)}`,
+    );
+  } catch (dialogError) {
+    console.error('起動エラー通知を表示できませんでした。', dialogError);
+  }
+  app.exit(1);
+}
+
+app.whenReady().then(initializeApplication).catch(handleFatalStartupError);
 
 app.on('before-quit', (event) => {
   try {

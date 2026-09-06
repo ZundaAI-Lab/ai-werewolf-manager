@@ -6,7 +6,7 @@
 import { APP_VERSION, PROMPT_SPEC_VERSION } from '../config/constants.js';
 import { BUILD_ID } from '../../generated/buildInfo.js';
 import { createInitialState, StateStore } from '../state/stateStore.js';
-import { createAutosaveState } from '../state/autosaveState.js';
+import { serializeAutosaveState } from '../state/autosaveState.js';
 import { prepareImportedState } from '../state/stateImport.js';
 import { AppUI } from '../ui/AppUI.js';
 import { defaultAppearanceSettings, normalizeAppearanceSettings } from '../appearance/appearanceModel.js';
@@ -23,6 +23,7 @@ import { mergeTextPatch, parseTextPatchResponse, validateTextPatchForStage } fro
 import { createRuntimeFacade, publishRuntimeContract } from './runtimeFacade.js';
 import { installGlobalErrorReporter } from './globalErrorReporter.js';
 import { resolveAutomaticAction } from '../domain/game/automaticActionPolicy.js';
+import { resolveAutomaticAiBatch } from '../domain/game/automaticAiBatchPolicy.js';
 import '../privacy/dataTransmissionNotice.js';
 import '../automation/automationEntry.js';
 
@@ -59,7 +60,7 @@ function startApplication(initialState, { restored = false, appearanceSettings: 
   publishRuntimeContract(window);
   window.__AI_WEREWOLF_RUNTIME__ = createRuntimeFacade({
     getState: () => store.getState(),
-    getAutosaveState: () => createAutosaveState(store.getState()),
+    getAutosaveSerialized: () => serializeAutosaveState(store.getState()),
     getCurrentWorkbenchTask: () => ui.getCurrentWorkbenchTask(),
     getPublicSnapshot: (options) => ui.getPublicSnapshot(options),
     getRoleDisplayName: (roleId) => ui.getRoleDisplayName(roleId),
@@ -82,6 +83,7 @@ function startApplication(initialState, { restored = false, appearanceSettings: 
     getAiHistoryStatus: () => ui.getAiHistoryStatus(),
     getCurrentAiTaskRequest: () => ui.getCurrentAiTaskRequest(),
     resolveAutomaticAction: (options) => resolveAutomaticAction(store.getState(), options),
+    resolveAutomaticAiBatch: (options) => resolveAutomaticAiBatch(store.getState(), options),
     executeAutomaticAction: (action) => ui.executeAutomaticAction(action),
     prepareAiTask: (request) => ui.prepareAiTask(request),
     evaluateAiTaskCandidate: (request) => ui.evaluateAiTaskCandidate(request),

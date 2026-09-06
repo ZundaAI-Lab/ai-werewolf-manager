@@ -7,6 +7,9 @@ import { escapeHtml } from '../shared/utils.js';
 import * as runtimeAccess from './runtimeAccess.js';
 import * as automationRunControl from './automationRunControl.js';
 import * as automaticAiExecutorApi from './automaticAiExecutor.js';
+import { createAutomaticAiBatchExecutor } from './automaticAiBatchExecutor.js';
+import { createAutomaticAiRequestScheduler } from './automaticAiRequestScheduler.js';
+import { createAutomaticMemoConsolidationScheduler } from './automaticMemoConsolidationScheduler.js';
 import { createDesktopAutomationConfig } from './desktopAutomationConfig.js';
 import { createManagementView } from './desktopAutomationManagementView.js';
 import { createAutomationStatusController } from './automationStatusController.js';
@@ -144,6 +147,9 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
     showConfidential: false,
     automationMode: 'idle',
     automationDetail: null,
+    activeAiRequestPlayerIds: [],
+    voteResponseSessionId: '',
+    voteResponsePlayerIds: [],
     waitingHuman: false,
     pendingHumanTask: null,
     resumeAfterHuman: false,
@@ -184,6 +190,8 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
   const waitFor = lateControllerMethod('automaticRunCoordinator', 'waitFor');
   const waitForRevisionChange = lateControllerMethod('automaticRunCoordinator', 'waitForRevisionChange');
   const refreshLiveView = lateControllerMethod('liveProgressController', 'refreshLiveView');
+  const setAiRequestActive = lateControllerMethod('automationStatusController', 'setAiRequestActive');
+  const setVoteResponseReceived = lateControllerMethod('automationStatusController', 'setVoteResponseReceived');
   const enableLiveView = lateControllerMethod('liveProgressController', 'enableLiveView');
   const syncExecutionModeWorkbenchView = lateControllerMethod('liveProgressController', 'syncExecutionModeWorkbenchView');
   const hideLiveView = lateControllerMethod('liveProgressController', 'hideLiveView');
@@ -288,6 +296,12 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
 
 
 
+  const automaticAiRequestScheduler = createAutomaticAiRequestScheduler({
+    controller,
+    runControl: automationRunControl,
+    localProviderId: LOCAL_OPENAI_PROVIDER,
+  });
+
   const executeAiStep = automaticAiExecutorApi.createAutomaticAiExecutor({
     apiRetryPolicy,
     responseRetryPolicy,
@@ -306,6 +320,26 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
     structuredApiError,
     apiErrorAsException,
     generationFailureRequiresStop,
+    requestScheduler: automaticAiRequestScheduler,
+    setAiRequestActive,
+    setVoteResponseReceived,
+  });
+
+  const automaticMemoConsolidationScheduler = createAutomaticMemoConsolidationScheduler({
+    automationRunControl,
+    executeAiStep,
+    setStatus,
+  });
+
+  const executeAiBatch = createAutomaticAiBatchExecutor({
+    automationRunControl,
+    controller,
+    executeAiStep,
+    runtime,
+    setStatus,
+    automaticActionOptions: () => ({
+      ignoredMemoConsolidationPlayerIds: automaticMemoConsolidationScheduler.pendingPlayerIds(controller.runSession),
+    }),
   });
 
   function responseRecoveryModeOptions(selectedValue) {
@@ -409,6 +443,7 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
     assignmentSummary,
     assignmentValidation,
     automationRunControl,
+    automaticMemoConsolidationScheduler,
     bridge,
     bulkAssignmentProfileId,
     captureManagementSectionState,
@@ -427,6 +462,7 @@ import { createPostgameAnalysisAdapter } from './postgameAnalysisAdapter.js';
     enableLiveView,
     syncExecutionModeWorkbenchView,
     executeAiStep,
+    executeAiBatch,
     firstEnabledProfileId,
     handleManualAiCommitResult,
     hideLiveView,

@@ -1,6 +1,6 @@
 /**
- * 責務: 自動実行の一時状態、全画面共通ステータス表示、実行中の競合操作ロック状態を所有する。
- * 変更ルール: 表示中タブと自動実行状態を結合しない。自動API実行方式が選択されている間はidleを含め共通ヘッダーステータスを常時表示し、idle時はそこから全自動開始できる導線を提供する。人間操作待ちはエラーと区別した介入待ち表示として、対象プレイヤー・操作種別・入力導線をヘッダーへ明示し、待機へ遷移した瞬間だけ注意喚起アニメーションを行う。エラー停止はerror状態を保持したまま、自動API実行方式では既存の開始経路から再開できる導線を提供する。手動プロンプト方式のidle時だけ非表示にする。ゲーム状態を直接変更せず、running / waiting-human / waiting-manual-ai の間だけ競合する設定・復元操作をロックする。AI生成リソースを使う診断操作はrunning中だけロックし、一時停止・各待機・エラー停止では再び許可する。
+ * 責務: 自動実行の一時状態、全画面共通ステータス表示、実行中の競合操作ロック状態、現在API通信中のAIプレイヤー集合、および現在の投票セッションでAPI応答取得まで完了したAIプレイヤー集合を所有する。
+ * 変更ルール: 表示中タブと自動実行状態を結合しない。自動API実行方式が選択されている間はidleを含め共通ヘッダーステータスを常時表示し、idle時はそこから全自動開始できる導線を提供する。人間操作待ちはエラーと区別した介入待ち表示として、対象プレイヤー・操作種別・入力導線をヘッダーへ明示し、待機へ遷移した瞬間だけ注意喚起アニメーションを行う。エラー停止はerror状態を保持したまま、自動API実行方式では既存の開始経路から再開できる導線を提供する。手動プロンプト方式のidle時だけ非表示にする。ゲーム状態を直接変更せず、running / waiting-human / waiting-manual-ai の間だけ競合する設定・復元操作をロックする。AI生成リソースを使う診断操作はrunning中だけロックし、一時停止・各待機・エラー停止では再び許可する。API通信中プレイヤー集合と投票API応答済み集合は表示専用の一時状態として管理し、正式投票はvoteSession.votesを正本とする。投票API応答済み集合はvoteSession.id単位で分離し、決選投票へ持ち越さない。夜フェーズでの公開可否は各UIの機密表示条件を正本とする。
  */
 const AUTOMATION_MODES = Object.freeze(['idle', 'running', 'paused', 'waiting-human', 'waiting-manual-ai', 'error']);
 const LOCKED_MODES = new Set(['running', 'waiting-human', 'waiting-manual-ai']);
@@ -33,6 +33,30 @@ export function createAutomationStatusController(context) {
     refreshLiveView,
     runtime,
   } = context;
+
+  const activeAiRequestPlayerIds = new Set();
+  const voteResponsePlayerIds = new Set();
+  let voteResponseSessionId = '';
+
+  function activeAiRequestSnapshot() {
+    return [...activeAiRequestPlayerIds];
+  }
+
+  function voteResponseSnapshot() {
+    return [...voteResponsePlayerIds];
+  }
+
+  function syncVoteResponseSession() {
+    const state = currentGameState();
+    const currentSessionId = ['vote', 'runoff'].includes(state?.game?.phase)
+      ? String(state?.voteSession?.id ?? '').trim()
+      : '';
+    if (currentSessionId === voteResponseSessionId) return;
+    voteResponseSessionId = currentSessionId;
+    voteResponsePlayerIds.clear();
+    controller.voteResponseSessionId = voteResponseSessionId;
+    controller.voteResponsePlayerIds = voteResponseSnapshot();
+  }
 
   function normalizeMode(mode) {
     return AUTOMATION_MODES.includes(mode) ? mode : 'idle';
@@ -90,6 +114,7 @@ export function createAutomationStatusController(context) {
     button.textContent = label;
   }
   function refreshAutomationStatus() {
+    syncVoteResponseSession();
     const mode = normalizeMode(controller.automationMode);
     controller.automationMode = mode;
     const presentation = headerPresentation();
@@ -110,6 +135,9 @@ export function createAutomationStatusController(context) {
     runtime().setAutomationUiState({
       mode,
       mutationLocked: isAutomationMutationLocked(),
+      activeAiRequestPlayerIds: activeAiRequestSnapshot(),
+      voteResponseSessionId,
+      voteResponsePlayerIds: voteResponseSnapshot(),
     });
   }
   function setAutomationMode(mode, detail = null) {
@@ -127,6 +155,34 @@ export function createAutomationStatusController(context) {
       }
     }
   }
+  function setAiRequestActive(playerId, active) {
+    const normalizedPlayerId = String(playerId ?? '').trim();
+    if (!normalizedPlayerId) return;
+    const changed = active
+      ? !activeAiRequestPlayerIds.has(normalizedPlayerId)
+      : activeAiRequestPlayerIds.has(normalizedPlayerId);
+    if (!changed) return;
+    if (active) activeAiRequestPlayerIds.add(normalizedPlayerId);
+    else activeAiRequestPlayerIds.delete(normalizedPlayerId);
+    controller.activeAiRequestPlayerIds = activeAiRequestSnapshot();
+    refreshAutomationStatus();
+    refreshLiveView();
+  }
+
+  function setVoteResponseReceived(playerId, sessionId) {
+    const normalizedPlayerId = String(playerId ?? '').trim();
+    const normalizedSessionId = String(sessionId ?? '').trim();
+    if (!normalizedPlayerId || !normalizedSessionId) return;
+    syncVoteResponseSession();
+    if (!voteResponseSessionId || normalizedSessionId !== voteResponseSessionId) return;
+    if (voteResponsePlayerIds.has(normalizedPlayerId)) return;
+    voteResponsePlayerIds.add(normalizedPlayerId);
+    controller.voteResponseSessionId = voteResponseSessionId;
+    controller.voteResponsePlayerIds = voteResponseSnapshot();
+    refreshAutomationStatus();
+    refreshLiveView();
+  }
+
   function setStatus(message, type = 'idle') {
     controller.statusMessage = maskAutomaticNightActorNames(message);
     controller.statusType = type;
@@ -145,6 +201,8 @@ export function createAutomationStatusController(context) {
     isAutomationMutationLocked,
     maskAutomaticNightActorNames,
     refreshAutomationStatus,
+    setAiRequestActive,
+    setVoteResponseReceived,
     setAutomationMode,
     setStatus,
   });

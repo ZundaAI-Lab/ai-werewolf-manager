@@ -13,7 +13,7 @@
  * - 保存済みendpoint文字列の復元と現在の通信ポリシー適合判定を分離する。読込時は現行schemaのendpointを切り詰めず保持し、新規追加・provider変更・endpoint変更の保存境界では文字数上限を含めて拒否し、実通信直前はendpointPolicyで再検証する。
  * - Rendererからの現行入力は保存読込検証と分離してsanitizeする。
  * - 設定更新はtmp本体をfsyncしてrenameし、対応環境では親ディレクトリもfsyncする原子的保存の成功後だけメモリへ反映する。読込不能な既存設定は一意名へ退避し、復旧可能性が残る間は既定値を表示しても設定保存を禁止する。AIプロファイル削除は明示的な削除IPCからだけ許可し、削除前の完全設定を一意名バックアップへ保存する。削除前バックアップは最新3世代だけ保持し、読込不能退避やschema移行前バックアップとは別管理する。起動時の退避・保存禁止・現行通信規則に適合しないendpointは永続schemaへ混ぜず一時通知としてRendererへ渡す。
- * - 使用量集計は詳細ログ保存設定から独立させ、AIプロファイルIDを永続集計の正本として全用途のAPI要求を同じ累計へ加算し、API要求ごとのメモリ更新を短時間集約して最大待機時間または終了時flushで原子的保存する。
+ * - 使用量集計は詳細ログ保存設定から独立させ、AIプロファイルIDを永続集計の正本として全用途のAPI要求を同じ累計へ加算する。通常はAPI要求ごとのメモリ更新を短時間集約して最大待機時間または終了時flushで原子的保存するが、利用上限を設定したプロファイルで実績料金が発生した要求だけは、クラッシュ後に上限残額が過大復元されないよう要求完了時に即時flushする。
  * - ゲームIDやチャットセッションIDは詳細ログ用メタデータに留め、料金集計の階層キーにしない。
  * - プロファイル単位リセットは該当プロファイル累計だけを全体累計から差し引き、他プロファイル・詳細ログを変更しない。
  * - 詳細ログは保存直前に認証ヘッダー・APIキー形式をマスクし、POSIXでは現行ログとローテーション世代を0600へ制限する。
@@ -254,6 +254,9 @@ function createDefaultSettings() {
       apiErrorAction: 'retry',
       responseRecoveryMode: 'repair-regenerate',
       apiLogScope: 'errors',
+      parallelExecutionMode: 'auto',
+      externalMaxConcurrency: 4,
+      localMaxConcurrency: 1,
     },
     profiles: [defaultProfile()],
     assignments: {},
@@ -389,6 +392,11 @@ function normalizeAiOptions(raw, defaults) {
       ? raw.responseRecoveryMode
       : defaults.responseRecoveryMode,
     apiLogScope,
+    parallelExecutionMode: ['auto', 'enabled', 'disabled'].includes(raw?.parallelExecutionMode)
+      ? raw.parallelExecutionMode
+      : defaults.parallelExecutionMode,
+    externalMaxConcurrency: boundedInteger(raw?.externalMaxConcurrency, defaults.externalMaxConcurrency, 1, 16),
+    localMaxConcurrency: boundedInteger(raw?.localMaxConcurrency, defaults.localMaxConcurrency, 1, 8),
   };
 }
 
@@ -901,7 +909,10 @@ class SettingsStore {
       && removedProfileIds.length === 1
       && removedProfileIds[0] === 'profile-demo';
     validateChangedProfileEndpoints(this.settings.profiles, candidateProfiles);
-    const incomingById = new Map(candidateProfiles.map((profile, index) => [profile.id, rawProfiles[index] ?? {}]));
+    const candidateProfileIds = new Set(candidateProfiles.map((profile) => profile.id));
+    const incomingById = new Map(rawProfiles
+      .filter((profile) => plainObject(profile) && candidateProfileIds.has(String(profile.id ?? '')))
+      .map((profile) => [String(profile.id), profile]));
     validateProfileDeletionAndAssignments(this.settings.profiles, candidateProfiles, input?.assignments ?? this.settings.assignments);
     const allowedDeletionIds = new Set((Array.isArray(allowedProfileDeletionIds) ? allowedProfileDeletionIds : []).map((id) => String(id)));
     const unauthorizedDeletionIds = removedProfileIds.filter((id) => !allowedDeletionIds.has(id));
@@ -1034,7 +1045,19 @@ class SettingsStore {
       addUsageTotals(profile.totals, entry);
       profile.updatedAt = timestamp;
     }
-    this.scheduleUsageSummaryFlush();
+    const profileBudgetUsd = profileId
+      ? Number(this.settings.profiles.find((profile) => profile.id === profileId)?.billing?.profileBudgetUsd ?? 0)
+      : 0;
+    const chargedCostUsd = finiteNonNegative(entry?.usage?.costUsd);
+    this.usageSummaryDirty = true;
+    const budgetCritical = profileBudgetUsd > 0 && chargedCostUsd > 0;
+    if (budgetCritical && this.usageSummaryWritable) {
+      // 利用上限を契約として使うプロファイルは、直前要求の料金を再起動後の上限判定から欠落させない。
+      this.flushUsageSummarySafely();
+    } else {
+      // 保存不能状態では起動時通知を正本とし、API要求ごとの同一エラーログ連打を避ける。
+      this.scheduleUsageSummaryFlush();
+    }
 
     const scope = this.settings.aiOptions.apiLogScope;
     const shouldLog = scope === 'all' || (scope === 'errors' && entry?.status === 'failed');

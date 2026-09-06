@@ -77,7 +77,7 @@ export class AppUI {
     const toastRegion = document.querySelector('#toast-region');
     this.activeTab = 'workbench';
     this.registeredTabViews = new Map();
-    this.automationUiState = { mode: 'idle', mutationLocked: false };
+    this.automationUiState = { mode: 'idle', mutationLocked: false, activeAiRequestPlayerIds: [], voteResponseSessionId: '', voteResponsePlayerIds: [] };
     this.showConfidential = false;
     this.promptCache = new Map();
     this.drafts = new Map();
@@ -197,6 +197,9 @@ export class AppUI {
       showConfidential: () => this.showConfidential,
       executionMode: () => this.aiExecutionSettings.executionMode,
       automationMode: () => this.automationUiState.mode,
+      activeAiRequestPlayerIds: () => this.automationUiState.activeAiRequestPlayerIds,
+      voteResponseSessionId: () => this.automationUiState.voteResponseSessionId,
+      voteResponsePlayerIds: () => this.automationUiState.voteResponsePlayerIds,
       drafts: () => this.drafts,
       selectedWolfSpeakerId: () => this.selectedWolfSpeakerId,
       setSelectedWolfSpeakerId: (playerId) => { this.selectedWolfSpeakerId = playerId; },
@@ -369,11 +372,26 @@ export class AppUI {
   }
 
   setAutomationUiState(state = {}) {
+    const activeAiRequestPlayerIds = [...new Set((state?.activeAiRequestPlayerIds ?? []).map((playerId) => String(playerId ?? '')).filter(Boolean))];
+    const voteResponsePlayerIds = [...new Set((state?.voteResponsePlayerIds ?? []).map((playerId) => String(playerId ?? '')).filter(Boolean))];
     const next = {
       mode: String(state?.mode ?? 'idle'),
       mutationLocked: Boolean(state?.mutationLocked),
+      activeAiRequestPlayerIds,
+      voteResponseSessionId: String(state?.voteResponseSessionId ?? '').trim(),
+      voteResponsePlayerIds,
     };
-    const changed = next.mode !== this.automationUiState.mode || next.mutationLocked !== this.automationUiState.mutationLocked;
+    const previousActiveIds = this.automationUiState.activeAiRequestPlayerIds ?? [];
+    const activeIdsChanged = activeAiRequestPlayerIds.length !== previousActiveIds.length
+      || activeAiRequestPlayerIds.some((playerId, index) => playerId !== previousActiveIds[index]);
+    const previousVoteResponseIds = this.automationUiState.voteResponsePlayerIds ?? [];
+    const voteResponseIdsChanged = voteResponsePlayerIds.length !== previousVoteResponseIds.length
+      || voteResponsePlayerIds.some((playerId, index) => playerId !== previousVoteResponseIds[index]);
+    const changed = next.mode !== this.automationUiState.mode
+      || next.mutationLocked !== this.automationUiState.mutationLocked
+      || next.voteResponseSessionId !== this.automationUiState.voteResponseSessionId
+      || activeIdsChanged
+      || voteResponseIdsChanged;
     this.automationUiState = next;
     document.body.classList.toggle('automation-session-locked', next.mutationLocked);
     if (changed) this.render();

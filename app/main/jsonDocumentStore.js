@@ -3,7 +3,7 @@
  * 変更ルール:
  * - 保存対象固有の会話順・観戦方式・ゲーム状態などの意味解釈を行わず、filename・schemaKind・最大バイト数・表示ラベルを呼出側から受け取る。
  * - 読込時は対応Migrationがある旧schemaだけを製品schema管理層で一方向migrationし、Migrationのない旧schemaまたは読込・schema検証に失敗した既存ファイルは退避してから空状態へ戻す。退避に失敗した場合は元ファイル保護のため保存を禁止する。保存時は現行schemaVersionと最大サイズだけを検証する。
- * - 連続保存は最新要求だけを保持して直列化し、失敗した最新データは次回saveまたはflushで再試行できる状態へ戻す。
+ * - 連続保存は最新要求だけを保持して直列化し、各saveは自分の要求世代以上が実書込された後だけ成功を返す。失敗した最新データは次回saveまたはflushで再試行できる状態へ戻す。
  */
 
 'use strict';
@@ -31,6 +31,8 @@ function normalizeDocument(value, { schemaVersion, maxBytes, label }) {
 class JsonDocumentStore {
   #pendingDocument = null;
   #drainPromise = null;
+  #nextGeneration = 0;
+  #writtenGeneration = 0;
   #schemaKind;
   #schemaVersion;
   #maxBytes;
@@ -76,8 +78,9 @@ class JsonDocumentStore {
       error.code = 'JSON_DOCUMENT_READ_ONLY';
       return Promise.reject(error);
     }
-    this.#pendingDocument = this.#normalize(value);
-    return this.#ensureDrain().then(() => ({ ok: true }));
+    const generation = ++this.#nextGeneration;
+    this.#pendingDocument = { value: this.#normalize(value), generation };
+    return this.#waitForGeneration(generation).then(() => ({ ok: true }));
   }
 
   async flush() {
@@ -97,6 +100,14 @@ class JsonDocumentStore {
     });
   }
 
+  async #waitForGeneration(generation) {
+    while (this.#writtenGeneration < generation) {
+      const drain = this.#ensureDrain();
+      if (!drain) throw new Error(`${this.#label}の保存キュー状態が不整合です。`);
+      await drain;
+    }
+  }
+
   #ensureDrain() {
     if (this.#drainPromise) return this.#drainPromise;
     if (this.#pendingDocument === null) return null;
@@ -114,9 +125,12 @@ class JsonDocumentStore {
       const latest = this.#pendingDocument;
       this.#pendingDocument = null;
       try {
-        await atomicWriteJson(this.path, latest);
+        await atomicWriteJson(this.path, latest.value);
+        this.#writtenGeneration = Math.max(this.#writtenGeneration, latest.generation);
       } catch (error) {
-        if (this.#pendingDocument === null) this.#pendingDocument = latest;
+        if (this.#pendingDocument === null || this.#pendingDocument.generation < latest.generation) {
+          this.#pendingDocument = latest;
+        }
         throw error;
       }
     }

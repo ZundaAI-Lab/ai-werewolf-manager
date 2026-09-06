@@ -1,6 +1,6 @@
 /**
  * 責務: LLM向けHTTP通信、応答サイズ制限、HTTP・ネットワークエラー分類を共通実装する。
- * 変更ルール: プロバイダー固有リクエスト本文を組み立てず、秘密情報や応答本文を例外外へ漏らさない。
+ * 変更ルール: プロバイダー固有リクエスト本文を組み立てず、秘密情報や生の応答本文を例外オブジェクトへ保持せず公開面にも漏らさない。
  */
 
 'use strict';
@@ -12,8 +12,9 @@ const {
 function parseRetryAfter(value, now = Date.now()) {
   const raw = String(value ?? '').trim();
   if (!raw) return null;
-  const seconds = Number(raw);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.min(30000, Math.round(seconds * 1000));
+  if (/^\d+$/u.test(raw)) return Math.min(30000, Number(raw) * 1000);
+  const httpDatePrefix = /^(?:(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)(?:,|\s)|(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),)/iu;
+  if (!httpDatePrefix.test(raw)) return null;
   const timestamp = Date.parse(raw);
   if (!Number.isFinite(timestamp)) return null;
   return Math.min(30000, Math.max(0, timestamp - now));
@@ -167,7 +168,6 @@ async function requestJson({ provider, url, method = 'POST', headers = {}, body,
     throw new ProviderRequestError(publicHttpErrorMessage(provider, response.status, classification.code), {
       provider,
       status: response.status,
-      responseBody: responseText.slice(0, 2000),
       retryable: classification.retryable,
       code: classification.code,
       retryAfterMs: parseRetryAfter(response.headers.get('retry-after')),
@@ -177,7 +177,6 @@ async function requestJson({ provider, url, method = 'POST', headers = {}, body,
     throw new ProviderRequestError(`${provider} APIがJSON以外を返しました。`, {
       provider,
       code: 'INVALID_PROVIDER_RESPONSE',
-      responseBody: responseText.slice(0, 2000),
     });
   }
   return parsed;

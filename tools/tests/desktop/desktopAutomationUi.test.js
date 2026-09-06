@@ -24,7 +24,10 @@ function automationSource(filename) {
 
 const AUTOMATION_TEST_EXPORTS = Object.freeze({
   'runtimeAccess.js': ['getRuntime', 'reportInitializationFailure'],
-  'automationRunControl.js': ['AutomationStoppedError', 'createRunSession', 'isStopped', 'assertRunning', 'requestStop', 'beginRequest', 'endRequest', 'delayWithAbort', 'completeSession', 'waitForCompletion', 'isAutomationStoppedError'],
+  'automationRunControl.js': ['AutomationStoppedError', 'createRunSession', 'isStopped', 'assertRunning', 'requestStop', 'beginRequest', 'endRequest', 'activeRequestIds', 'delayWithAbort', 'completeSession', 'waitForCompletion', 'isAutomationStoppedError'],
+  'automaticAiBatchExecutor.js': ['createAutomaticAiBatchExecutor'],
+  'automaticAiRequestScheduler.js': ['createAutomaticAiRequestScheduler'],
+  'automaticMemoConsolidationScheduler.js': ['createAutomaticMemoConsolidationScheduler'],
   'automaticAiExecutor.js': ['createAutomaticAiExecutor', 'replaceTaskArtifact', 'buildFullCandidateStagePrompt'],
   'desktopAutomationConfig.js': ['createDesktopAutomationConfig'],
   'desktopAutomationManagementView.js': ['createManagementView'],
@@ -58,6 +61,9 @@ function desktopAutomationExecutableSource() {
     "const runtimeAccess = globalThis.__automationTestModules['runtimeAccess.js'];",
     "const automationRunControl = globalThis.__automationTestModules['automationRunControl.js'];",
     "const automaticAiExecutorApi = globalThis.__automationTestModules['automaticAiExecutor.js'];",
+    "const { createAutomaticAiBatchExecutor } = globalThis.__automationTestModules['automaticAiBatchExecutor.js'];",
+    "const { createAutomaticAiRequestScheduler } = globalThis.__automationTestModules['automaticAiRequestScheduler.js'];",
+    "const { createAutomaticMemoConsolidationScheduler } = globalThis.__automationTestModules['automaticMemoConsolidationScheduler.js'];",
     "const { createDesktopAutomationConfig } = globalThis.__automationTestModules['desktopAutomationConfig.js'];",
     "const { createManagementView } = globalThis.__automationTestModules['desktopAutomationManagementView.js'];",
     "const { createAutomationStatusController } = globalThis.__automationTestModules['automationStatusController.js'];",
@@ -138,7 +144,7 @@ function loadAutomationApi() {
   vm.runInContext(endpointPolicySource, context, { filename: 'endpointPolicy.js' });
   const dataTransmissionPolicySource = fs.readFileSync(path.join(__dirname, '../../../app/shared/dataTransmissionPolicy.js'), 'utf8');
   vm.runInContext(dataTransmissionPolicySource, context, { filename: 'dataTransmissionPolicy.js' });
-  for (const filename of ['automationRunControl.js', 'automaticAiExecutor.js', 'desktopAutomationConfig.js', 'desktopAutomationManagementView.js', 'automationStatusController.js', 'liveProgressController.js', 'automaticRunCoordinator.js', 'settingsPersistenceCoordinator.js', 'humanTaskCoordinator.js', 'manualTaskCoordinator.js', 'profileEditorController.js', 'aiProfileTransferController.js', 'assignmentController.js', 'generationTestController.js', 'aiManagementController.js', 'setupDecorationController.js', 'postgameAnalysisAdapter.js']) {
+  for (const filename of ['automationRunControl.js', 'automaticAiBatchExecutor.js', 'automaticAiRequestScheduler.js', 'automaticMemoConsolidationScheduler.js', 'automaticAiExecutor.js', 'desktopAutomationConfig.js', 'desktopAutomationManagementView.js', 'automationStatusController.js', 'liveProgressController.js', 'automaticRunCoordinator.js', 'settingsPersistenceCoordinator.js', 'humanTaskCoordinator.js', 'manualTaskCoordinator.js', 'profileEditorController.js', 'aiProfileTransferController.js', 'assignmentController.js', 'generationTestController.js', 'aiManagementController.js', 'setupDecorationController.js', 'postgameAnalysisAdapter.js']) {
     executeAutomationModule(filename, context);
   }
   window.AiWerewolfEndpointPolicy = context.AiWerewolfEndpointPolicy;

@@ -1,6 +1,6 @@
 /**
- * 責務: 現行AI設定、正式リリース済み設定の一方向移行、退避済み設定の救済、割り当て、使用量、詳細ログ権限、入力値正規化、秘密情報分離の保存契約を確認する。
- * 変更ルール: v1.0.3以降の正式保存データをfixtureとして保持し、AIプロファイル・暗号化APIキー・工程担当参照を失う変更を禁止する。AIプロファイル削除前バックアップは3世代保持し、読込不能退避・schema移行前バックアップとは別管理する。内部実装の旧仕様は本体へ戻さない。
+ * 責務: 現行AI設定の保存、割り当て、使用量、詳細ログ権限、入力値正規化、秘密情報分離、破損時復旧の契約を確認する。
+ * 変更ルール: 過去バージョン固有のmigration・救済fixtureを恒久回帰へ残さず、現在の保存境界と利用者データ保護に必要な契約だけを確認する。AIプロファイル削除前バックアップは3世代保持し、他種バックアップとは別管理する。
  */
 
 'use strict';
@@ -92,7 +92,7 @@ test('手動モードとプレイヤー単位割り当てを保存する', () =>
     assignments: { 'player-a': 'openai-main' },
   });
   assert.equal(saved.executionMode, 'manual');
-  assert.deepEqual(saved.aiOptions, { publicHistoryMode: 'delta', apiErrorAction: 'full-history-retry', responseRecoveryMode: 'repair', apiLogScope: 'none' });
+  assert.deepEqual(saved.aiOptions, { publicHistoryMode: 'delta', apiErrorAction: 'full-history-retry', responseRecoveryMode: 'repair', apiLogScope: 'none', parallelExecutionMode: 'auto', externalMaxConcurrency: 4, localMaxConcurrency: 1 });
   assert.equal(saved.assignments['player-a'], 'openai-main');
   assert.equal(saved.profiles[0].hasApiKey, true);
   assert.equal(saved.profiles[0].endpoint, 'https://api.openai.com/v1/responses');
@@ -126,59 +126,6 @@ test('Mainは共有AI設定schemaVersionを正本にする', () => {
   assert.equal(main.SETTINGS_SCHEMA_VERSION, shared.SETTINGS_SCHEMA_VERSION);
 });
 
-
-test('v1.0.3のAI設定を起動時にschema 2へ移行しプロファイル・暗号化APIキー・担当参照を保持する', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-v103-migration-'));
-  const { settingsPath } = writeV103SettingsFixture(directory);
-  const { SettingsStore, SETTINGS_SCHEMA_VERSION } = loadSettingsStore();
-  const store = new SettingsStore(directory);
-  const loaded = store.publicSettings();
-
-  assert.equal(loaded.schemaVersion, SETTINGS_SCHEMA_VERSION);
-  assert.deepEqual(loaded.profiles.map((profile) => profile.id), ['profile-main', 'profile-helper']);
-  assert.equal(loaded.assignments['player-a'], 'profile-main');
-  assert.equal(loaded.profiles[0].generation.reasoningProfileId, 'profile-helper');
-  assert.equal(loaded.profiles[0].generation.outputProfileId, 'profile-helper');
-  assert.equal(loaded.profiles[0].generation.critiqueProfileId, 'profile-helper');
-  assert.equal(store.decryptApiKey('profile-main'), 'old-secret');
-  const persisted = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-  assert.equal(persisted.schemaVersion, SETTINGS_SCHEMA_VERSION);
-  assert.equal(Object.hasOwn(persisted.profiles[0].generation, 'draftProfileId'), false);
-  assert.equal(fs.existsSync(`${settingsPath}.pre-schema-1.json`), true);
-});
-
-test('v1.0.4で退避済みになったv1.0.3 AI設定をdesktop-settings不在時に自動復元する', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-v103-quarantine-recovery-'));
-  const { settingsPath, raw } = writeV103SettingsFixture(directory);
-  fs.unlinkSync(settingsPath);
-  const backupPath = `${settingsPath}.unreadable-1700000000000-test.bak`;
-  fs.writeFileSync(backupPath, JSON.stringify(raw, null, 2), 'utf8');
-
-  const { SettingsStore, SETTINGS_SCHEMA_VERSION } = loadSettingsStore();
-  const store = new SettingsStore(directory);
-  const loaded = store.publicSettings();
-  assert.equal(loaded.schemaVersion, SETTINGS_SCHEMA_VERSION);
-  assert.deepEqual(loaded.profiles.map((profile) => profile.id), ['profile-main', 'profile-helper']);
-  assert.equal(store.decryptApiKey('profile-main'), 'old-secret');
-  assert.equal(fs.existsSync(backupPath), true, '退避元を削除しない');
-  assert.equal(fs.existsSync(settingsPath), true, '現行設定を復元保存する');
-  assert.equal(store.consumeStartupNotices().some((notice) => notice.code === 'SETTINGS_RECOVERED_QUARANTINE'), true);
-});
-
-test('現行設定が既定値だけならv1.0.4で退避済みのv1.0.3 AI設定を優先復元する', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-settings-v103-default-recovery-'));
-  const { settingsPath, raw } = writeV103SettingsFixture(directory);
-  const backupPath = `${settingsPath}.unreadable-1700000000001-test.bak`;
-  fs.writeFileSync(backupPath, JSON.stringify(raw, null, 2), 'utf8');
-
-  fs.unlinkSync(settingsPath);
-  const { SettingsStore } = loadSettingsStore();
-  const defaultStore = new SettingsStore(directory);
-  defaultStore.savePublicSettings(defaultStore.publicSettings());
-  const recoveredStore = new SettingsStore(directory);
-  assert.deepEqual(recoveredStore.publicSettings().profiles.map((profile) => profile.id), ['profile-main', 'profile-helper']);
-  assert.equal(recoveredStore.decryptApiKey('profile-main'), 'old-secret');
-});
 
 test('公開履歴の過去圧縮モードを保存・再読込する', () => {
   const { SettingsStore } = loadSettingsStore();
@@ -433,6 +380,77 @@ test('API使用量は要求ごとに同期書き込みせず明示flushで最新
   assert.equal(saved.totals.calls, 1);
   assert.equal(saved.totals.inputTokens, 12);
   assert.equal(store.flushUsageSummary(), false);
+});
+
+test('利用上限を設定したプロファイルは実績料金を要求完了時に永続化して再起動後の上限判定へ残す', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-usage-budget-durable-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      billing: { ...base.profiles[0].billing, profileBudgetUsd: 1 },
+    }],
+  });
+
+  store.recordRequest({
+    profileId: 'profile-demo',
+    label: 'デモAI',
+    provider: 'demo',
+    model: 'demo-balanced',
+    status: 'completed',
+    usage: { inputTokens: 10, outputTokens: 2, totalTokens: 12, costUsd: 0.125 },
+  });
+
+  const summaryPath = path.join(directory, 'llm-usage-summary.json');
+  assert.equal(fs.existsSync(summaryPath), true);
+  const restarted = new SettingsStore(directory);
+  assert.equal(restarted.getProfileUsage('profile-demo').costUsd, 0.125);
+  assert.equal(restarted.getUsageSummary().totalCostUsd, 0.125);
+});
+
+
+test('API使用量集計が保存不能でも利用上限付き要求ごとに同一flushエラーを出し続けない', () => {
+  const { SettingsStore } = loadSettingsStore();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-usage-readonly-budget-'));
+  const store = new SettingsStore(directory);
+  const base = store.publicSettings();
+  store.savePublicSettings({
+    ...base,
+    profiles: [{
+      ...base.profiles[0],
+      billing: { ...base.profiles[0].billing, profileBudgetUsd: 1 },
+    }],
+  });
+  store.usageSummaryWritable = false;
+
+  const originalError = console.error;
+  const errors = [];
+  console.error = (...args) => errors.push(args);
+  try {
+    store.recordRequest({
+      profileId: 'profile-demo',
+      label: 'デモAI',
+      provider: 'demo',
+      model: 'demo-balanced',
+      status: 'completed',
+      usage: { totalTokens: 1, costUsd: 0.25 },
+    });
+    store.recordRequest({
+      profileId: 'profile-demo',
+      label: 'デモAI',
+      provider: 'demo',
+      model: 'demo-balanced',
+      status: 'completed',
+      usage: { totalTokens: 1, costUsd: 0.25 },
+    });
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(errors.length, 0);
+  assert.equal(store.getProfileUsage('profile-demo').costUsd, 0.5);
 });
 
 

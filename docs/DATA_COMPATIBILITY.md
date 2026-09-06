@@ -101,7 +101,7 @@ Mainの永続ファイルへ登録済みMigrationを適用する場合は、現�
 | `chat-room-session.json` / `spectator-room-session.json` | `JsonDocumentStore`が一意名へ退避して空状態を返す | 退避失敗時は対象セッション保存を禁止する |
 | `appearance.json` | 既定外観を使用する | 読めなかった元ファイルは変更しない |
 | `privacy-notice.json` | 未確認として扱い、次回外部LLM送信時に再確認を要求する | 読込失敗だけでは元ファイルを書き換えない |
-| `character-library.json` | ファイルなしだけ空ライブラリとして扱い、それ以外の読込・schema検証失敗は呼出側へエラーを返す | 失敗時に既存ファイルを自動上書きしない |
+| `character-library.json` | ファイルなしは空ライブラリとして扱う。読込不能・schema不一致・現行検証失敗時は一意名へ退避して空ライブラリで起動し、理由と退避先を利用者へ通知する | 退避失敗時は元ファイル保護のため、その起動中のユーザーキャラクター保存を禁止する |
 | `game-autosave.json` | MainではJSONとして読めなければ`null`を返し、復元可否・Migration・現行検証はゲーム読込側で判定する | `loadSync()`自体は元ファイルを退避・変更しない。新規状態で起動後に通常の自動保存が発生すれば同じ保存先は更新され得る |
 
 `desktop-settings.json`の現行schemaに、現在の通信規則では使用できないendpointが含まれている場合は読込失敗にしない。そのプロファイルと暗号化APIキーを保持し、使用不能理由をRendererへ通知する。新規追加・provider変更・endpoint変更の保存境界と実通信直前では現行`endpointPolicy.js`で拒否する。
@@ -123,7 +123,7 @@ Mainの永続ファイルへ登録済みMigrationを適用する場合は、現�
 2. 後方互換を提供するかを明示的に決定する。
 3. 互換を提供する場合だけ、専用Migrationを実装し `migrationRegistry.js`へ `N → N+1` として登録する。
 4. 互換を提供する場合だけ、代表fixtureと旧schema→currentの契約テストを保持する。
-5. current schemaの保存・再読込、未来schema拒否、無版・破損データ拒否を確認する。
+5. current schemaの保存・再読込、未来schema・無版schemaの拒否、および破損データに対する対象Store固有の拒否・退避・既定値化・保存禁止を確認する。
 6. Main永続ファイルでMigrationする場合はpre-schemaバックアップを確認する。互換を提供しない場合は、対象Store固有の拒否・退避／原本保持・保存禁止・利用者通知が本節の仕様どおりか確認する。
 7. 本文書、README、対象モジュールの責務・変更ルールを実装方針へ一致させる。
 8. 生成bundleを更新し、ゲーム／デスクトップの全契約テストと製造ゲートを通す。

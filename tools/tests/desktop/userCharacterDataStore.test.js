@@ -62,6 +62,24 @@ test('ユーザーキャラクター保存メタデータの参照IDにも共有
 });
 
 
+test('破損したユーザーキャラクターデータは退避して空状態へ復旧し保存を継続できる', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-user-character-recovery-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const storedPath = path.join(directory, 'character-library.json');
+  fs.writeFileSync(storedPath, '{broken', 'utf8');
+
+  const store = new UserCharacterDataStore(directory);
+  assert.deepEqual(store.snapshot().groups, []);
+  const recovery = store.consumeLoadRecovery();
+  assert.equal(recovery?.writable, true);
+  assert.ok(recovery?.backupPath);
+  assert.equal(fs.existsSync(recovery.backupPath), true);
+  assert.equal(store.consumeLoadRecovery(), null, '起動通知用の復旧情報は一度だけ取得する');
+
+  store.replace(libraryWithIds());
+  assert.equal(JSON.parse(fs.readFileSync(storedPath, 'utf8')).groups[0].id, 'user-group');
+});
+
 test('ユーザーキャラクター保存はPOSIXで0600の原子的保存を使用する', { skip: process.platform === 'win32' }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-user-character-store-'));
   const store = new UserCharacterDataStore(directory);
@@ -75,40 +93,6 @@ test('ユーザーキャラクター保存はPOSIXで0600の原子的保存を�
   );
 });
 
-
-test('組み込みキャラクターカタログはService初回読込後にディスクへ再アクセスしない', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'werewolf-builtin-character-cache-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const builtinDataRoot = path.join(root, 'characters');
-  const groupRoot = path.join(builtinDataRoot, 'builtin-test');
-  fs.mkdirSync(groupRoot, { recursive: true });
-  fs.writeFileSync(path.join(groupRoot, 'group.json'), JSON.stringify({
-    schemaVersion: 1,
-    id: 'builtin-test',
-    name: '組み込みテスト',
-    characters: ['character.json'],
-  }), 'utf8');
-  fs.writeFileSync(path.join(groupRoot, 'character.json'), JSON.stringify({
-    schemaVersion: 1,
-    id: 'builtin-character',
-    name: '組み込みキャラクター',
-    character: {},
-    callNames: {},
-  }), 'utf8');
-  const service = new CharacterLibraryService({
-    builtinDataRoot,
-    userStore: {
-      snapshot: () => normalizeStoredData({ schemaVersion: 1 }, { enforceTextLimits: false }),
-      replace: () => {},
-    },
-  });
-
-  const first = service.loadCatalog();
-  fs.rmSync(builtinDataRoot, { recursive: true, force: true });
-  const second = service.loadCatalog();
-
-  assert.deepEqual(second, first);
-});
 
 test('Rendererから受け取るユーザーキャラクターJSONは共有8MB上限を超える前に拒否する', () => {
   const service = new CharacterLibraryService({

@@ -3,12 +3,12 @@
  * 変更ルール: グローバル名や必須メソッドを変更する場合はautomation/runtimeAccess.jsと契約テストを同時更新する。任意メソッドを設けず、欠落は起動時エラーにする。
  */
 
-export const RUNTIME_CONTRACT_VERSION = 1;
+export const RUNTIME_CONTRACT_VERSION = 3;
 export const RUNTIME_REQUIRED_METHODS = Object.freeze([
-  'getState', 'getAutosaveState', 'getCurrentWorkbenchTask', 'getPublicSnapshot', 'getRoleDisplayName', 'isWorkbenchPlayerFrozen', 'toast', 'dismissToast', 'beginAutomaticNotifications', 'endAutomaticNotifications',
+  'getState', 'getAutosaveSerialized', 'getCurrentWorkbenchTask', 'getPublicSnapshot', 'getRoleDisplayName', 'isWorkbenchPlayerFrozen', 'toast', 'dismissToast', 'beginAutomaticNotifications', 'endAutomaticNotifications',
   'beginNightActorPrivacy', 'endNightActorPrivacy', 'setTab', 'getActiveTab', 'registerTabView',
   'refreshTab', 'setAutomationUiState', 'setPublicHistoryTransmissionMode', 'setAiExecutionSettings', 'setPostgameAnalysisAdapter',
-  'scheduleFullPublicHistory', 'getAiHistoryStatus', 'getCurrentAiTaskRequest', 'resolveAutomaticAction', 'executeAutomaticAction', 'prepareAiTask',
+  'scheduleFullPublicHistory', 'getAiHistoryStatus', 'getCurrentAiTaskRequest', 'resolveAutomaticAction', 'resolveAutomaticAiBatch', 'executeAutomaticAction', 'prepareAiTask',
   'evaluateAiTaskCandidate', 'commitAiTaskCandidate', 'commitAiTaskFallback', 'resolveGenerationPlan',
   'runGenerationPipeline', 'createGenerationPipelineTestTask', 'resolveGenerationStagePromptPolicy',
   'buildDecideStagePrompt', 'buildAnalyzeStagePrompt', 'buildCritiqueStagePrompt', 'buildFinalizeStagePrompt', 'buildRenderStagePrompt', 'projectGenerationStagePromptEnvelope', 'parseTextPatchResponse',

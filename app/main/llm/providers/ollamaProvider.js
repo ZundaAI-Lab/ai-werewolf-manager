@@ -186,12 +186,6 @@ async function generateOllamaChat(profile, promptEnvelope, apiKey, signal, reque
   throw new ProviderRequestError(`${provider}から空の応答が返されました。`, {
     provider,
     code: 'EMPTY_PROVIDER_RESPONSE',
-    responseBody: lastBody ? JSON.stringify({
-      done_reason: lastBody.done_reason ?? null,
-      eval_count: lastBody.eval_count ?? null,
-      prompt_eval_count: lastBody.prompt_eval_count ?? null,
-      thinking_present: Boolean(String(lastBody?.message?.thinking ?? '').trim()),
-    }) : '',
   });
 }
 

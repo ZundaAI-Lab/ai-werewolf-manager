@@ -1,6 +1,6 @@
 /**
  * 責務: 進行卓のフェーズ表示、現在タスク、参加者状態、人間入力フォーム、夜・投票・結果操作のHTMLを生成する。
- * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。機密会話の既定話者は各会話ポリシーのround-robinを使用し、GMが別参加者を選んだ場合も連続発言禁止を満たす選択だけを保持する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。
+ * 変更ルール: 状態を更新せず、候補・進行規則はドメインSelectorとAppUIから渡されたAI描画関数を使用する。機密会話の既定話者は各会話ポリシーのround-robinを使用し、GMが別参加者を選んだ場合も連続発言禁止を満たす選択だけを保持する。公開CO・能力結果入力の役職候補はroleComposition.jsの公開配役構成を使用し、役職欠け後の実配役を公開入力へ漏らさない。機密表示はhostの明示状態に従う。API通信中プレイヤーは並列時に複数アクティブ表示するが、夜フェーズでは機密情報表示中だけ行動者マーカーを表示する。内部メモ整理は通常フェーズとは別の本人限定AIタスクとして描画する。投票済表示は現在のvoteSessionだけに限定し、正式登録済み票に加えて同一セッションでAPI応答取得まで完了したAI投票も表示根拠にする。API応答済みはAutomation表示状態だけを参照し、ゲームstateへ混ぜない。
  */
 
 import { isNormalSpeechTask } from '../../../config/discussionAiTaskTypes.js';
@@ -135,15 +135,27 @@ export class WorkbenchTaskRenderer {
 
   playerStatusList(state) {
     const task = getCurrentGmTask(state);
+    const showConfidential = this.host.showConfidential();
+    const activeRequestPlayerIds = new Set(this.host.activeAiRequestPlayerIds?.() ?? []);
+    const voteResponsePlayerIds = new Set(this.host.voteResponsePlayerIds?.() ?? []);
+    const voteResponseSessionId = String(this.host.voteResponseSessionId?.() ?? '');
+    const hideNightActorMarker = state.game.phase === 'night' && !showConfidential;
     return `<div class="status-list">${state.players.map((player) => {
-      const active = task.playerId === player.id;
+      const active = !hideNightActorMarker && (activeRequestPlayerIds.size > 0
+        ? activeRequestPlayerIds.has(player.id)
+        : task.playerId === player.id);
       const remaining = state.discussion?.remainingByPlayer?.[player.id];
-      const voteDone = ['vote', 'runoff'].includes(state.game.phase)
+      const currentVoteSession = ['vote', 'runoff'].includes(state.game.phase)
         && state.voteSession?.day === state.game.day
-        && Boolean(state.voteSession?.votes && player.id in state.voteSession.votes);
+        ? state.voteSession
+        : null;
+      const voteDone = Boolean(currentVoteSession) && (
+        Boolean(currentVoteSession.votes && player.id in currentVoteSession.votes)
+        || (String(currentVoteSession.id ?? '') === voteResponseSessionId && voteResponsePlayerIds.has(player.id))
+      );
       const claim = state.claims.find((item) => item.actorId === player.id && item.status === 'active');
       const frozen = shouldHighlightFrozenPlayerPanel(state, player.id);
-      return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${escapeHtml(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${escapeHtml(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${escapeHtml(getRoleName(claim.roleId))}CO` : ''}</small></span>${this.host.showConfidential() ? `<span class="secret-role">${escapeHtml(getRoleName(player.roleId))}</span>` : ''}</button>`;
+      return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${escapeHtml(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${escapeHtml(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${escapeHtml(getRoleName(claim.roleId))}CO` : ''}</small></span>${showConfidential ? `<span class="secret-role">${escapeHtml(getRoleName(player.roleId))}</span>` : ''}</button>`;
     }).join('')}</div>`;
   }
 

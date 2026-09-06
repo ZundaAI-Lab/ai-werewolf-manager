@@ -1,6 +1,6 @@
 /**
  * 責務: 自動API実行方式の進行卓で、手動進行卓と同じ3パネル骨格を保ちながら中央パネルへ公開ログだけを表示し、表示更新とスクロール位置を管理する。
- * 変更ルール: 進行卓の通常表示方式はexecutionModeを正本とし、automatic選択時は実行開始前・一時停止中も自動実行用進行卓を表示する。人間操作待ちは通常進行卓へ遷移させず公開ログ末尾へHuman Task Cardを差し込み、役職通知だけ共通ダイアログへ委譲する。自動実行ステータスと実行操作は共通ヘッダーへ委譲し、中央パネルへ重複表示しない。機密情報非表示中の夜フェーズでは現在行動者をプレイヤー状態へ強調表示せず、処理順から役職を推測できないようにする。投票済表示は現在日の投票・決選投票フェーズだけに限定し、保持中の過去voteSessionを表示根拠にしない。ゲーム状態を直接変更しない。
+ * 変更ルール: 進行卓の通常表示方式はexecutionModeを正本とし、automatic選択時は実行開始前・一時停止中も自動実行用進行卓を表示する。人間操作待ちは通常進行卓へ遷移させず公開ログ末尾へHuman Task Cardを差し込み、役職通知だけ共通ダイアログへ委譲する。自動実行ステータスと実行操作は共通ヘッダーへ委譲し、中央パネルへ重複表示しない。機密情報非表示中の夜フェーズでは現在行動者をプレイヤー状態へ強調表示せず、処理順から役職を推測できないようにする。投票済表示は現在のvoteSessionだけに限定し、正式登録済み票に加えて同一セッションでAPI応答取得まで完了したAI投票も表示根拠にする。API応答済みはAutomation表示状態だけを参照し、ゲームstateへ混ぜない。ゲーム状態を直接変更しない。
  */
 
 export function createLiveProgressController(context) {
@@ -93,13 +93,23 @@ export function createLiveProgressController(context) {
 
   function playerStatusList(state) {
       const currentTask = runtime().getCurrentWorkbenchTask();
+      const activeRequestPlayerIds = new Set(controller.activeAiRequestPlayerIds ?? []);
+      const voteResponsePlayerIds = new Set(controller.voteResponsePlayerIds ?? []);
+      const voteResponseSessionId = String(controller.voteResponseSessionId ?? '');
       const hideNightActorMarker = state?.game?.phase === 'night' && !controller.showConfidential;
       return `<div class="status-list">${(state?.players ?? []).map((player) => {
-        const active = !hideNightActorMarker && currentTask?.playerId === player.id;
+        const active = !hideNightActorMarker && (activeRequestPlayerIds.size > 0
+          ? activeRequestPlayerIds.has(player.id)
+          : currentTask?.playerId === player.id);
         const remaining = state?.discussion?.remainingByPlayer?.[player.id];
-        const voteDone = ['vote', 'runoff'].includes(state?.game?.phase)
+        const currentVoteSession = ['vote', 'runoff'].includes(state?.game?.phase)
           && state?.voteSession?.day === state?.game?.day
-          && Boolean(state?.voteSession?.votes && player.id in state.voteSession.votes);
+          ? state.voteSession
+          : null;
+        const voteDone = Boolean(currentVoteSession) && (
+          Boolean(currentVoteSession.votes && player.id in currentVoteSession.votes)
+          || (String(currentVoteSession.id ?? '') === voteResponseSessionId && voteResponsePlayerIds.has(player.id))
+        );
         const claim = (state?.claims ?? []).find((item) => item.actorId === player.id && item.status === 'active');
         const frozen = runtime().isWorkbenchPlayerFrozen(player.id);
         return `<button class="status-row ${active ? 'active' : ''} ${player.alive ? '' : 'dead'} ${frozen ? 'frozen' : ''}" data-action="inspect-player" data-player-id="${escapeHtml(player.id)}" type="button"><span class="status-symbol">${active ? '▶' : player.alive ? '○' : '×'}</span><span class="status-main"><strong>${escapeHtml(player.name)}</strong><small>${player.controller === 'ai' ? 'AI' : '人間'}${frozen ? '・凍結中' : ''}${remaining !== undefined && remaining !== null ? `・残${remaining}` : ''}${voteDone ? '・投票済' : ''}${claim ? `・${escapeHtml(runtime().getRoleDisplayName(claim.roleId))}CO` : ''}</small></span>${controller.showConfidential ? `<span class="secret-role">${escapeHtml(runtime().getRoleDisplayName(player.roleId))}</span>` : ''}</button>`;

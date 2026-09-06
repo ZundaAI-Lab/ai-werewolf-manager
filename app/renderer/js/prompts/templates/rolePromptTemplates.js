@@ -1,6 +1,6 @@
 /**
  * 責務: 本人の真の役職・本人限定確定属性と現在タスクに対応する判断原則を文章化する。
- * 変更ルール: 共通ルールを重複定義せず、本人が知る属性だけで分岐する。公開本文への他者未公開情報の漏洩禁止は共通出力契約を正本とし、役職固有指示ではその役職に固有の公開根拠制約だけを示す。特殊役職は実装された効果・公開タイミング・不成立条件を一般的な人狼知識へ委ねず短く明示する。投票ではCO・公開発言・能力結果提出の手順を載せず、投票判断へ影響する本人限定情報と役職効果だけを示す。特殊陣営と複数死亡役職の勝敗判断は削らない。特定行動を必須化せず、状態更新や可視性判定を行わない。本人限定の動的役職データは[game-data:...]へ隔離し、自由文字列を判断指示へ直接展開しない。
+ * 変更ルール: 共通ルールを重複定義せず、本人が知る属性だけで分岐する。公開本文への他者未公開情報の漏洩禁止は共通出力契約を正本とし、役職固有指示ではその役職に固有の公開根拠制約だけを示す。公開役職説明で固定効果を既に提示する役職は、戦術側で全仕様を再掲せず現在判断に必要な差分と効果の非対称性だけを示す。特殊役職の公開タイミング・不成立条件など判断を誤らせる差分は一般的な人狼知識へ委ねず短く明示する。投票ではCO・公開発言・能力結果提出の手順を載せず、投票判断へ影響する本人限定情報と役職効果だけを示す。特殊陣営と複数死亡役職の勝敗判断は削らない。特定行動を必須化せず、状態更新や可視性判定を行わない。本人限定の動的役職データは[game-data:...]へ隔離し、自由文字列を判断指示へ直接展開しない。
  */
 
 import { getRoleDefinition } from '../../domain/roles/roleAttributes.js';
@@ -17,7 +17,7 @@ const DAY_ROLE_GUIDANCE = Object.freeze({
 
   seer: `## あなたの役職固有の判断材料
 
-正式通知された占い結果は本人の確定情報です。公開時は襲撃危険と対抗比較を考え、COと能力結果主張を明示構造で提出します。公開発言本文からは抽出させません。`,
+正式通知された占い結果は本人の確定情報です。公開時は襲撃危険と対抗比較を考え、COと能力結果主張を明示構造で提出します。`,
 
   medium: `## あなたの役職固有の判断材料
 
@@ -33,12 +33,7 @@ const DAY_ROLE_GUIDANCE = Object.freeze({
 
   fox: `## あなたの役職固有の判断材料
 
-妖狐は人狼の襲撃では死亡せず、占われると死亡します。通常陣営の勝利条件成立時に生存していれば勝利するため、占い・処刑危険と両陣営の人数推移を常に比較し、真の役職と耐性を公開発言へ漏らさないでください。`,
-
-  cat: `## あなたの役職固有の判断材料
-
-処刑時は自分以外の生存者一人を、襲撃死時は生存人狼一人をランダムに道連れにし、対象は選べません。道連れで死亡した猫又の能力は連鎖しません。自分の処刑・襲撃価値と陣営への影響を比較してください。`,
-
+妖狐は人狼の襲撃では死亡せず、占われると死亡します。通常陣営の勝利条件成立時に生存していれば勝利します。生存日数を伸ばすこと自体を目的にせず、占い・処刑危険とゲームが終了する時点を比較してください。`,
 
   wolf: `## あなたの役職固有の判断材料
 
@@ -46,7 +41,7 @@ const DAY_ROLE_GUIDANCE = Object.freeze({
 
   whiteWolf: `## あなたの役職固有の判断材料
 
-基本は村人に徹し、占いで「人狼ではない」と判定される強みを長期的な信用へつなげてください。無理な騙りや露骨な仲間擁護を避け、公開根拠があれば仲間を疑い・投票する選択肢もあります。霊能では人狼と判定され、占いの非人狼結果も村人陣営確定ではありません。`,
+占いでは非人狼、霊能では人狼と判定されます。占いで正体が露出しにくいことを、潜伏を続ける価値の一つとして扱ってください。`,
 
   zashikiWarashi: `## あなたの役職固有の判断材料
 
@@ -80,27 +75,24 @@ const VOTE_ROLE_GUIDANCE = Object.freeze({
 
   fox: `## あなたの役職固有の投票材料
 
-妖狐は人狼の襲撃では死亡せず、占われると死亡します。通常陣営の勝利条件成立時に生存していれば勝利するため、今日の処刑、占い危険、処刑後の人数推移を比較し、真の役職と耐性を漏らさないでください。`,
+自分が生存したまま今日ゲームを終えられる処刑も勝ち筋です。生存期間を延ばすことを固定せず、各候補の処刑後の勝敗と自分の処刑危険を比較してください。`,
 
   cat: `## あなたの役職固有の投票材料
 
-自分が処刑されると自分以外の生存者一人をランダムに道連れにし、対象は選べません。道連れで死亡した猫又の能力は連鎖しません。自分と各候補の処刑が人数・役職・勝利条件へ与える影響を比較してください。`,
+自分の処刑ではランダムな追加死亡が発生します。自分を含む各候補の処刑後の人数と勝利条件まで比較してください。`,
 
 
   wolf: `## あなたの役職固有の投票材料
 
 人狼仲間は本人の確定情報です。仲間救出、仲間投票、別候補への票集中を固定戦術にせず、必要票、公開根拠、処刑後の人狼数、翌日の勝ち筋を比較してください。秘密情報を公開根拠として扱わないでください。`,
 
-  whiteWolf: `## あなたの役職固有の投票材料
-
-占いでは非人狼、霊能では人狼と判定されます。占いの非人狼結果を長期的な信用へつなげつつ、仲間救出・仲間投票・今日の処刑価値を公開根拠と人数条件から比較してください。`,
 });
 
 const TASK_ROLE_GUIDANCE = Object.freeze({
   seer: Object.freeze({
     inspect: `## あなたの役職固有の判断材料
 
-占い結果を知る前の公開情報だけで対象を比較し、差がなければ任意選択であることを正直に記録してください。今回の選択理由は後から得た結果で書き換えません。`,
+占い結果を知る前の公開情報から、人狼・非人狼のどちらが出ても候補整理やCO評価が進む対象を比較してください。十分な差がなければ任意に選べます。選択理由は結果判明後に書き換えません。`,
   }),
   guard: Object.freeze({
     guard: `## あなたの役職固有の判断材料
@@ -154,12 +146,12 @@ function appendNonWolfVillageCertaintyWarning(guidance, context, { resultField =
 }
 
 function catDayGuidance(context) {
-  const attackCondition = hasConfiguredRole(context, 'guard')
-    ? '護衛されて死亡しなければ襲撃時の道連れは発動しないため、'
-    : '襲撃時の道連れは襲撃死した場合にのみ発動するため、';
+  const guardRule = hasConfiguredRole(context, 'guard')
+    ? '\n\n護衛で襲撃死しなければ道連れも発動しません。'
+    : '';
   return `## あなたの役職固有の判断材料
 
-処刑時は自分以外の生存者一人を、襲撃死時は生存人狼一人をランダムに道連れにし、対象は選べません。道連れで死亡した猫又の能力は連鎖しません。${attackCondition}自分の処刑・襲撃価値と陣営への影響を比較してください。`;
+処刑死では生存者一人をランダムに、襲撃死では生存人狼一人をランダムに道連れにします。処刑圏では村側を道連れにする危険を避ける利益、非処刑圏では襲撃対象として残る利益を比較してください。${guardRule}`;
 }
 
 function wolfAttackRoleGuidance(context) {
@@ -335,14 +327,16 @@ export function renderRoleGuidance(context, { taskType = context?.task?.type } =
   if (roleId === 'madman') return taskType === 'vote' ? madmanVoteGuidance(context) : madmanDayGuidance(context);
   if (roleId === 'snowWoman') return taskType === 'vote' ? snowWomanVoteGuidance(context) : snowWomanDayGuidance(context);
   if (taskType === 'vote') {
-    const guidance = VOTE_ROLE_GUIDANCE[roleId] ?? '';
+    const guidance = VOTE_ROLE_GUIDANCE[taskRoleId] ?? '';
     if (roleId === 'villager') return appendNonWolfVillageCertaintyWarning(guidance, context);
+    if (roleId === 'seer') return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'seerResult' });
     if (roleId === 'medium') return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'mediumResult' });
     return guidance;
   }
   if (roleId === 'cat') return catDayGuidance(context);
   const guidance = DAY_ROLE_GUIDANCE[roleId] ?? '';
   if (roleId === 'villager') return appendNonWolfVillageCertaintyWarning(guidance, context);
+  if (roleId === 'seer') return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'seerResult' });
   if (roleId === 'medium') return appendNonWolfVillageCertaintyWarning(guidance, context, { resultField: 'mediumResult' });
   return guidance;
 }

@@ -59,6 +59,20 @@ test('非同期IPCは不正送信元を分類済み例外で拒否し正規送�
   assert.equal(callCount, 1);
 });
 
+test('同期IPCはlistener例外と未設定戻り値をnullへ閉じ込める', () => {
+  const { listeners, mainFrame, webContents, registrar } = fixture();
+  registrar.onSync('desktop:throws', () => { throw new Error('sync failure'); });
+  registrar.onSync('desktop:no-return', () => {});
+
+  const thrownEvent = { sender: webContents, senderFrame: mainFrame, returnValue: undefined };
+  assert.doesNotThrow(() => listeners.get('desktop:throws')(thrownEvent));
+  assert.equal(thrownEvent.returnValue, null);
+
+  const emptyEvent = { sender: webContents, senderFrame: mainFrame, returnValue: undefined };
+  listeners.get('desktop:no-return')(emptyEvent);
+  assert.equal(emptyEvent.returnValue, null);
+});
+
 test('同期IPCは不正送信元へnullを返し保存処理を実行しない', () => {
   const { listeners, mainFrame, webContents, registrar } = fixture();
   let callCount = 0;

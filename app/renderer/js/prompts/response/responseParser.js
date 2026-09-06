@@ -12,6 +12,7 @@ const CO_ACTIONS = new Set(['declare', 'change', 'withdraw']);
 const FORBIDDEN_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_JSON_NESTING_DEPTH = 64;
 const MAX_KEY_SUGGESTION_DISTANCE = 2;
+const JSON_NUMBER_PATTERN = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/uy;
 const FACTION_STRATEGY_KEYS = new Set([
   'publicWorld', 'dayWinPath', 'partnerDisposition', 'collapsePlan', 'linkageRisk',
   'fallbackRoute', 'pressureGoal', 'failureRisk', 'nextDayPlan',
@@ -83,10 +84,10 @@ function parseStrictJson(text) {
   }
 
   function parseNumber() {
-    const rest = text.slice(index);
-    const match = rest.match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/u);
+    JSON_NUMBER_PATTERN.lastIndex = index;
+    const match = JSON_NUMBER_PATTERN.exec(text);
     if (!match) fail('数値を解析できません');
-    index += match[0].length;
+    index = JSON_NUMBER_PATTERN.lastIndex;
     const value = Number(match[0]);
     if (!Number.isFinite(value)) fail('有限でない数値は使用できません');
     return value;

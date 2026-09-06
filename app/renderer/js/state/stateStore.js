@@ -422,10 +422,22 @@ function appendRestorePoint(points, label, sourceState) {
     : points;
   const nextPoints = [...withoutReplacedAnchor, restorePointEntry(normalizedLabel, sourceState)];
   if (nextPoints.length <= MAX_RESTORE_POINTS) return nextPoints;
-  const pinned = nextPoints.filter((point) => PINNED_RESTORE_POINT_LABELS.includes(point.label));
-  const regular = nextPoints.filter((point) => !PINNED_RESTORE_POINT_LABELS.includes(point.label));
-  const regularLimit = Math.max(0, MAX_RESTORE_POINTS - pinned.length);
-  return [...pinned.slice(-MAX_RESTORE_POINTS), ...(regularLimit ? regular.slice(-regularLimit) : [])];
+  let dropCount = nextPoints.length - MAX_RESTORE_POINTS;
+  const droppedIds = new Set();
+  for (const point of nextPoints) {
+    if (dropCount <= 0) break;
+    if (PINNED_RESTORE_POINT_LABELS.includes(point.label)) continue;
+    droppedIds.add(point.id);
+    dropCount -= 1;
+  }
+  // pinnedだけで上限を超える異常系でも、古いものから落として元の時系列順を維持する。
+  for (const point of nextPoints) {
+    if (dropCount <= 0) break;
+    if (!PINNED_RESTORE_POINT_LABELS.includes(point.label) || droppedIds.has(point.id)) continue;
+    droppedIds.add(point.id);
+    dropCount -= 1;
+  }
+  return nextPoints.filter((point) => !droppedIds.has(point.id));
 }
 
 

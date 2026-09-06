@@ -61,3 +61,33 @@ test('Envelopeは共通ゲーム、タスク不変、本人固定、タスク可
   assert.ok(text.indexOf('PLAYER') < text.indexOf('TASK_VARIABLE')
   && text.indexOf('TASK_VARIABLE') < text.indexOf('DYNAMIC_TASK'));
 });
+
+
+test('構造化出力SchemaはarrayのmaxItemsとuniqueItemsだけを境界で保持する', () => {
+  const normalized = normalizePromptEnvelope(envelope({
+    structuredOutput: {
+      name: 'vote_response',
+      schema: {
+        type: 'object',
+        properties: {
+          evidenceRefs: {
+            type: 'array',
+            maxItems: 3,
+            uniqueItems: true,
+            items: { type: 'integer' },
+          },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+    },
+  }));
+  assert.equal(normalized.structuredOutput.schema.properties.evidenceRefs.maxItems, 3);
+  assert.equal(normalized.structuredOutput.schema.properties.evidenceRefs.uniqueItems, true);
+  assert.throws(() => normalizePromptEnvelope(envelope({
+    structuredOutput: {
+      name: 'invalid_schema',
+      schema: { type: 'string', maxItems: 3 },
+    },
+  })), /arrayでだけ指定/u);
+});

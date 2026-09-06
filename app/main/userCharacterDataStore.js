@@ -1,6 +1,6 @@
 /**
  * 責務: ユーザー作成キャラクターグループ、キャラクター単位の使用状態、組み込み側の使用状態・グループ順・キャラクター順をuserData配下へ原子的に保存する。明示的に指定されたキャラクター保存・JSON取込だけ共有文字数規則を検証する。
- * 変更ルール: 組み込みキャラクターJSONを書き換えない。ライブラリ総サイズ上限はapp/shared/userCharacterLibraryPolicy.jsを正本とする。製品schema管理層で対応Migrationがある旧ライブラリschemaだけを現行へ一方向migrationし、Migrationのない旧schema・未来schemaは拒否する。具体的なグループ名・キャラクター名・ゲーム規則・文字数定数を持たず、ID規則はapp/shared/entityIdPolicy.js、文字数規則はapp/shared/characterTextPolicy.jsを正本とする。起動読込・削除・並び替え・使用切替・複製・グループ編集では既存キャラクターの文字数超過を理由に処理を止めない。キャラクター保存とJSON取込では対象キャラクターだけ現行上限を検証する。ユーザーキャラクターのcharacter省略は空設定として保存し、実行用既定値の補完はRenderer側カタログ正規化へ委譲する。
+ * 変更ルール: 組み込みキャラクターJSONを書き換えない。ライブラリ総サイズ上限はapp/shared/userCharacterLibraryPolicy.jsを正本とする。製品schema管理層で対応Migrationがある旧ライブラリschemaだけを現行へ一方向migrationし、Migrationのない旧schema・未来schemaは拒否する。読込不能な既存ファイルは一意名へ退避して空状態へ復旧し、退避失敗時は元ファイル保護のため保存を禁止する。具体的なグループ名・キャラクター名・ゲーム規則・文字数定数を持たず、ID規則はapp/shared/entityIdPolicy.js、文字数規則はapp/shared/characterTextPolicy.jsを正本とする。起動読込・削除・並び替え・使用切替・複製・グループ編集では既存キャラクターの文字数超過を理由に処理を止めない。キャラクター保存とJSON取込では対象キャラクターだけ現行上限を検証する。ユーザーキャラクターのcharacter省略は空設定として保存し、実行用既定値の補完はRenderer側カタログ正規化へ委譲する。
  */
 
 'use strict';
@@ -11,7 +11,7 @@ const { requireCharacterTextPayload } = require('../shared/characterTextPolicy.j
 const { requireEntityId } = require('../shared/entityIdPolicy.js');
 const { assertUserCharacterLibrarySerializedSize } = require('../shared/userCharacterLibraryPolicy.js');
 const { DATA_SCHEMA_KIND, getCurrentDataSchemaVersion } = require('../shared/dataCompatibility/schemaVersions.js');
-const { migratePersistedDocument, writeMigratedJsonSync } = require('./dataCompatibilityPersistence.js');
+const { migratePersistedDocument, quarantineUnreadableJsonSync, writeMigratedJsonSync } = require('./dataCompatibilityPersistence.js');
 const { atomicWriteSerializedJsonSync } = require('./atomicJsonFile.js');
 
 const USER_CHARACTER_LIBRARY_SCHEMA_VERSION = getCurrentDataSchemaVersion(DATA_SCHEMA_KIND.USER_CHARACTER_LIBRARY);
@@ -126,6 +126,8 @@ class UserCharacterDataStore {
   constructor(userDataPath) {
     this.directory = userDataPath;
     this.path = join(userDataPath, USER_CHARACTER_LIBRARY_FILENAME);
+    this.writable = true;
+    this.loadRecovery = null;
     this.data = this._loadSync();
   }
 
@@ -137,8 +139,33 @@ class UserCharacterDataStore {
       return normalized;
     } catch (error) {
       if (error?.code === 'ENOENT') return normalizeStoredData({ schemaVersion: USER_CHARACTER_LIBRARY_SCHEMA_VERSION });
-      throw new Error(`ユーザーキャラクターデータを読み込めません: ${error.message}`);
+      const fallback = normalizeStoredData({ schemaVersion: USER_CHARACTER_LIBRARY_SCHEMA_VERSION });
+      try {
+        const backupPath = quarantineUnreadableJsonSync(this.path);
+        this.loadRecovery = {
+          backupPath: backupPath ?? '',
+          writable: true,
+          cause: String(error?.message ?? error),
+        };
+        console.warn(`ユーザーキャラクターデータを読み込めないため${backupPath ? `「${backupPath}」へ退避し、` : ''}空のライブラリを使用します。`, error);
+      } catch (quarantineError) {
+        this.writable = false;
+        this.loadRecovery = {
+          backupPath: '',
+          writable: false,
+          cause: String(error?.message ?? error),
+        };
+        console.error('ユーザーキャラクターデータを読み込めず、元ファイルの退避にも失敗したため保存を禁止します。', quarantineError, error);
+      }
+      return fallback;
     }
+  }
+
+  consumeLoadRecovery() {
+    if (!this.loadRecovery) return null;
+    const recovery = { ...this.loadRecovery };
+    this.loadRecovery = null;
+    return recovery;
   }
 
   snapshot() {
@@ -146,6 +173,11 @@ class UserCharacterDataStore {
   }
 
   replace(next, { validateCharacterIds = [] } = {}) {
+    if (!this.writable) {
+      const error = new Error('ユーザーキャラクターデータの元ファイルを保護しているため保存できません。');
+      error.code = 'USER_CHARACTER_LIBRARY_READ_ONLY';
+      throw error;
+    }
     const normalized = normalizeStoredData(next, { enforceTextLimits: false });
     const requestedIds = new Set(normalizeIdList(validateCharacterIds, '文字数検証対象のユーザーキャラクターID'));
     if (requestedIds.size) {

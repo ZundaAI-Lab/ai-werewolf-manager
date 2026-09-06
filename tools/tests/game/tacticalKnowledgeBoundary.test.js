@@ -13,7 +13,14 @@ import { createEvent } from '../../../app/renderer/js/domain/events/eventStore.j
 
 import { applySetupRoles } from '../../../app/renderer/js/domain/setup/setupRoles.js';
 import { buildPromptContext } from '../../../app/renderer/js/prompts/promptBuilder.js';
+import { resolveNoMadmanEarlyWolfClaimMode } from '../../../app/renderer/js/prompts/sections/conversationSection.js';
 import { inspectPromptDataBlocks } from '../../../app/renderer/js/prompts/serialization/promptDataSerializer.js';
+import {
+  renderMadmanClaimBranchInstruction,
+  renderMadmanDayStrategyInstruction,
+  renderTaskVariableInstruction,
+  renderWolfInitialClaimDecisionInstruction,
+} from '../../../app/renderer/js/prompts/templates/promptTemplates.js';
 import { createInitialState } from '../../../app/renderer/js/state/stateStore.js';
 import { synchronizePlayerKnowledgeForTest } from './testStateHelpers.js';
 

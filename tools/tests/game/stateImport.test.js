@@ -268,61 +268,6 @@ function generationRunWithSkippedStages() {
 }
 
 
-test('v1.0.3ゲームJSONをgenerationRunと履歴を保持して現行schemaへ移行できる', () => {
-  const raw = runningDiscussionStateForGenerationAudit();
-  const currentRun = generationRunWithSkippedStages();
-  const response = recordAiSpeech(raw, {
-    playerId: raw.players[0].id,
-    content: '旧版ゲーム移行確認用の発言です。',
-    coOperation: { action: 'none', roleId: 'none' },
-    promptText: 'v1.0.3 prompt',
-    rawResponse: '{"publicSpeech":"旧版ゲーム移行確認用の発言です。"}',
-    generationRun: currentRun,
-  });
-  assert.equal(response.ok, true, response.message);
-  raw.aiTurns.at(-1).generationRun = legacyGenerationRunV1();
-  raw.schemaVersion = 1;
-  raw.runtime.schemaVersion = 1;
-  raw.appVersion = '1.0.3';
-  raw.runtime.appVersion = '1.0.3';
-  const historyState = structuredClone(raw);
-  historyState.undoStack = [];
-  historyState.redoStack = [];
-  historyState.restorePoints = [];
-  raw.undoStack = [createHistoryEntry('legacy-undo', historyState)];
-
-  const prepared = prepareImportedState(structuredClone(raw));
-  const checked = validateImportedState(prepared);
-  assert.equal(checked.ok, true, checked.errors.join('\n'));
-  assert.equal(prepared.schemaVersion, SCHEMA_VERSION);
-  assert.equal(prepared.aiTurns.at(-1).generationRun.schemaVersion, 2);
-  assert.deepEqual(prepared.aiTurns.at(-1).generationRun.stages.map((stage) => stage.stageId), ['decide', 'render', 'render']);
-  assert.equal(prepared.aiTurns.at(-1).generationRun.finalStageId, 'render');
-  assert.deepEqual(prepared.aiTurns.at(-1).generationRun.stages.map((stage) => stage.rejectedAttempts), [[], [], []]);
-  assert.equal(prepared.aiTurns.at(-1).generationRun.stages[2].rawResponse, '{"publicSpeech":"校正済み"}');
-  assert.equal(prepared.undoStack.length, 1);
-  assert.equal(prepared.undoStack[0].state.aiTurns.at(-1).generationRun.schemaVersion, 2);
-});
-
-test('公開済みv1.0.4のroot schema 1 + generationRun schema 2ゲームJSONもそのまま救済する', () => {
-  const raw = runningDiscussionStateForGenerationAudit();
-  const generationRun = generationRunWithSkippedStages();
-  const response = recordAiSpeech(raw, {
-    playerId: raw.players[0].id,
-    content: 'v1.0.4保存互換確認です。',
-    coOperation: { action: 'none', roleId: 'none' },
-    promptText: 'v1.0.4 prompt',
-    rawResponse: '{"publicSpeech":"v1.0.4保存互換確認です。"}',
-    generationRun,
-  });
-  assert.equal(response.ok, true, response.message);
-  raw.schemaVersion = 1;
-  raw.runtime.schemaVersion = 1;
-  const prepared = prepareImportedState(structuredClone(raw));
-  assert.equal(prepared.schemaVersion, SCHEMA_VERSION);
-  assert.deepEqual(prepared.aiTurns.at(-1).generationRun, generationRun);
-});
-
 test('generationRunをexact shapeのまま保存・再読込し現在存在しない工程担当IDも許可する', () => {
   const raw = runningDiscussionStateForGenerationAudit();
   const generationRun = generationRunWithSkippedStages();

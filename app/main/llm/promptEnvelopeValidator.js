@@ -36,7 +36,7 @@ function boundedText(value, label, { allowEmpty = true } = {}) {
 
 function normalizeJsonSchema(schema, label = 'promptEnvelope.structuredOutput.schema', depth = 0) {
   if (depth > 8) throw new RangeError(`${label}のネストが深すぎます。`);
-  assertExactKeys(schema, ['type', 'properties', 'required', 'additionalProperties', 'enum', 'items'], label);
+  assertExactKeys(schema, ['type', 'properties', 'required', 'additionalProperties', 'enum', 'items', 'maxItems', 'uniqueItems'], label);
   const type = boundedText(schema.type, `${label}.type`, { allowEmpty: false });
   if (!['object', 'array', 'string', 'number', 'integer', 'boolean', 'null'].includes(type)) {
     throw new RangeError(`${label}.typeが未対応です。`);
@@ -72,7 +72,22 @@ function normalizeJsonSchema(schema, label = 'promptEnvelope.structuredOutput.sc
     }
     normalized.additionalProperties = schema.additionalProperties === true;
   }
-  if (type === 'array') normalized.items = normalizeJsonSchema(schema.items, `${label}.items`, depth + 1);
+  if (type === 'array') {
+    normalized.items = normalizeJsonSchema(schema.items, `${label}.items`, depth + 1);
+    if (Object.hasOwn(schema, 'maxItems')) {
+      const maxItems = schema.maxItems;
+      if (typeof maxItems !== 'number' || !Number.isSafeInteger(maxItems) || maxItems < 0 || maxItems > 256) {
+        throw new RangeError(`${label}.maxItemsは0～256の整数で指定してください。`);
+      }
+      normalized.maxItems = maxItems;
+    }
+    if (Object.hasOwn(schema, 'uniqueItems')) {
+      if (typeof schema.uniqueItems !== 'boolean') throw new TypeError(`${label}.uniqueItemsはbooleanで指定してください。`);
+      normalized.uniqueItems = schema.uniqueItems;
+    }
+  } else if (Object.hasOwn(schema, 'maxItems') || Object.hasOwn(schema, 'uniqueItems')) {
+    throw new RangeError(`${label}のmaxItems/uniqueItemsはarrayでだけ指定できます。`);
+  }
   return normalized;
 }
 

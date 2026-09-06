@@ -1,6 +1,6 @@
 /**
  * 責務: 現在のゲーム状態だけから、全自動進行が次に実行する一つの操作を純粋導出する。
- * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、機密会話の通常次話者も各会話ポリシーのround-robin導出を使用する。AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。
+ * 変更ルール: DOM、画面ラベル、data-action、AI設定画面の状態を参照しない。ゲーム規則はworkflowと各専用ポリシーを正本とし、機密会話の通常次話者も各会話ポリシーのround-robin導出を使用する。AI生成タスクの所属はgenerationTaskCategories.jsを正本として個別caseへ複製しない。人間操作待ちは画面DOMを再探索せず再開できるよう、現在タスクの識別情報をdescriptorとしてそのまま返す。全自動実行で通信中の内部メモ整理を一時的にworkflow候補から除外する場合も、除外対象は呼び出しオプションとして受け取りゲームstateへ保存しない。
  */
 
 import { TASK_GENERATION_CATEGORY } from '../../config/generationTaskCategories.js';
@@ -79,11 +79,11 @@ function deterministicCommand(command, label, extra = {}) {
   return result('command', { command, label, ...extra });
 }
 
-export function resolveAutomaticAction(state, { autoPublish = true } = {}) {
+export function resolveAutomaticAction(state, { autoPublish = true, ignoredMemoConsolidationPlayerIds = [] } = {}) {
   if (!state?.game) return result('stopped', { reason: 'ゲーム状態を取得できません。' });
   if (state.game.correctionMode?.enabled) return result('stopped', { reason: '訂正モード中です。' });
 
-  const task = getCurrentGmTask(state);
+  const task = getCurrentGmTask(state, { ignoredMemoConsolidationPlayerIds });
   let action = null;
 
   if (GENERATED_AI_TASK_TYPES.has(task.type)) {

@@ -19,6 +19,7 @@
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
+import { MAX_EVIDENCE_REFS, evidenceRefMaxItemsForMode } from './evidenceRefPolicy.js';
 import { buildVoteDecisionPatchGuidanceRows } from '../policies/voteResponseGuidancePolicy.js';
 import { resolveDecisionPromptFieldKeys } from '../policies/decisionPromptFieldPolicy.js';
 import { getFactionStrategyFields, isFactionStrategyRole } from '../../domain/game/factionStrategyState.js';
@@ -133,12 +134,12 @@ function coAndAbilityRules(claimRolePolicy, references) {
     const truthfulExample = buildAbilityClaimsConditionalExample(claimRolePolicy, normalizedReferences);
     const deceptionExample = buildDeceptionAbilityClaimsConditionalExample(claimRolePolicy, normalizedReferences);
     const hasTruthfulSource = Boolean(normalizedReferences.truthfulAbilitySourceRefs.length);
-    rows.push('能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。abilityClaimsは公開する能力結果を構造化して記録します。');
+    rows.push(`能力結果を実際に公開する場合だけabilityClaimsを追加します。真実として公開する場合はintent=truthfulとし、private-informationのabilityResultsまたはown-historyの該当能力行動P#をsourceRefで参照します。truthfulではroleId・actionDay・actionPhase・availableDay・availablePhase・target・resultをabilityClaimsへ出力せず、システムが正式記録から確定します。本人選択能力ではselectionBasis、evidenceRefs、selectionReasonAtTimeだけ任意で追加できます。evidenceRefsは判断に直接必要な主要根拠だけを最大${MAX_EVIDENCE_REFS}件、重要度順・重複なしで指定します。abilityClaimsは公開する能力結果を構造化して記録します。`);
     if (hasTruthfulSource && truthfulExample) rows.push(`truthful形式: ${JSON.stringify({ abilityClaims: truthfulExample })}`);
     const resultValuesByRole = claimRolePolicy.abilityClaimRoleIds
       .map((roleId) => `${roleId}=${(getPublicAbilityClaimDefinition(roleId)?.results ?? []).join(' / ')}`)
       .join('、');
-    rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・actionDay・actionPhase・availableDay・availablePhase・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。`);
+    rows.push(`事実と異なる内容を意図的に主張する場合だけintent=deceptionを使用し、roleId・actionDay・actionPhase・availableDay・availablePhase・target・resultを明示します。deceptionのresult列挙値: ${resultValuesByRole}。本人選択能力は選択時点のselectionBasis、evidenceRefs、selectionReasonAtTimeも記録します。evidenceRefsは判断に直接必要な主要根拠だけを最大${MAX_EVIDENCE_REFS}件、重要度順・重複なしで指定します。`);
     if (deceptionExample) rows.push(`deception形式: ${JSON.stringify({ abilityClaims: deceptionExample })}`);
   }
   return rows;
@@ -224,7 +225,7 @@ function decisionPatchRules(mode, decisionPatchRequired, decisionPromptKeys = []
     rows.push('処刑比較ではexecutionCandidatesの先頭を第一処刑候補とし、leaveAliveBenefit / misexecutionCost / selectionDifferenceはその第一候補だけを基準に記録します。intendedVoteを設定する場合は同じ対象を第一処刑候補にしてください。');
   }
   if (shownKeys.includes('correctedSpeechRefs') || shownKeys.includes('evidenceRefs')) {
-    rows.push('decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。');
+    rows.push(`decisionPatch.correctedSpeechRefsは自分の過去public-speechだけ、evidenceRefsは本人に見えているpublic-speech / vote-finalized / execution / dawnの#公開ログ番号だけを正整数で指定します。evidenceRefsは判断に直接必要な主要根拠だけを最大${evidenceRefMaxItemsForMode(mode)}件、重要度順・重複なしで指定し、根拠一覧の網羅目的では使用しません。`);
   }
   return rows;
 }

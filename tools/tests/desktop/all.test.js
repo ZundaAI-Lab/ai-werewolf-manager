@@ -1,7 +1,7 @@
 /**
  * 責務: デスクトップ統合に必要な高価値テストだけを、一つのNodeテスト入口へ集約する。
- * 変更ルール: 過去不具合の再現専用テスト、表示文言だけを固定するテスト、同じ契約を重複確認するテストは登録しない。
- *             API境界、保存、停止・再試行、主要UI操作、ビルド・配布整合性のいずれかを直接守る場合だけ追加する。
+ * 変更ルール: 過去不具合の再現専用テスト、実装タイミングや表示文言だけを固定するテスト、同じ契約を重複確認するテストは登録しない。
+ *             API境界、保存、安全性、主要UI操作、ビルド・配布整合性の恒久契約へ一般化できる場合だけ既存テストへ統合する。
  */
 
 'use strict';
@@ -9,9 +9,13 @@
 require('./appearanceStore.test.js');
 require('./atomicJsonFile.test.js');
 require('./automaticAiExecutor.test.js');
+require('./automaticAiBatchExecutor.test.js');
+require('./automaticAiRequestScheduler.test.js');
+require('./automaticMemoConsolidationScheduler.test.js');
 require('./automationRunControl.test.js');
 require('./automaticRunCoordinator.test.js');
 require('./autosaveStore.test.js');
+require('./autosaveState.test.js');
 require('./bootstrapUi.test.js');
 require('./buildIntegrity.test.js');
 require('./characterDataStore.test.js');
@@ -23,6 +27,8 @@ require('./endpointPolicy.test.js');
 require('./ipcSenderGuard.test.js');
 require('./localLlmClient.test.js');
 require('./providerClients.test.js');
+require('./providerErrorSerializer.test.js');
+require('./providerResponseParser.test.js');
 require('./postgameAnalysisAdapter.test.js');
 require('./postgameAnalysisController.test.js');
 require('./privacyNoticeStore.test.js');
@@ -35,6 +41,9 @@ require('./releasePipeline.test.js');
 require('./rendererStartupSmoke.test.js');
 require('./responseRetryPolicy.test.js');
 require('./runtimeHardening.test.js');
+require('./runtimeFacade.test.js');
 require('./settingsStore.test.js');
+require('./usageCostCalculator.test.js');
 require('./unusedExportAudit.test.js');
 require('./userCharacterDataStore.test.js');
+require('./webContentsNavigationPolicy.test.js');

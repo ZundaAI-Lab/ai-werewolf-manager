@@ -5,6 +5,7 @@
 
 import { buildDecisionTargetPolicy } from '../../../domain/game/decisionTargetPolicy.js';
 import { getDecisionPatchKeys } from '../responseContract.js';
+import { evidenceRefMaxItemsForMode } from '../evidenceRefPolicy.js';
 import {
   isPlainObject,
   operation,
@@ -78,7 +79,9 @@ function repairDecisionUpdate(state, playerId, taskType, candidateIds, payload, 
     }
   }
   normalizePositiveIntegerRefs(patch, 'correctedSpeechRefs', 'decisionPatch', operations);
-  normalizePositiveIntegerRefs(patch, 'evidenceRefs', 'decisionPatch', operations);
+  normalizePositiveIntegerRefs(patch, 'evidenceRefs', 'decisionPatch', operations, {
+    maxItems: evidenceRefMaxItemsForMode(responseMode),
+  });
   if (!Object.keys(patch).length) {
     delete payload.decisionPatch;
     operation(operations, 'EMPTY_OPTIONAL_SECTION_REMOVED', 'decisionPatch', '有効な判断変更がないdecisionPatchを省略しました。');

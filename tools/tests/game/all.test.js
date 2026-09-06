@@ -1,6 +1,6 @@
 /**
  * 責務: 現行仕様の主要経路を直接確認するテストだけを、一つのNodeテスト入口へ集約する。
- * 変更ルール: 過去不具合の再現専用テスト、表示・最適化形状の固定テスト、重複する単体テストは登録しない。
+ * 変更ルール: 過去不具合の再現専用テスト、プロンプト文言の固定、表示・最適化形状の固定、他層と重複する単体テストは登録しない。修正時は再現ケースを恒久仕様へ一般化できる場合だけ既存テストへ統合する。
  */
 
 import './testEnvironment.js';
@@ -44,4 +44,5 @@ import './specialRoles.test.js';
 import './tohokuRoles.test.js';
 import './tacticalKnowledgeBoundary.test.js';
 import './automaticActionPolicy.test.js';
+import './automaticAiBatchPolicy.test.js';
 import './discussionModes.test.js';

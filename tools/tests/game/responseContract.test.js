@@ -1,6 +1,6 @@
 /**
  * 責務: AI応答のtaskType/mode対応、機械許可キー、完全例、Structured Output Schema、保存済み判断の再提示境界を確認する。
- * 変更ルール: 自然言語の説明文を固定せず、外部JSONキー・Schema・許可値・内部保存表現の機械契約だけを直接検証する。
+ * 変更ルール: 自然言語の説明文を固定せず、外部JSONキー・Schema・許可値・内部保存表現の機械契約だけを直接検証する。正式投票では前回intendedVoteだけを再評価対象として再提示し、decisionReasonは再提示しない境界を固定する。
  */
 
 import test from 'node:test';
@@ -71,7 +71,7 @@ test('briefingは応答不要modeへ明示対応し未知taskTypeと未知mode�
   assert.throws(() => getResponseTopLevelKeys('action'), /未定義のAI応答モード/u);
 });
 
-test('voteの前回判断表示はintendedVoteとdecisionReasonを再提示せず比較材料だけを残す', () => {
+test('voteの前回判断表示はintendedVoteを再提示しdecisionReasonだけを隠す', () => {
   const context = {
     task: { type: 'vote' },
     player: {
@@ -98,7 +98,7 @@ test('voteの前回判断表示はintendedVoteとdecisionReasonを再提示せ�
     },
   };
   const voteState = latestDecisionState(context, null, { taskType: 'vote' });
-  assert.equal(Object.hasOwn(voteState, 'intendedVote'), false);
+  assert.equal(voteState.intendedVote, '候補A');
   assert.equal(Object.hasOwn(voteState, 'decisionReason'), false);
   assert.equal(voteState.selectionDifference, '候補差');
 
@@ -127,6 +127,25 @@ test('vote structured schemaも単独狼のpartnerDispositionをchanges候補へ
 });
 
 
+
+
+
+test('vote structured schemaはevidenceRefsを主要根拠3件・重複なしに制限する', () => {
+  const state = {
+    players: [
+      { id: 'p1', name: '投票者', roleId: 'villager', alive: true },
+      { id: 'p2', name: '候補A', roleId: 'villager', alive: true },
+    ],
+    playerKnowledge: { p1: { knownWolfIds: [] } },
+    game: { rules: { vote: { abstentionAllowed: false } } },
+  };
+  const contract = buildStructuredOutputContract(state, {
+    taskType: 'vote', playerId: 'p1', validTargetIds: ['p2'],
+  });
+  const evidenceSchema = contract.schema.properties.decisionPatch.properties.evidenceRefs;
+  assert.equal(evidenceSchema.maxItems, 3);
+  assert.equal(evidenceSchema.uniqueItems, true);
+});
 
 test('decisionPatchのJSON例は推理モードと既存の処刑判断局面だけで任意項目を切り替える', () => {
   const neutralProfile = {

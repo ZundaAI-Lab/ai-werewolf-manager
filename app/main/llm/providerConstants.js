@@ -44,7 +44,6 @@ class ProviderRequestError extends Error {
     provider,
     code = 'UNKNOWN',
     status = null,
-    responseBody = '',
     retryable = false,
     deliveryUnknown = false,
     retryAfterMs = null,
@@ -54,7 +53,6 @@ class ProviderRequestError extends Error {
     this.provider = provider;
     this.code = code;
     this.status = status;
-    this.responseBody = responseBody;
     this.retryable = retryable;
     this.deliveryUnknown = deliveryUnknown;
     this.retryAfterMs = retryAfterMs;

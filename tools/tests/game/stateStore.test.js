@@ -372,4 +372,9 @@ test('Undo履歴と復元ポイントはAI監査本文を重複保存せず復�
   assert.equal(lifecycleStore.getState().restorePoints.length, 16);
   assert.ok(lifecycleStore.getState().restorePoints.some((entry) => entry.label === '配役確定前'), '長期戦でも配役確定前を保持する');
   assert.ok(lifecycleStore.getState().restorePoints.some((entry) => entry.label === 'ゲーム開始前'), '長期戦でもゲーム開始前を保持する');
+
+  lifecycleStore.createRestorePoint('配役確定前');
+  lifecycleStore.createRestorePoint('時系列確認ポイント');
+  const orderedLabels = lifecycleStore.getState().restorePoints.map((entry) => entry.label);
+  assert.deepEqual(orderedLabels.slice(-2), ['配役確定前', '時系列確認ポイント'], '上限間引き後もpinned/regularを再分類せず作成時系列を保持する');
 });

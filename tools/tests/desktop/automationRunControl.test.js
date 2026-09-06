@@ -44,7 +44,7 @@ function loadRunControl({ timers = createFakeTimers() } = {}) {
   const source = esmSourceAsVmScript(fs.readFileSync(path.join(__dirname, '../../../app/renderer/js/automation/automationRunControl.js'), 'utf8'));
   vm.runInContext(source, context, { filename: 'automationRunControl.js' });
   return {
-    control: vm.runInContext('({ createRunSession, isStopped, assertRunning, requestStop, beginRequest, endRequest, delayWithAbort, completeSession, waitForCompletion, isAutomationStoppedError })', context),
+    control: vm.runInContext('({ createRunSession, isStopped, assertRunning, requestStop, beginRequest, endRequest, activeRequestIds, delayWithAbort, completeSession, waitForCompletion, isAutomationStoppedError })', context),
     timers,
   };
 }
@@ -59,6 +59,16 @@ test('再試行待機は停止要求で登録済みタイマーを取り消し�
 
   await assert.rejects(waiting, (error) => error?.code === 'AUTOMATION_STOPPED');
   assert.equal(timers.pendingCount(), 0, '停止時に待機タイマーを残さない');
+});
+
+test('並列API要求IDを全件保持し個別終了で取り除く', () => {
+  const { control } = loadRunControl();
+  const session = control.createRunSession();
+  control.beginRequest(session, 'req-a');
+  control.beginRequest(session, 'req-b');
+  assert.deepEqual(Array.from(control.activeRequestIds(session)).sort(), ['req-a', 'req-b']);
+  control.endRequest(session, 'req-a');
+  assert.deepEqual(Array.from(control.activeRequestIds(session)), ['req-b']);
 });
 
 test('古いセッションの停止は新しいセッションへ影響しない', () => {

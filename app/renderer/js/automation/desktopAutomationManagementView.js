@@ -484,7 +484,8 @@ export function createManagementView({
   function optionSummary() {
     const actionLabels = { retry: '同じ内容で再試行', 'full-history-retry': '公開履歴全文で再試行', stop: '停止' };
     const recoveryLabels = { stop: '手動停止', repair: '部分修復', 'repair-regenerate': '修復＋再生成' };
-    return `操作間隔 ${formatUsage(controller.settings.autoRun.intervalMs)}ms / 最大 ${formatUsage(controller.settings.autoRun.maxConsecutiveSteps)}ステップ / API ${actionLabels[controller.settings.aiOptions.apiErrorAction] ?? '停止'} / 回答 ${recoveryLabels[controller.settings.aiOptions.responseRecoveryMode] ?? '修復＋再生成'}`;
+    const parallelLabels = { auto: '並列 自動', enabled: '並列 有効', disabled: '並列 無効' };
+    return `操作間隔 ${formatUsage(controller.settings.autoRun.intervalMs)}ms / 最大 ${formatUsage(controller.settings.autoRun.maxConsecutiveSteps)}ステップ / ${parallelLabels[controller.settings.aiOptions.parallelExecutionMode] ?? '並列 自動'} / API ${actionLabels[controller.settings.aiOptions.apiErrorAction] ?? '停止'} / 回答 ${recoveryLabels[controller.settings.aiOptions.responseRecoveryMode] ?? '修復＋再生成'}`;
   }
 
   function readinessHtml(state) {
@@ -580,7 +581,7 @@ export function createManagementView({
               <span class="ai-settings-summary-value" data-ai-options-summary>${escapeHtml(optionSummary())}</span>
             </summary>
             <div class="ai-settings-body ai-option-groups">
-              <section class="ai-option-group" aria-labelledby="ai-auto-run-options-heading"><div class="ai-option-group-head"><h4 id="ai-auto-run-options-heading">自動実行</h4><p>操作間隔は各処理の待ち時間、連続ステップ上限は1回の自動実行で進める最大回数です。</p></div><div class="form-grid ai-options-grid"><label class="field"><span>操作間隔（ミリ秒）</span><input name="intervalMs" type="number" min="100" max="10000" value="${controller.settings.autoRun.intervalMs}"></label><label class="field"><span>連続ステップ上限</span><input name="maxConsecutiveSteps" type="number" min="1" max="5000" value="${controller.settings.autoRun.maxConsecutiveSteps}"></label></div></section>
+              <section class="ai-option-group" aria-labelledby="ai-auto-run-options-heading"><div class="ai-option-group-head"><h4 id="ai-auto-run-options-heading">自動実行</h4><p>操作間隔は各処理または並列バッチ間の待ち時間、連続ステップ上限は1回の自動実行で登録する最大AI行動数です。</p></div><div class="form-grid ai-options-grid"><label class="field"><span>操作間隔（ミリ秒）</span><input name="intervalMs" type="number" min="100" max="10000" value="${controller.settings.autoRun.intervalMs}"></label><label class="field"><span>連続ステップ上限</span><input name="maxConsecutiveSteps" type="number" min="1" max="5000" value="${controller.settings.autoRun.maxConsecutiveSteps}"></label><label class="field"><span>独立AI行動の並列処理</span><select name="parallelExecutionMode"><option value="auto" ${controller.settings.aiOptions.parallelExecutionMode === 'auto' ? 'selected' : ''}>自動（推奨）</option><option value="enabled" ${controller.settings.aiOptions.parallelExecutionMode === 'enabled' ? 'selected' : ''}>有効</option><option value="disabled" ${controller.settings.aiOptions.parallelExecutionMode === 'disabled' ? 'selected' : ''}>無効（完全直列）</option></select><small>自動では外部APIを最大4並列、同一ローカルLLM接続先を1並列にします。公開逐次投票・会話・昼発言など依存関係がある処理は常に直列です。</small></label><label class="field"><span>外部API最大並列数</span><input name="externalMaxConcurrency" type="number" min="1" max="16" value="${controller.settings.aiOptions.externalMaxConcurrency ?? 4}"><small>「有効」のときだけ使用します。</small></label><label class="field"><span>ローカルLLM最大並列数</span><input name="localMaxConcurrency" type="number" min="1" max="8" value="${controller.settings.aiOptions.localMaxConcurrency ?? 1}"><small>同一接続先ごとの上限です。「有効」のときだけ使用します。</small></label></div></section>
               <section class="ai-option-group" aria-labelledby="ai-history-options-heading"><div class="ai-option-group-head"><h4 id="ai-history-options-heading">履歴・エラー処理</h4><p>AIへ送る履歴、失敗時の再試行、ログ保存を設定します。</p></div><div class="form-grid ai-options-grid">
                 <label class="field full"><span>公開履歴の送信方式</span><select name="publicHistoryMode"><option value="full" ${controller.settings.aiOptions.publicHistoryMode === 'full' ? 'selected' : ''}>全公開履歴を無圧縮で送信</option><option value="compact" ${controller.settings.aiOptions.publicHistoryMode === 'compact' ? 'selected' : ''}>過去履歴を圧縮し、前回正常回答後は全文で送信</option><option value="delta" ${controller.settings.aiOptions.publicHistoryMode === 'delta' ? 'selected' : ''}>前回の正常回答後に増えた公開履歴だけを送信</option></select><small>通常は「前回の正常回答後に増えた公開履歴だけを送信」を使用します。文脈不足を感じる場合は「過去履歴を圧縮」、さらに必要な場合は「全公開履歴」を選んでください。</small></label>
                 <label class="field"><span>APIエラー時</span><select name="apiErrorAction"><option value="retry" ${controller.settings.aiOptions.apiErrorAction === 'retry' ? 'selected' : ''}>同じ内容で1回再試行</option><option value="full-history-retry" ${controller.settings.aiOptions.apiErrorAction === 'full-history-retry' ? 'selected' : ''}>最新状態を再取得し、公開履歴全文で1回再試行</option><option value="stop" ${controller.settings.aiOptions.apiErrorAction === 'stop' ? 'selected' : ''}>停止して手動対応</option></select></label>
@@ -671,6 +672,9 @@ export function createManagementView({
         apiErrorAction: form.elements.apiErrorAction.value,
         responseRecoveryMode: responseRetryPolicy.normalizeRecoveryMode(form.elements.responseRecoveryMode.value),
         apiLogScope: form.elements.apiLogScope.value,
+        parallelExecutionMode: ['auto', 'enabled', 'disabled'].includes(form.elements.parallelExecutionMode.value) ? form.elements.parallelExecutionMode.value : 'auto',
+        externalMaxConcurrency: Number(form.elements.externalMaxConcurrency.value),
+        localMaxConcurrency: Number(form.elements.localMaxConcurrency.value),
       },
       profiles,
       assignments: collectVisibleAssignments(),

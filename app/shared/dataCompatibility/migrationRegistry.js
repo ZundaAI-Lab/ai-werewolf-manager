@@ -51,6 +51,22 @@
     return { ...migrated, schemaVersion: 2 };
   }
 
+  function migrateDesktopSettingsV2ToV3(raw) {
+    const aiOptions = isDocument(raw?.aiOptions) ? raw.aiOptions : raw?.aiOptions;
+    return {
+      ...raw,
+      schemaVersion: 3,
+      aiOptions: isDocument(aiOptions)
+        ? {
+          ...aiOptions,
+          parallelExecutionMode: 'auto',
+          externalMaxConcurrency: 4,
+          localMaxConcurrency: 1,
+        }
+        : aiOptions,
+    };
+  }
+
   function migrateAiProfilePackageV1ToV2(raw) {
     const migrated = migrateProfileGenerations(raw);
     return { ...migrated, schemaVersion: 2 };
@@ -115,7 +131,7 @@
 
   const DATA_MIGRATIONS = Object.freeze({
     'game-state': Object.freeze({ 1: migrateGameStateV1ToV2 }),
-    'desktop-settings': Object.freeze({ 1: migrateDesktopSettingsV1ToV2 }),
+    'desktop-settings': Object.freeze({ 1: migrateDesktopSettingsV1ToV2, 2: migrateDesktopSettingsV2ToV3 }),
     'ai-profile-package': Object.freeze({ 1: migrateAiProfilePackageV1ToV2 }),
   });
 

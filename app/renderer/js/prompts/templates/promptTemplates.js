@@ -18,7 +18,8 @@
  * - 次の通常発言者本人宛ての質問は通常発言内で回答させ、回答イベント番号をspeechInteractionへ記録する指示だけを担当する。
  * - 出力仕様を変更した場合は機械契約・フェーズ契約・解析検証を同時更新する。
  * - 人物名・公開主張・共有作戦など実行時データは命令文へ直接展開せず、必ずJSONの[game-data:...]へ隔離し、静的な判断指示から分離する。
- * - 狂人系不在かつ最早順の人狼へ追加する初動情報は先行COを強制せず、騙りによる露呈リスクと後出し評価を翌日盤面まで比較できる判断材料だけを提示する。
+ * - 狂人系不在かつ最早順の人狼へ追加する初動情報は先行COを強制しない。人狼枠が一人なら露呈リスクと後出し評価を維持し、複数なら騙りを抑える追加の露呈リスク評価を外して「人狼以外に騙りを期待できない」という公開配役上の事実だけを提示する。
+ * - 初夜opening-strategyは狂人系不在かつ複数人狼の場合だけ、発言順を基準に先行CO・潜伏・後手対抗の役割分担を共有させる。先行CO自体は固定せず、通常ケースへこの分担強調を流用しない。
  * - 人狼本人の騙り判断は偽判定だけでなく対抗処刑後のゲーム継続まで評価し、狂人本人は露呈・縄引受け自体が陣営利益になり得るため同じ危険評価を流用しない。
  * - 局面限定の対抗CO候補は役職ごとの目的を維持し、通常人狼と狂人だけ役職別文面へ分離する。雪女・座敷わらし等へ狂人専用の縄引受け方針を自動流用しない。
  */
@@ -27,7 +28,7 @@ import { renderPromptDataBlock } from '../serialization/promptDataSerializer.js'
 import { getResponseModeForTask } from '../response/responseContract.js';
 import { isNormalSpeechTask } from '../../config/discussionAiTaskTypes.js';
 import { resolvePublicSpeechPromptMaxChars } from '../../domain/policies/publicSpeechLengthPolicy.js';
-import { countConfiguredMadmanSlots } from '../../domain/roles/roleAttributes.js';
+import { countConfiguredMadmanSlots, countConfiguredWolves } from '../../domain/roles/roleAttributes.js';
 import {
   renderActiveResponseFinalConfirmation,
   renderActiveResponseContract,
@@ -139,7 +140,7 @@ export function renderMadmanDayStrategyInstruction({
     ownActiveClaimRoleName,
   });
   const tacticalOptions = canClaimBinaryAbilityResult
-    ? `狂人枠の昼行動には、黒先への白、別対象または対抗能力者への黒、別対象への白、潜伏・CO保留、自身への縄誘導があります。黒先への白は直接救援になる一方、確認処刑を止められない局面では対象とともに破綻しやすく、別対象への黒は誤爆を伴う一方、新たな処刑候補と対立軸を作れます。
+    ? `狂人枠の昼行動には、別対象または対抗能力者への黒、別対象への白、潜伏・CO保留、自身への縄誘導があります。別対象への黒は誤爆を伴う一方、新たな処刑候補と対立軸を作れます。
 
 選択肢ごとの価値は、動く票、確認役職、誤爆、関係露出、翌日に残る勝ち筋で変化します。`
     : `狂人枠の昼行動には、潜伏・CO・CO保留・擁護・圧力・自身への縄誘導があります。
@@ -199,13 +200,13 @@ export function renderEndgameFactionTacticsInstruction({
 }
 
 
-export function renderWhiteWolfDayStrategyInstruction({ voteRequired = false, canClaimBinaryAbilityResult = false } = {}) {
+export function renderWhiteWolfDayStrategyInstruction({ canClaimBinaryAbilityResult = false } = {}) {
   const fakeResultForwardWarning = canClaimBinaryAbilityResult
     ? '偽判定は翌日まで見通し、偽黒先を処刑してゲームが続けば破綻し得る点を考慮してください。'
     : '';
   return `## 白狼としての今回の判断
 
-村人として自然に推理し、占いの非人狼判定を長期的な信用へつなげる潜伏を基本候補とします。無理な騙りや露骨な仲間擁護を避け、${voteRequired ? '公開根拠があれば仲間への投票も含めて比較してください。' : '対抗COや仲間支援は潜伏価値を失う負担も含めて比較してください。'}${fakeResultForwardWarning ? `
+占いで非人狼判定になるため潜伏価値は通常人狼より高めですが、潜伏を固定しません。現在の信用、必要票、仲間数、対抗構造から、潜伏を崩して得る陣営利益が上回るか比較してください。${fakeResultForwardWarning ? `
 
 ${fakeResultForwardWarning}` : ''}`;
 }
@@ -280,22 +281,30 @@ ${contextData}
 export function renderWolfInitialClaimDecisionInstruction({
   sharedClaimPlan = '共有作戦に明示なし',
   speakerPosition = '不明',
-  addNoMadmanEarlyWolfContext = false,
+  noMadmanEarlyWolfClaimMode = 'none',
 } = {}) {
   const contextData = renderPromptDataBlock('wolf-initial-claim-context', {
     sharedClaimPlan,
     speakerPosition,
   });
-  const noMadmanEarlyWolfContext = addNoMadmanEarlyWolfContext
+  const relaxClaimRisk = noMadmanEarlyWolfClaimMode === 'multiple-wolves';
+  const noMadmanEarlyWolfContext = noMadmanEarlyWolfClaimMode === 'multiple-wolves'
     ? `
 
+この配役には狂人系役職が存在しません。騙りを人狼以外に期待できません。`
+    : noMadmanEarlyWolfClaimMode === 'single-wolf'
+      ? `
+
 この配役には狂人系役職が存在しません。騙りを人狼以外に期待できない一方、人狼自身が騙ると対抗構造から人狼位置が絞られやすくなります。真役職を待つことによる後出し評価と、騙った後の処刑・ゲーム継続で正体が露呈する危険を比較してください。`
-    : '';
+      : '';
+  const claimDecision = relaxClaimRisk
+    ? '他者の公開COなし。共有作戦・仲間との分担・発言順から先行CO、潜伏、後手対抗を比較してください。COする場合は導入より役職・結果・対象を優先し、いずれも固定戦術にしません。'
+    : '他者の公開COなし。共有作戦・仲間との分担・発言順から先行CO、潜伏、後手対抗を比較してください。COは当日の信用だけでなく、対抗出現後の各処刑分岐と翌日の盤面まで評価し、処刑後のゲーム継続などで自分の偽COが確定または強く露呈する経路を重く見てください。COする場合は導入より役職・結果・対象を優先し、いずれも固定戦術にしません。';
   return `## 初動の騙り判断
 
 ${contextData}
 
-他者の公開COなし。共有作戦・仲間との分担・発言順から先行CO、潜伏、後手対抗を比較してください。COは当日の信用だけでなく、対抗出現後の各処刑分岐と翌日の盤面まで評価し、処刑後のゲーム継続などで自分の偽COが確定または強く露呈する経路を重く見てください。COする場合は導入より役職・結果・対象を優先し、いずれも固定戦術にしません。${noMadmanEarlyWolfContext}`;
+${claimDecision}${noMadmanEarlyWolfContext}`;
 }
 
 export function renderMadmanInitialClaimDecisionInstruction({ speakerPosition = '不明' } = {}) {
@@ -306,7 +315,7 @@ export function renderMadmanInitialClaimDecisionInstruction({ speakerPosition = 
 
 ${contextData}
 
-初動には先行CO、潜伏、後手対抗があります。先行COは真役職を表へ出しやすい一方で人狼の騙りと衝突し、潜伏は人物推定と投票支援の余地を残し、後手対抗は先行情報を使える一方で後出し視を受けます。`;
+初動では先行CO、潜伏、後手対抗を比較してください。先行COは真役職の露出や単独真視の阻止に有効ですが、人狼の騙りと競合する可能性があります。潜伏や後手対抗では情報を増やせますが、相手に先に盤面を作られる不利もあります。待つ利益だけでなく、今COして盤面を動かす価値も含めて判断してください。`;
 }
 
 export function renderMadmanClaimBranchInstruction({
@@ -329,25 +338,35 @@ ${contextData}
 
 ${contextData}
 
-公開主張の継続には、黒先への白、別対象または対抗能力者への黒、別対象への白、結果保留、自分が偽視されて縄を引き受ける進行があります。
+公開主張の継続には、別対象または対抗能力者への黒、別対象への白、結果保留、自分が偽視されて縄を引き受ける進行があります。
 
-黒先への白は確認処刑時の連鎖破綻、別対象への黒は誤爆と新たな処刑候補、結果保留は信用維持と情報不足という異なる影響を持ちます。公開済み結果との整合性、今日動く票、対象崩壊後に残る公開世界が選択を分けます。`;
+別対象への黒は誤爆と新たな処刑候補、結果保留は信用維持と情報不足という異なる影響を持ちます。公開済み結果との整合性、今日動く票、対象崩壊後に残る公開世界が選択を分けます。`;
 }
 
 
-function renderOpeningWolfStrategyInstruction({ hasMadmanClass = false, hasBinaryAbilityRole = false } = {}) {
-  const uncertainItems = ['翌日の役職CO数'];
-  if (hasMadmanClass) uncertainItems.push('狂人系役職の行動');
-  uncertainItems.push('能力結果', '発言順', '票分布');
-  const switchItems = [hasBinaryAbilityRole ? '黒結果' : '', '仲間の処刑圏', '騙り崩壊'].filter(Boolean).join('、');
-  const claimsToProtect = hasMadmanClass ? '仲間・狂人系候補' : '仲間';
+function renderOpeningWolfStrategyInstruction({ noMadmanMultipleWolves = false } = {}) {
+  if (noMadmanMultipleWolves) {
+    return `参加者だけが閲覧できる初夜の秘密会話です。
+
+翌日の発言順を踏まえ、先行CO、潜伏、後手対抗の役割分担を共有してください。公開情報が変化したときに対応できるよう、切替条件も共有してください。
+
+この配役には狂人系役職が存在せず、人狼以外が人狼陣営の役職騙りを担当することは期待できません。人狼同士で同じ判断を重ねるのではなく、発言順を踏まえて役割を分けて検討してください。
+
+特定人物への結果や投票先を早い段階で固定しすぎないでください。
+
+claimPlanには、発言順を踏まえた先行CO・潜伏・後手対抗の役割分担と、公開情報によって変更する条件を簡潔に保存してください。
+
+騙りを含む方針を選んだ場合は、その主張を維持できなくなったときに仲間まで同時に疑われないための切替方針も共有してください。`;
+  }
   return `参加者だけが閲覧できる初夜の秘密会話です。
 
-今夜のルールでは襲撃対象が存在しません。${uncertainItems.join('、')}は未確定です。人物や投票先を固定するより、${switchItems}ごとの切替条件と、discussionPlanで各人の公開役割・説明を重ねる合流条件を共有してください。
+翌日の役職CO数、能力結果、発言順、票分布は未確定です。公開情報が変化したときに対応できるよう、先行CO、潜伏、後手対抗を含む役割分担と切替条件を共有してください。
 
-仲間救出、距離取り、仲間投票はいずれも固定戦術ではありません。仲間が処刑圏へ入った場合は、救出に必要な票数、代替候補へ票を集められる可能性、仲間切りで得る具体的利益、人狼一人を失う損失を比較します。
+特定人物への結果や投票先を早い段階で固定しすぎないでください。
 
-偽COは対抗出現後の各処刑分岐と翌日のゲーム継続まで考え、対抗または自分の処刑で主張が崩れる場合は${claimsToProtect}の全主張を守らず、村側へ採用させる仮定が少ない公開世界へ縮小できるようにしてください。共有作戦は翌日の行動予約ではなく、実際の公開情報に応じて維持・変更・不採用を選べます。`;
+claimPlanには、誰がどの公開役職を主張する可能性があるか、潜伏・先行CO・後手対抗を切り替える条件を簡潔に保存してください。公開情報が未確定な段階では、特定人物への結果や固定した処刑先までは決めないでください。
+
+騙りを含む方針を選んだ場合は、その主張を維持できなくなったときに仲間まで同時に疑われないための切替方針も共有してください。`;
 }
 
 
@@ -407,7 +426,7 @@ export function renderTaskVariableInstruction({
     ? 'current-task.requiredAnswersの全件へ今回の通常発言内で直接答え、speechInteraction.answerToRefsへ各questionSequenceを記録してください。'
     : '';
   const hasMadmanClass = countConfiguredMadmanSlots(roleComposition) > 0;
-  const hasBinaryAbilityRole = Number(roleComposition?.seer ?? 0) > 0 || Number(roleComposition?.medium ?? 0) > 0;
+  const noMadmanMultipleWolves = !hasMadmanClass && countConfiguredWolves(roleComposition) > 1;
   switch (taskType) {
     case 'briefing':
       return 'これは役職通知用です。内容を保持し、応答せず次の進行プロンプトを待ってください。';
@@ -444,7 +463,7 @@ export function renderTaskVariableInstruction({
     case 'graveyard-conversation':
       return '死亡者だけが閲覧できる墓場会話です。墓場会話の主目的は、死亡者同士で生前の秘密を共有し、答え合わせや感想を交わすことです。自分だけが知っていた真役職、能力結果、仲間情報、騙りの意図、行動理由など、墓場でまだ共有されていない情報があれば優先して話してください。他の死亡者から新しい秘密や、自分の死亡後に地上で起きた出来事を聞いた場合は、それに対する驚き、納得、後悔、感想、生前の認識との違いなどを自然に返してください。あなたの公開知識は死亡時点で固定され、死亡後の地上情報は墓場で実際に共有された内容だけ追加で知ります。';
     case 'wolf-conversation':
-      if (wolfConversationPurpose === 'opening-strategy') return renderOpeningWolfStrategyInstruction({ hasMadmanClass, hasBinaryAbilityRole });
+      if (wolfConversationPurpose === 'opening-strategy') return renderOpeningWolfStrategyInstruction({ noMadmanMultipleWolves });
       if (wolfConversationPurpose === 'opening-strategy-and-attack') return renderOpeningAndAttackInstruction({ hasMadmanClass });
       return renderAttackPlanningInstruction();
     case 'wolf-attack':

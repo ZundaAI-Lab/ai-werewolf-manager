@@ -1,6 +1,6 @@
 /**
- * 責務: 1回の自動実行セッションについて停止状態、実行中API要求ID、中断可能な待機、終了完了通知を一元管理する。
- * 変更ルール: 停止状態と終了待機を画面制御の個別フラグへ分散させない。API要求開始前・応答直後・登録直前はassertRunningを通し、停止済みセッションから新規要求や状態更新を開始しない。一時停止・明示停止ではwaitForCompletionまで待ってから競合操作を解禁する。
+ * 責務: 1回の自動実行セッションについて停止状態、同時実行中の全API要求ID、中断可能な待機、終了完了通知を一元管理する。
+ * 変更ルール: 停止状態と終了待機を画面制御の個別フラグへ分散させない。並列実行中のrequestIdはactiveRequestIdsへ全件登録し、停止時に一括キャンセルできる状態を維持する。API要求開始前・応答直後・登録直前はassertRunningを通し、停止済みセッションから新規要求や状態更新を開始しない。一時停止・明示停止ではwaitForCompletionまで待ってから競合操作を解禁する。
  */
 
 
@@ -19,7 +19,7 @@ function createRunSession() {
   return {
     id: `automation-run-${randomId}`,
     abortController: new AbortController(),
-    currentRequestId: null,
+    activeRequestIds: new Set(),
     stopped: false,
     completed: false,
     completion,
@@ -44,12 +44,17 @@ function requestStop(session) {
 
 function beginRequest(session, requestId) {
   assertRunning(session);
-  session.currentRequestId = String(requestId ?? '');
+  const normalizedId = String(requestId ?? '');
+  if (normalizedId) session.activeRequestIds.add(normalizedId);
 }
 
 function endRequest(session, requestId) {
   if (!session) return;
-  if (session.currentRequestId === String(requestId ?? '')) session.currentRequestId = null;
+  session.activeRequestIds?.delete(String(requestId ?? ''));
+}
+
+function activeRequestIds(session) {
+  return session?.activeRequestIds ? [...session.activeRequestIds] : [];
 }
 
 function delayWithAbort(milliseconds, session) {
@@ -99,6 +104,7 @@ export {
   requestStop,
   beginRequest,
   endRequest,
+  activeRequestIds,
   delayWithAbort,
   completeSession,
   waitForCompletion,

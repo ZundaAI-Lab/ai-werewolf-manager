@@ -1,6 +1,6 @@
 /**
  * 責務: RendererからMainへ届くIPCの送信元を、現在のメインウィンドウのmainFrameだけへ限定する。
- * 変更ルール: IPC業務処理やチャンネル固有の値検証を持たず、送信元検証と安全な登録ラッパーだけを提供する。拒否時は同期IPCへnullを返し、非同期IPCは分類可能な例外で失敗させる。
+ * 変更ルール: IPC業務処理やチャンネル固有の値検証を持たず、送信元検証と安全な登録ラッパーだけを提供する。拒否時と同期IPC業務処理の例外時は同期IPCへnullを返し、非同期IPCは分類可能な例外で失敗させる。同期listenerの例外をRendererのブロッキング境界へ貫通させない。
  */
 
 'use strict';
@@ -32,7 +32,13 @@ function createTrustedIpcRegistrar(ipcMain, getMainWindow) {
           event.returnValue = null;
           return;
         }
-        listener(event, ...args);
+        try {
+          listener(event, ...args);
+          if (event.returnValue === undefined) event.returnValue = null;
+        } catch (error) {
+          console.error(`同期IPC「${channel}」の処理に失敗しました。`, error);
+          event.returnValue = null;
+        }
       });
     },
 

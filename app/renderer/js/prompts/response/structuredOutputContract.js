@@ -4,6 +4,7 @@
  */
 
 import { DECISION_ASSESSMENT_LEVELS } from '../../domain/game/decisionState.js';
+import { MAX_VOTE_EVIDENCE_REFS } from './evidenceRefPolicy.js';
 import { resolveWolfPartnerDispositionPolicy } from '../../domain/game/wolfPartnerDispositionPolicy.js';
 import { getPlayer } from '../../domain/game/standardRules.js';
 import {
@@ -41,7 +42,12 @@ const VOTE_DECISION_PROPERTY_SCHEMAS = Object.freeze({
   counterSignals: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
   remainingHypotheses: Object.freeze({ type: 'array', items: Object.freeze({ type: 'string' }) }),
   correctedSpeechRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
-  evidenceRefs: Object.freeze({ type: 'array', items: Object.freeze({ type: 'integer' }) }),
+  evidenceRefs: Object.freeze({
+    type: 'array',
+    maxItems: MAX_VOTE_EVIDENCE_REFS,
+    uniqueItems: true,
+    items: Object.freeze({ type: 'integer' }),
+  }),
 });
 
 function voteDecisionPatchSchema() {

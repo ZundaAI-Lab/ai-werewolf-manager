@@ -1,6 +1,6 @@
 /**
- * 責務: 1件のAIタスクについて生成深度ごとの既存直接生成・判断・客観分析・批判的検証・最終回答・発言化API要求、通信再試行、全履歴再同期、応答修復、正式登録または項目代替までを実行する。
- * 変更ルール: DOM画面構築と全自動ループを担当しない。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一工程API要求内で一度だけThinkingを無効化し、後続工程や別プロフィールへ引き継がない。
+ * 責務: 1件のAIタスクについて生成深度ごとのAPI生成と、正式登録または項目代替を分離して実行し、単発実行では従来どおり生成直後に登録まで完了する。実際のProvider通信開始・終了を表示用のAI要求状態へ通知し、投票タスクは最終生成結果がAPIから得られた時点で表示専用の応答済み状態を通知する。
+ * 変更ルール: DOM画面構築と全自動ループを担当しない。並列バッチではgenerateAiStepがゲームstateを変更せず、commitAiStepだけが正式登録する。投票API応答済み通知はゲームstateへ書き込まず、生成開始時のvoteSession.idを添えてAutomation表示状態へだけ渡す。実行セッション停止後は新規API要求・再試行・正式登録・代替登録を開始しない。外部LLMはprivacy/dataTransmissionNotice.jsの初回確認完了後だけMainへ要求する。工程プロンプトは最新taskArtifactから工程別ビルダーで再構築し、投票修復は既存投票予定と処刑候補を保持したactionAnswer専用契約だけを使用し、修復回答から他の判断項目を採用しない。それ以外は最新の基準プロンプトを参照する。失敗生応答は監査へ複製せず、失敗試行の段階・issueコード・カテゴリ・パスだけを生成工程監査へ渡す。過去のAPI要求・生応答を保存・再送せず、固定・継続・動的区画とProvider非依存Schemaを持つpromptEnvelopeだけをMainへ渡す。OllamaがThinkingだけを返した投票再試行に限り、同一工程API要求内で一度だけThinkingを無効化し、後続工程や別プロフィールへ引き継がない。
  */
 
 
@@ -44,11 +44,14 @@ function createAutomaticAiExecutor(dependencies) {
     structuredApiError,
     apiErrorAsException,
     generationFailureRequiresStop,
+    requestScheduler = null,
+    setAiRequestActive = null,
+    setVoteResponseReceived = null,
   } = dependencies;
 
   if (!apiRetryPolicy || !responseRetryPolicy || !runControl) throw new Error('AI自動実行の必須ポリシーを初期化できません。');
 
-  return async function executeAiStep(taskRequest, session) {
+  async function generateAiStep(taskRequest, session) {
     runControl.assertRunning(session);
     const playerId = String(taskRequest?.playerId ?? '');
     const taskType = String(taskRequest?.taskType ?? '');
@@ -65,6 +68,9 @@ function createAutomaticAiExecutor(dependencies) {
       taskType,
     });
     const deltaRequested = controller.settings.aiOptions?.publicHistoryMode === 'delta';
+    const voteResponseSessionId = taskType === 'vote'
+      ? String(currentGameState()?.voteSession?.id ?? '').trim()
+      : '';
     await runControl.delayWithAbort(0, session);
 
     const taskArtifact = runtimeApi.prepareAiTask({
@@ -78,6 +84,11 @@ function createAutomaticAiExecutor(dependencies) {
     runtimeApi.dismissToast?.(responseRetryToastKey);
     let taskApiCallCount = 0;
     let regenerationRecorded = false;
+
+    function notifyVoteResponseReceived() {
+      if (taskType !== 'vote' || !voteResponseSessionId) return;
+      setVoteResponseReceived?.(playerId, voteResponseSessionId);
+    }
 
     function addStageUsage(target, usage) {
       for (const key of ['inputTokens', 'outputTokens', 'cachedInputTokens', 'cacheWriteTokens', 'reasoningTokens', 'totalTokens', 'costUsd']) {
@@ -220,7 +231,7 @@ function createAutomaticAiExecutor(dependencies) {
         if (usageFlags.regeneratedTask) regenerationRecorded = true;
         runControl.beginRequest(session, requestId);
         try {
-          const response = await bridge.generate({
+          const requestPayload = {
             requestId,
             profileId: executorProfile.id,
             promptEnvelope: requestPromptEnvelope(stage.stageId, currentPrompt, requestPurpose),
@@ -233,7 +244,18 @@ function createAutomaticAiExecutor(dependencies) {
             publicHistoryMode,
             thinkingLevelOverride: ollamaThinkingFallbackUsed ? 'none' : null,
             ...usageFlags,
-          });
+          };
+          const generateWithActivity = async () => {
+            setAiRequestActive?.(playerId, true);
+            try {
+              return await bridge.generate(requestPayload);
+            } finally {
+              setAiRequestActive?.(playerId, false);
+            }
+          };
+          const response = requestScheduler
+            ? await requestScheduler.run(executorProfile, session, generateWithActivity)
+            : await generateWithActivity();
           runControl.assertRunning(session);
           if (response?.ok === false) throw apiErrorAsException(response.error ?? {});
           if (!response?.text) {
@@ -480,10 +502,7 @@ function createAutomaticAiExecutor(dependencies) {
       });
     }
 
-    const beforeRevision = Number(currentGameState()?.revision ?? 0);
     let pipelineResult = null;
-    let commitResult = null;
-    let automaticFallbackUsed = false;
     try {
       pipelineResult = await runtimeApi.runGenerationPipeline({
         plan,
@@ -500,6 +519,72 @@ function createAutomaticAiExecutor(dependencies) {
         buildRenderPrompt: runtimeApi.buildRenderStagePrompt,
       });
       runControl.assertRunning(session);
+      notifyVoteResponseReceived();
+      return {
+        kind: 'candidate',
+        taskRequest: Object.freeze({ playerId, taskType, slotId }),
+        playerId,
+        taskType,
+        taskArtifact,
+        plan,
+        pipelineResult,
+        responseRetryToastKey,
+      };
+    } catch (error) {
+      if (runControl.isStopped(session)) runControl.assertRunning(session);
+      if (error?.apiResponseUnavailable === true || generationFailureRequiresStop?.(error, pipelineResult)) throw error;
+      const fallbackRawResponse = String(error?.rawResponse ?? pipelineResult?.rawResponse ?? '');
+      const fallbackEvaluation = error?.evaluation
+        ?? pipelineResult?.evaluation
+        ?? runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: fallbackRawResponse });
+      notifyVoteResponseReceived();
+      return {
+        kind: 'fallback',
+        taskRequest: Object.freeze({ playerId, taskType, slotId }),
+        playerId,
+        taskType,
+        taskArtifact,
+        plan,
+        pipelineResult,
+        responseRetryToastKey,
+        fallbackRawResponse,
+        fallbackEvaluation,
+        fallbackGenerationRun: error?.generationRun ?? pipelineResult?.generationRun ?? null,
+        fallbackReason: `AI生成失敗: ${String(error?.message ?? error ?? '原因不明')}`,
+        sourceError: error,
+      };
+    }
+  }
+
+  async function commitAiStep(generated, session) {
+    runControl.assertRunning(session);
+    const runtimeApi = runtime();
+    const playerId = String(generated?.playerId ?? generated?.taskRequest?.playerId ?? '');
+    const taskType = String(generated?.taskType ?? generated?.taskRequest?.taskType ?? '');
+    const taskArtifact = generated?.taskArtifact;
+    const plan = generated?.plan;
+    if (!playerId || !taskType || !taskArtifact || !plan) throw new Error('AI生成結果に登録情報がありません。');
+
+    const beforeRevision = Number(currentGameState()?.revision ?? 0);
+    let commitResult = null;
+    let automaticFallbackUsed = generated.kind === 'fallback';
+    runControl.assertRunning(session);
+    if (automaticFallbackUsed) {
+      commitResult = runtimeApi.commitAiTaskFallback({
+        taskArtifact,
+        rawResponse: generated.fallbackRawResponse,
+        evaluation: generated.fallbackEvaluation,
+        generationRun: generated.fallbackGenerationRun,
+        reason: generated.fallbackReason,
+      });
+      if (!commitResult?.ok) {
+        const fallbackError = new Error(`AI自動代替にも失敗しました。${commitResult?.message ? ` ${commitResult.message}` : ''}`);
+        fallbackError.cause = generated.sourceError;
+        fallbackError.issues = commitResult?.issues ?? [];
+        throw fallbackError;
+      }
+    } else {
+      const pipelineResult = generated.pipelineResult;
       commitResult = runtimeApi.commitAiTaskCandidate({
         taskArtifact,
         rawResponse: pipelineResult.rawResponse,
@@ -516,30 +601,8 @@ function createAutomaticAiExecutor(dependencies) {
         error.issues = commitResult?.issues ?? [];
         throw error;
       }
-    } catch (error) {
-      if (runControl.isStopped(session)) runControl.assertRunning(session);
-      if (error?.apiResponseUnavailable === true || generationFailureRequiresStop?.(error, pipelineResult)) throw error;
-      const fallbackRawResponse = String(error?.rawResponse ?? pipelineResult?.rawResponse ?? '');
-      const fallbackEvaluation = error?.evaluation
-        ?? pipelineResult?.evaluation
-        ?? runtimeApi.evaluateAiTaskCandidate({ taskArtifact, rawResponse: fallbackRawResponse });
-      const fallbackReason = `AI生成失敗: ${String(error?.message ?? error ?? '原因不明')}`;
-      runControl.assertRunning(session);
-      commitResult = runtimeApi.commitAiTaskFallback({
-        taskArtifact,
-        rawResponse: fallbackRawResponse,
-        evaluation: fallbackEvaluation,
-        generationRun: error?.generationRun ?? pipelineResult?.generationRun ?? null,
-        reason: fallbackReason,
-      });
-      if (!commitResult?.ok) {
-        const fallbackError = new Error(`AI自動代替にも失敗しました。${commitResult?.message ? ` ${commitResult.message}` : ''}`);
-        fallbackError.cause = error;
-        fallbackError.issues = commitResult?.issues ?? [];
-        throw fallbackError;
-      }
-      automaticFallbackUsed = true;
     }
+
     const afterRevision = Number(currentGameState()?.revision ?? beforeRevision);
     if (afterRevision === beforeRevision) {
       throw new Error(automaticFallbackUsed
@@ -548,14 +611,24 @@ function createAutomaticAiExecutor(dependencies) {
     }
     runControl.assertRunning(session);
 
-    runtimeApi.dismissToast?.(responseRetryToastKey);
+    runtimeApi.dismissToast?.(generated.responseRetryToastKey);
     if (automaticFallbackUsed) {
       const scopeLabel = commitResult?.fallbackScope === 'field' ? '必須項目だけを代替' : '現在タスクを代替';
       setStatus(`${playerName(playerId)}の${taskType}は${scopeLabel}して進行しました。`, 'working');
     } else {
       setStatus(`${playerName(playerId)}の${taskType}を深度${plan.depth}で登録しました。`, 'working');
     }
-  };
+    return { ok: true, commitResult, automaticFallbackUsed };
+  }
+
+  async function executeAiStep(taskRequest, session) {
+    const generated = await generateAiStep(taskRequest, session);
+    return commitAiStep(generated, session);
+  }
+
+  executeAiStep.generateAiStep = generateAiStep;
+  executeAiStep.commitAiStep = commitAiStep;
+  return executeAiStep;
 }
 
 export {
